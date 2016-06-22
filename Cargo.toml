@@ -1,0 +1,17 @@
+[package]
+name = "shadowsocks-rust"
+version = "0.1.0"
+authors = ["loggerhead <lloggerhead@gmail.com>"]
+
+[lib]
+name = "shadowsocks"
+
+[dependencies]
+mio = "0.5"
+log = "0.3"
+fnv = "1"
+rand = "0.3"
+regex = "0.1"
+try_opt = "0.1"
+byteorder = "0.5"
+lazy_static = "0.2"
