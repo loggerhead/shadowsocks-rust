@@ -10,6 +10,8 @@ extern crate rand;
 extern crate regex;
 extern crate byteorder;
 
+#[macro_use]
+pub mod eventloop;
 pub mod common;
 pub mod network;
 pub mod asyncdns;

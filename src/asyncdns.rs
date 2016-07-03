@@ -10,7 +10,10 @@ use common;
 use common::{Dict, slice2str, slice2string};
 use network;
 use network::{NetworkWriteBytes, NetworkReadBytes};
-use mio;
+use mio::{Handler, EventLoop, EventSet, PollOpt, Token};
+use mio::udp::{UdpSocket};
+use eventloop::{EventHandler, Dispatcher, Processor};
+use std::mem::transmute;
 
 
 // All communications inside of the domain protocol are carried in a single
@@ -351,21 +354,21 @@ enum HostnameStatus {
     Second,
 }
 
-pub struct DNSResolver<T: mio::Handler> {
-    eventloop: Option<mio::EventLoop<T>>,
+pub struct DNSResolver {
     hosts: Dict<String, String>,
     hostname_status: Dict<String, HostnameStatus>,
+    sock: Option<UdpSocket>,
     servers: Vec<String>,
     qtypes: Vec<u16>,
 }
 
-impl<T: mio::Handler> DNSResolver<T> {
-    pub fn new(server_list: Option<Vec<String>>, prefer_ipv6: Option<bool>) -> DNSResolver<T> {
+impl DNSResolver {
+    pub fn new(server_list: Option<Vec<String>>, prefer_ipv6: Option<bool>) -> Self {
         let mut this = DNSResolver {
-            eventloop: None,
             servers: Vec::new(),
             hosts: Dict::new(),
             hostname_status: Dict::new(),
+            sock: None,
             qtypes: Vec::new(),
         };
 
@@ -421,12 +424,14 @@ impl<T: mio::Handler> DNSResolver<T> {
         self.hosts.put("localhost".to_string(), "127.0.0.1".to_string());
     }
 
-    fn add_to_loop(&mut self, eventloop: mio::EventLoop<T>) {
-        if self.eventloop.is_some() {
-            panic!("already add to loop");
-        }
+    pub fn handle_event(&mut self, event_loop: &mut EventLoop<Dispatcher>, events: EventSet) {
 
-        self.eventloop = Some(eventloop);
+    }
+
+    pub fn add_to_loop(mut self, event_loop: &mut EventLoop<Dispatcher>, dispatcher: &mut Dispatcher) {
+        self.sock = UdpSocket::v4().ok();
+        register_handler!(self, event_loop, dispatcher, Processor::DNS,
+                          EventSet::readable() | EventSet::hup() | EventSet::error());
     }
 }
 
