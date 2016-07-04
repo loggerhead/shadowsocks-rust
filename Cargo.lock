@@ -3,6 +3,7 @@ name = "shadowsocks-rust"
 version = "0.1.0"
 dependencies = [
  "byteorder 0.5.3 (registry+git://crates.mirrors.ustc.edu.cn/index)",
+ "env_logger 0.3.3 (registry+git://crates.mirrors.ustc.edu.cn/index)",
  "fnv 1.0.2 (registry+git://crates.mirrors.ustc.edu.cn/index)",
  "lazy_static 0.2.1 (registry+git://crates.mirrors.ustc.edu.cn/index)",
  "log 0.3.6 (registry+git://crates.mirrors.ustc.edu.cn/index)",
@@ -39,6 +40,15 @@ source = "registry+git://crates.mirrors.ustc.edu.cn/index"
 name = "cfg-if"
 version = "0.1.0"
 source = "registry+git://crates.mirrors.ustc.edu.cn/index"
+
+[[package]]
+name = "env_logger"
+version = "0.3.3"
+source = "registry+git://crates.mirrors.ustc.edu.cn/index"
+dependencies = [
+ "log 0.3.6 (registry+git://crates.mirrors.ustc.edu.cn/index)",
+ "regex 0.1.71 (registry+git://crates.mirrors.ustc.edu.cn/index)",
+]
 
 [[package]]
 name = "fnv"

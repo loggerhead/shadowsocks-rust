@@ -18,9 +18,9 @@ pub fn slice2string(data: &[u8]) -> Option<String> {
 
 pub fn handle_every_line(filepath: &str, func: &mut FnMut(String)) {
     if let Ok(f) = File::open(filepath) {
-        let mut reader = BufReader::new(f);
+        let reader = BufReader::new(f);
         for line in reader.lines() {
-            let mut line = match line {
+            let line = match line {
                 Ok(line) => line.trim().to_string(),
                 _ => break,
             };
@@ -57,11 +57,11 @@ impl<K, V> Dict<K, V>
     }
 
     pub fn has(&self, k: &K) -> bool {
-        if let Some(_) = self.get(k) {
-            true
-        } else {
-            false
-        }
+        self.get(k).is_some()
+    }
+
+    pub fn del(&mut self, k: &K) {
+        self.map.remove(k);
     }
 }
 

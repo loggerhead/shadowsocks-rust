@@ -1,13 +1,17 @@
-extern crate shadowsocks;
 extern crate mio;
+extern crate env_logger;
+
+extern crate shadowsocks;
 
 use mio::EventLoop;
 
-use shadowsocks::asyncdns::{DNSResolver};
 use shadowsocks::eventloop;
-use shadowsocks::eventloop::{Dispatcher, EventHandler};
+use shadowsocks::eventloop::Dispatcher;
+use shadowsocks::asyncdns::DNSResolver;
 
 fn main() {
+    env_logger::init().unwrap();
+
     let dns_resolver = DNSResolver::new(None, None);
 
     run_server(dns_resolver);

@@ -1,7 +1,7 @@
 use std::io::Cursor;
 use std::str::FromStr;
 use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt};
-use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
+use std::net::{SocketAddrV4, SocketAddrV6};
 
 
 pub trait NetworkWriteBytes: WriteBytesExt {
@@ -34,7 +34,21 @@ pub trait NetworkReadBytes: ReadBytesExt {
 impl<'a> NetworkReadBytes for Cursor<&'a [u8]> { }
 impl<'a> NetworkReadBytes for Cursor<&'a Vec<u8>> { }
 
+impl<'a> NetworkReadBytes for &'a [u8] {
+    fn get_u8(&mut self) -> Option<u8> {
+        Cursor::new(self).read_u8().ok()
+    }
 
+    fn get_u16(&mut self) -> Option<u16> {
+        Cursor::new(self).read_u16::<NetworkEndian>().ok()
+    }
+
+    fn get_u32(&mut self) -> Option<u32> {
+        Cursor::new(self).read_u32::<NetworkEndian>().ok()
+    }
+}
+
+#[allow(non_camel_case_types)]
 pub enum AddressFamily {
     AF_INET,
     AF_INET6
@@ -53,9 +67,19 @@ pub fn get_address_family(address: &str) -> Option<AddressFamily> {
 }
 
 pub fn is_ip(address: &str) -> bool {
-    if let Some(_) = get_address_family(address) {
-        true
-    } else {
-        false
-    }
+    get_address_family(address).is_some()
+}
+
+
+macro_rules! u8slice2sized {
+    ($bytes:expr, $l: expr) => (
+        {
+            let mut arr = [0u8; $l];
+            for i in 0..$bytes.len() {
+                arr[i] = $bytes[i];
+            }
+
+            arr
+        }
+    )
 }
