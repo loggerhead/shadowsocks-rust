@@ -35,10 +35,8 @@ pub struct Dict<K, V> {
 }
 
 impl<K, V> Dict<K, V>
-    where K: Hash + Eq,
-          V: Clone
+    where K: Hash + Eq
 {
-
     pub fn new() -> Self {
         Dict {
             map: HashMap::default()
@@ -51,5 +49,17 @@ impl<K, V> Dict<K, V>
 
     pub fn get(&self, k: &K) -> Option<&V> {
         self.map.get(k)
+    }
+
+    pub fn get_mut(&mut self, k: &K) -> Option<&mut V> {
+        self.map.get_mut(k)
+    }
+
+    pub fn has(&self, k: &K) -> bool {
+        if let Some(_) = self.get(k) {
+            true
+        } else {
+            false
+        }
     }
 }

@@ -51,3 +51,11 @@ pub fn get_address_family(address: &str) -> Option<AddressFamily> {
         _ => return None,
     }
 }
+
+pub fn is_ip(address: &str) -> bool {
+    if let Some(_) = get_address_family(address) {
+        true
+    } else {
+        false
+    }
+}

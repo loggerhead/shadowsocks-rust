@@ -306,13 +306,13 @@ fn parse_response(data: &Vec<u8>) -> Option<DNSResponse> {
 }
 
 // For detail, see page 7 of RFC 1035
-fn is_valid_hostname(hostname: String) -> bool {
+fn is_valid_hostname(hostname: &str) -> bool {
     if hostname.len() > 255 {
         return false;
     }
 
     lazy_static! {
-            static ref RE: Regex = Regex::new(r"[A-Za-z\d-]{1,63}$").unwrap();
+        static ref RE: Regex = Regex::new(r"[A-Za-z\d-]{1,63}$").unwrap();
     }
 
     let hostname = hostname.trim_right_matches('.');
@@ -354,9 +354,13 @@ enum HostnameStatus {
     Second,
 }
 
+pub type Callback = FnMut(Option<(String, String)>, Option<&str>);
+
 pub struct DNSResolver {
     hosts: Dict<String, String>,
+    cache: Dict<String, String>,
     hostname_status: Dict<String, HostnameStatus>,
+    hostname_to_cb: Dict<String, Vec<&'static mut Callback>>,
     sock: Option<UdpSocket>,
     servers: Vec<String>,
     qtypes: Vec<u16>,
@@ -367,7 +371,9 @@ impl DNSResolver {
         let mut this = DNSResolver {
             servers: Vec::new(),
             hosts: Dict::new(),
+            cache: Dict::new(),
             hostname_status: Dict::new(),
+            hostname_to_cb: Dict::new(),
             sock: None,
             qtypes: Vec::new(),
         };
@@ -391,7 +397,7 @@ impl DNSResolver {
         common::handle_every_line("/etc/resolv.conf", &mut |line| {
             if line.starts_with("nameserver") {
                 if let Some(server) = line.split_whitespace().nth(1) {
-                    if let Some(_) = network::get_address_family(server) {
+                    if network::is_ip(server) {
                         self.servers.push(server.to_string());
                     }
                 }
@@ -411,7 +417,7 @@ impl DNSResolver {
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() > 0 {
                 let ip = parts[0];
-                if let Some(_) = network::get_address_family(ip) {
+                if network::is_ip(ip) {
                     for hostname in parts[1..].iter() {
                         if hostname.len() > 0 {
                             self.hosts.put(hostname.to_string(), ip.to_string());
@@ -424,14 +430,40 @@ impl DNSResolver {
         self.hosts.put("localhost".to_string(), "127.0.0.1".to_string());
     }
 
+    pub fn resolve(&mut self, hostname: String, callback: &'static mut Callback) {
+        if hostname.len() == 0 {
+            callback(None, Some("empty hostname"));
+        } else if network::is_ip(&hostname) {
+            callback(Some((hostname.clone(), hostname)), None);
+        } else if self.hosts.has(&hostname) {
+            let ip = self.hosts.get(&hostname).unwrap().clone();
+            callback(Some((hostname, ip)), None);
+        } else if self.cache.has(&hostname) {
+            let ip = self.cache.get(&hostname).unwrap().clone();
+            callback(Some((hostname, ip)), None);
+        } else if !is_valid_hostname(&hostname) {
+            let errmsg = format!("invalid hostname: {}", hostname);
+            callback(None, Some(&errmsg));
+        } else {
+            let mut arr = self.hostname_to_cb.get_mut(&hostname);
+            match arr {
+                Some(arr) => {
+                    arr.push(callback);
+                }
+                None => {
+                    // self.hostname_status[hostname] = HostnameStatus::First;
+                }
+            }
+        }
+    }
+
     pub fn handle_event(&mut self, event_loop: &mut EventLoop<Dispatcher>, events: EventSet) {
 
     }
 
     pub fn add_to_loop(mut self, event_loop: &mut EventLoop<Dispatcher>, dispatcher: &mut Dispatcher) {
         self.sock = UdpSocket::v4().ok();
-        register_handler!(self, event_loop, dispatcher, Processor::DNS,
-                          EventSet::readable() | EventSet::hup() | EventSet::error());
+        register_handler!(self, event_loop, dispatcher, Processor::DNS, EventSet::readable());
     }
 }
 
