@@ -22,19 +22,23 @@ impl EventHandler for Processor {
 
 macro_rules! register_handler {
     ($me:ident, $event_loop:ident, $holder:ident, $processor_type:path, $events:expr) => (
-        let token = $holder.add_handler($processor_type($me)).unwrap();
+        {
+            let token = $holder.add_handler($processor_type($me)).unwrap();
 
-        match $holder.get_handler(token) {
-            &mut $processor_type(ref this) => {
-                if let Some(ref sock) = this.sock {
-                    $event_loop.register(
-                        sock,
-                        token,
-                        $events,
-                        PollOpt::level()
-                    ).unwrap();
+            match $holder.get_handler(token) {
+                &mut $processor_type(ref this) => {
+                    if let Some(ref sock) = this.sock {
+                        $event_loop.register(
+                            sock,
+                            token,
+                            $events,
+                            PollOpt::level()
+                        ).unwrap();
+                    }
                 }
             }
+
+            token
         }
     )
 }

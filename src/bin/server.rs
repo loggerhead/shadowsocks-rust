@@ -8,12 +8,12 @@ use shadowsocks::eventloop;
 use shadowsocks::eventloop::{Dispatcher, EventHandler};
 
 fn main() {
-    let mut dns_resolver = DNSResolver::new(None, None);
+    let dns_resolver = DNSResolver::new(None, None);
 
     run_server(dns_resolver);
 }
 
-fn run_server(mut dns_resolver: DNSResolver) {
+fn run_server(dns_resolver: DNSResolver) {
     let mut event_loop = EventLoop::new().unwrap();
     let mut dispatcher = Dispatcher::new();
 

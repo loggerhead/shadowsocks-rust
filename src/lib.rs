@@ -2,9 +2,10 @@
 extern crate try_opt;
 #[macro_use]
 extern crate lazy_static;
+#[macro_use]
+extern crate log;
 
 extern crate mio;
-extern crate log;
 extern crate fnv;
 extern crate rand;
 extern crate regex;

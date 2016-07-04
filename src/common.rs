@@ -1,3 +1,4 @@
+use std::ops::{Index, IndexMut};
 use std::str;
 use std::io::prelude::*;
 use std::io::BufReader;
@@ -61,5 +62,23 @@ impl<K, V> Dict<K, V>
         } else {
             false
         }
+    }
+}
+
+impl<K, V> Index<K> for Dict<K, V>
+    where K: Hash + Eq
+{
+    type Output = V;
+
+    fn index(&self, index: K) -> &V {
+        self.get(&index).expect("invalid index")
+    }
+}
+
+impl<K, V> IndexMut<K> for Dict<K, V>
+    where K: Hash + Eq
+{
+    fn index_mut(&mut self, index: K) -> &mut V {
+        self.get_mut(&index).expect("invalid index")
     }
 }

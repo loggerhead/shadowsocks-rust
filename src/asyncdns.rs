@@ -12,8 +12,10 @@ use network;
 use network::{NetworkWriteBytes, NetworkReadBytes};
 use mio::{Handler, EventLoop, EventSet, PollOpt, Token};
 use mio::udp::{UdpSocket};
+use eventloop;
 use eventloop::{EventHandler, Dispatcher, Processor};
 use std::mem::transmute;
+use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 
 
 // All communications inside of the domain protocol are carried in a single
@@ -133,7 +135,7 @@ fn build_request(address: &str, qtype: u16) -> Option<Vec<u8>> {
 //        The format of this information varies according to the TYPE and CLASS
 //        of the resource record. For example, the if the TYPE is A
 //        and the CLASS is IN, the RDATA field is a 4 octet ARPA Internet address.
-fn parse_ip(addrtype: u16, data: &Vec<u8>, length: usize, offset: usize) -> Option<String> {
+fn parse_ip(addrtype: u16, data: &[u8], length: usize, offset: usize) -> Option<String> {
     let ip_part = try_opt!(slice2str(&data[offset..(offset + length)]));
 
     let ip = match addrtype {
@@ -147,7 +149,7 @@ fn parse_ip(addrtype: u16, data: &Vec<u8>, length: usize, offset: usize) -> Opti
 }
 
 // For detail, see page 29 of RFC 1035
-fn parse_name(data: &Vec<u8>, offset: u16) -> Option<(u16, String)> {
+fn parse_name(data: &[u8], offset: u16) -> Option<(u16, String)> {
     let mut p = offset as usize;
     let mut l = data[p];
     let mut labels: Vec<String> = Vec::new();
@@ -158,7 +160,7 @@ fn parse_name(data: &Vec<u8>, offset: u16) -> Option<(u16, String)> {
             //    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
             //    | 1  1|                OFFSET                   |
             //    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
-            let mut ptr = try_opt!(Cursor::new(data).get_u16());
+            let mut ptr = try_opt!(Cursor::new(&data[p..p + 2]).get_u16());
             ptr &= 0x3FFF;
             let r = try_opt!(parse_name(data, ptr));
             labels.push(r.1);
@@ -172,11 +174,11 @@ fn parse_name(data: &Vec<u8>, offset: u16) -> Option<(u16, String)> {
         l = data[p];
     }
 
-    Some((1 - offset + p as u16, labels.join(".")))
+    Some((p as u16 + 1 - offset, labels.join(".")))
 }
 
 // For detail, see page 27, 28 of RFC 1035
-fn parse_record(data: &Vec<u8>, offset: u16, question: bool) -> Option<(u16, ResponseRecord)> {
+fn parse_record(data: &[u8], offset: u16, question: bool) -> Option<(u16, ResponseRecord)> {
     let (nlen, name) = try_opt!(parse_name(data, offset));
 
     // The question section format:
@@ -241,7 +243,7 @@ fn parse_record(data: &Vec<u8>, offset: u16, question: bool) -> Option<(u16, Res
     Some(res)
 }
 
-fn parse_header(data: &Vec<u8>) -> Option<ResponseHeader> {
+fn parse_header(data: &[u8]) -> Option<ResponseHeader> {
     if data.len() < 12 {
         return None;
     }
@@ -263,11 +265,11 @@ fn parse_header(data: &Vec<u8>) -> Option<ResponseHeader> {
     Some((id, qr, tc, ra, rcode, qdcount, ancount, nscount, arcount))
 }
 
-fn parse_records(data: &Vec<u8>, offset: u16, count: u16, question: bool) -> Option<(u16, Vec<ResponseRecord>)> {
+fn parse_records(data: &[u8], offset: u16, count: u16, question: bool) -> Option<(u16, Vec<ResponseRecord>)> {
     let mut records: Vec<ResponseRecord> = Vec::new();
     let mut offset = offset;
 
-    for _ in 0..count {
+    for _i in 0..count {
         let (len, record) = try_opt!(parse_record(data, offset, question));
         offset += len;
         records.push(record);
@@ -276,7 +278,7 @@ fn parse_records(data: &Vec<u8>, offset: u16, count: u16, question: bool) -> Opt
     Some((offset, records))
 }
 
-fn parse_response(data: &Vec<u8>) -> Option<DNSResponse> {
+fn parse_response(data: &[u8]) -> Option<DNSResponse> {
     if data.len() < 12 {
         return None;
     }
@@ -289,7 +291,7 @@ fn parse_response(data: &Vec<u8>) -> Option<DNSResponse> {
         let (offset, qds) = try_opt!(parse_records(data, offset, qdcount, true));
         let (_offset, ans) = try_opt!(parse_records(data, offset, ancount, false));
 
-        let mut response = DNSResponse::new();
+            let mut response = DNSResponse::new();
         if qds.len() > 0 {
             response.hostname = qds[0].0.clone();
         }
@@ -299,6 +301,7 @@ fn parse_response(data: &Vec<u8>) -> Option<DNSResponse> {
         for an in ans {
             response.answers.push((an.1, an.2, an.3))
         }
+
         return Some(response);
     } else {
         return None;
@@ -360,7 +363,7 @@ pub struct DNSResolver {
     hosts: Dict<String, String>,
     cache: Dict<String, String>,
     hostname_status: Dict<String, HostnameStatus>,
-    hostname_to_cb: Dict<String, Vec<&'static mut Callback>>,
+    // hostname_to_cb: Dict<String, Vec<Callback>>,
     sock: Option<UdpSocket>,
     servers: Vec<String>,
     qtypes: Vec<u16>,
@@ -373,7 +376,7 @@ impl DNSResolver {
             hosts: Dict::new(),
             cache: Dict::new(),
             hostname_status: Dict::new(),
-            hostname_to_cb: Dict::new(),
+            // hostname_to_cb: Dict::new(),
             sock: None,
             qtypes: Vec::new(),
         };
@@ -430,7 +433,21 @@ impl DNSResolver {
         self.hosts.put("localhost".to_string(), "127.0.0.1".to_string());
     }
 
-    pub fn resolve(&mut self, hostname: String, callback: &'static mut Callback) {
+    fn send_request(&self, hostname: String, qtype: u16) {
+        let req = build_request(&hostname, qtype).unwrap();
+        if let Some(ref sock) = self.sock {
+            for server in self.servers.iter() {
+                let addr = SocketAddr::V4(SocketAddrV4::from_str(&format!("{}:53", server)).unwrap());
+                sock.send_to(&req, &addr);
+            }
+        } else {
+            panic!("DNS socket closed");
+        }
+    }
+
+    pub fn resolve<F>(&mut self, hostname: String, mut callback: F)
+        where F: FnMut(Option<(String, String)>, Option<&str>)
+    {
         if hostname.len() == 0 {
             callback(None, Some("empty hostname"));
         } else if network::is_ip(&hostname) {
@@ -445,36 +462,79 @@ impl DNSResolver {
             let errmsg = format!("invalid hostname: {}", hostname);
             callback(None, Some(&errmsg));
         } else {
-            let mut arr = self.hostname_to_cb.get_mut(&hostname);
-            match arr {
-                Some(arr) => {
-                    arr.push(callback);
+            // let need_init = match self.hostname_to_cb.get(&hostname) {
+            //     None => true,
+            //     Some(_) => false,
+            // };
+
+            // if need_init {
+            //     self.hostname_status[hostname.clone()] = HostnameStatus::First;
+            //     self.hostname_to_cb[hostname.clone()] = vec![callback];
+            //     // self.cb_to_hostname[callback] = hostname;
+            // } else {
+            //     let arr = self.hostname_to_cb.get_mut(&hostname).unwrap();
+            //     arr.push(callback);
+            // }
+
+            self.send_request(hostname, self.qtypes[0]);
+        }
+    }
+
+    fn handle_data(&self, data: &[u8]) {
+        parse_response(data);
+    }
+
+    pub fn handle_event(&mut self, event_loop: &mut EventLoop<Dispatcher>, events: EventSet) {
+        if events.is_error() {
+
+        } else {
+            let mut buf = [0u8; 1024];
+            if let Some(ref sock) = self.sock {
+                if let Ok(Some((len, _addr))) = sock.recv_from(&mut buf) {
+                    self.handle_data(&buf[..len]);
+                } else {
+                    panic!("DNS socket receive error");
                 }
-                None => {
-                    // self.hostname_status[hostname] = HostnameStatus::First;
-                }
+            } else {
+                panic!("DNS socket closed");
             }
         }
     }
 
-    pub fn handle_event(&mut self, event_loop: &mut EventLoop<Dispatcher>, events: EventSet) {
-
-    }
-
-    pub fn add_to_loop(mut self, event_loop: &mut EventLoop<Dispatcher>, dispatcher: &mut Dispatcher) {
+    pub fn add_to_loop(mut self, event_loop: &mut EventLoop<Dispatcher>, dispatcher: &mut Dispatcher) -> Token {
         self.sock = UdpSocket::v4().ok();
-        register_handler!(self, event_loop, dispatcher, Processor::DNS, EventSet::readable());
+        register_handler!(self, event_loop, dispatcher, Processor::DNS, EventSet::readable())
     }
 }
 
 
+#[cfg(test)]
+fn print_hostname_ip(hostname_ip: Option<(String, String)>, errmsg: Option<&str>) {
+
+}
+
 #[test]
 fn test() {
-    let r = build_request("google.com", QTYPE_A).unwrap();
-    for (i, c) in r.iter().enumerate() {
-        print!("{:02X}  ", c);
-        if i & 1 == 1 {
-            println!("");
+    // let r = build_request("google.com", QTYPE_A).unwrap();
+    // for (i, c) in r.iter().enumerate() {
+    //     print!("{:02X}  ", c);
+    //     if i & 1 == 1 {
+    //         println!("");
+    //     }
+    // }
+
+    let dns_resolver = DNSResolver::new(None, None);
+    let mut event_loop = EventLoop::new().unwrap();
+    let mut dispatcher = Dispatcher::new();
+
+    let token = dns_resolver.add_to_loop(&mut event_loop, &mut dispatcher);
+
+    match dispatcher.get_handler(token) {
+        &mut Processor::DNS(ref mut resolver) => {
+            resolver.resolve("baidu.com".to_string(), print_hostname_ip);
+            // resolver.resolve("bilibili.com".to_string(), print_hostname_ip);
         }
     }
+
+    eventloop::run(&mut event_loop, &mut dispatcher);
 }
