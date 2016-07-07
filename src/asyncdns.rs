@@ -369,7 +369,7 @@ pub struct DNSResolver {
     qtypes: Vec<u16>,
 }
 
-// TODO: add LRU `self.cache` to cache query result
+// TODO: add LRU `self.cache` to cache query result, see https://github.com/contain-rs/lru-cache
 impl DNSResolver {
     pub fn new(server_list: Option<Vec<String>>, prefer_ipv6: Option<bool>) -> DNSResolver {
         let mut this = DNSResolver {
@@ -559,9 +559,9 @@ impl DNSResolver {
         }
     }
 
-    pub fn add_to_loop(mut self, event_loop: &mut EventLoop<Dispatcher>, dispatcher: &mut Dispatcher) -> Token {
+    pub fn add_to_loop(mut self, dispatcher: &mut Dispatcher) -> Token {
         self.sock = UdpSocket::v4().ok();
-        register_handler!(self, event_loop, dispatcher, Processor::DNS, EventSet::readable())
+        register_handler!(self, dispatcher, Processor::DNS, EventSet::readable())
         // TODO: see `handle_periodic` in `asyncdns.py`
     }
 }

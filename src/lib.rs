@@ -8,6 +8,7 @@ extern crate log;
 extern crate mio;
 extern crate fnv;
 extern crate rand;
+extern crate toml;
 extern crate regex;
 extern crate byteorder;
 extern crate env_logger;
@@ -16,5 +17,7 @@ extern crate env_logger;
 pub mod eventloop;
 #[macro_use]
 pub mod network;
+pub mod shell;
 pub mod common;
 pub mod asyncdns;
+pub mod tcprelay;
