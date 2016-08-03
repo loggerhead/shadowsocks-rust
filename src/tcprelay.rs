@@ -47,7 +47,7 @@ impl Processor for TCPRelay {
             match self.listener.accept() {
                 Ok(Some((conn, _addr))) => {
                     if let Some(ref dispatcher) = self.dispatcher {
-                        let mut handler = TCPRelayHandler::new(conn);
+                        let handler = TCPRelayHandler::new(conn);
                         if handler.add_to_loop(dispatcher.clone()).is_err() {
                             error!("Cannot add TCP handler to eventloop");
                         }
@@ -93,7 +93,10 @@ impl Processor for TCPRelayHandler {
     fn handle_event(&mut self, token: Token, events: EventSet) {
         if events.is_error() {
             error!("events error happened on TCPRelay");
-        } else {
+            return;
+        }
+
+        if Some(token) == self.local_token {
             /*
             let mut buf = [0u8; 1024];
             let mut recevied = None;
@@ -112,6 +115,7 @@ impl Processor for TCPRelayHandler {
                 self.handle_data(recevied.unwrap());
             }
             */
+        } else if Some(token) == self.remote_token {
         }
     }
 }
