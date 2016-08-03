@@ -9,7 +9,7 @@ use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4};
 use rand;
 use env_logger;
 use regex::Regex;
-use mio::{EventSet};
+use mio::{Token, EventSet};
 use mio::udp::{UdpSocket};
 
 use common;
@@ -362,6 +362,7 @@ enum HostnameStatus {
 pub type Callback = FnMut(Option<(String, String)>, Option<&str>);
 
 pub struct DNSResolver {
+    token: Option<Token>,
     hosts: Dict<String, String>,
     cache: Dict<String, String>,
     hostname_status: Dict<String, HostnameStatus>,
@@ -375,6 +376,7 @@ pub struct DNSResolver {
 impl DNSResolver {
     pub fn new(server_list: Option<Vec<String>>, prefer_ipv6: Option<bool>) -> DNSResolver {
         let mut this = DNSResolver {
+            token: None,
             servers: Vec::new(),
             hosts: Dict::new(),
             cache: Dict::new(),
@@ -546,6 +548,7 @@ impl DNSResolver {
         let this = Rc::new(RefCell::new(self));
         let mut dispatcher = dispatcher.borrow_mut();
         let token = dispatcher.add_handler(this.clone()).unwrap();
+        this.borrow_mut().token = Some(token);
 
         let res = if let Some(ref socket) = this.borrow().sock {
             dispatcher.register(socket, token, EventSet::readable()).map(|_| this.clone())
@@ -561,7 +564,7 @@ impl DNSResolver {
 }
 
 impl Processor for DNSResolver {
-    fn handle_event(&mut self, events: EventSet) {
+    fn handle_event(&mut self, _token: Token, events: EventSet) {
         if events.is_error() {
             error!("events error happened on DNS socket");
             // TODO: close `self.sock` and reregister to eventloop

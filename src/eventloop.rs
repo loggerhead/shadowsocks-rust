@@ -7,7 +7,7 @@ use mio::{Token, Handler, EventSet, EventLoop, PollOpt, Evented};
 
 
 pub trait Processor {
-    fn handle_event(&mut self, events: EventSet);
+    fn handle_event(&mut self, token: Token, events: EventSet);
 }
 
 
@@ -27,6 +27,10 @@ impl Dispatcher {
 
     pub fn add_handler(&mut self, handler: Rc<RefCell<Processor>>) -> Option<Token> {
         self.handlers.insert_with(move |_token| handler)
+    }
+
+    pub fn remove_handler(&mut self, token: Token) {
+        self.handlers.remove(token);
     }
 
     pub fn get_event_loop(&self) -> Rc<RefCell<EventLoop<Dispatcher>>> {
@@ -52,8 +56,8 @@ impl Handler for Dispatcher {
     type Timeout = i32;
     type Message = ();
 
-    fn ready(&mut self, event_loop: &mut EventLoop<Dispatcher>, token: Token, events: EventSet) {
+    fn ready(&mut self, _event_loop: &mut EventLoop<Dispatcher>, token: Token, events: EventSet) {
         let mut handler = self.handlers[token].borrow_mut();
-        handler.handle_event(events);
+        handler.handle_event(token, events);
     }
 }

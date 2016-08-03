@@ -4,16 +4,16 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::io::Result;
 
-use mio::{EventSet};
+use mio::{Token, EventSet};
 use mio::tcp::{TcpListener, TcpStream};
 use eventloop::{Dispatcher, Processor};
 
 
 pub struct TCPRelay {
+    token: Option<Token>,
     // hostname_to_cb: Dict<String, Vec<Box<Callback>>>,
     dispatcher: Option<Rc<RefCell<Dispatcher>>>,
     listener: TcpListener,
-    handlers: Vec<Rc<RefCell<TCPRelayHandler>>>,
 }
 
 impl TCPRelay {
@@ -21,9 +21,9 @@ impl TCPRelay {
         let socket_addr = SocketAddrV4::from_str("127.0.0.1:8488").unwrap();
 
         TCPRelay {
+            token: None,
             dispatcher: None,
             listener: TcpListener::bind(&SocketAddr::V4(socket_addr)).unwrap(),
-            handlers: vec![],
         }
     }
 
@@ -32,13 +32,15 @@ impl TCPRelay {
         let this = Rc::new(RefCell::new(self));
         let mut dispatcher = dispatcher.borrow_mut();
         let token = dispatcher.add_handler(this.clone()).unwrap();
+        this.borrow_mut().token = Some(token);
+
         let listener = &this.borrow().listener;
         dispatcher.register(listener, token, EventSet::readable()).map(|_| this.clone())
     }
 }
 
 impl Processor for TCPRelay {
-    fn handle_event(&mut self, events: EventSet) {
+    fn handle_event(&mut self, _token: Token, events: EventSet) {
         if events.is_error() {
             error!("events error happened on TCPRelay");
         } else {
@@ -46,9 +48,7 @@ impl Processor for TCPRelay {
                 Ok(Some((conn, _addr))) => {
                     if let Some(ref dispatcher) = self.dispatcher {
                         let mut handler = TCPRelayHandler::new(conn);
-                        if let Ok(handler) = handler.add_to_loop(dispatcher.clone()) {
-                            self.handlers.push(handler);
-                        } else {
+                        if handler.add_to_loop(dispatcher.clone()).is_err() {
                             error!("Cannot add TCP handler to eventloop");
                         }
                     }
@@ -64,13 +64,17 @@ impl Processor for TCPRelay {
 
 
 struct TCPRelayHandler {
+    local_token: Option<Token>,
     local_sock: TcpStream,
+    remote_token: Option<Token>,
 }
 
 impl TCPRelayHandler {
     fn new(local_sock: TcpStream) -> TCPRelayHandler {
         TCPRelayHandler {
+            local_token: None,
             local_sock: local_sock,
+            remote_token: None,
         }
     }
 
@@ -78,6 +82,7 @@ impl TCPRelayHandler {
         let this = Rc::new(RefCell::new(self));
         let mut dispatcher = dispatcher.borrow_mut();
         let token = dispatcher.add_handler(this.clone()).unwrap();
+        this.borrow_mut().local_token = Some(token);
 
         let local_sock = &this.borrow().local_sock;
         dispatcher.register(local_sock, token, EventSet::readable()).map(|_| this.clone())
@@ -85,10 +90,28 @@ impl TCPRelayHandler {
 }
 
 impl Processor for TCPRelayHandler {
-    fn handle_event(&mut self, events: EventSet) {
+    fn handle_event(&mut self, token: Token, events: EventSet) {
         if events.is_error() {
             error!("events error happened on TCPRelay");
         } else {
+            /*
+            let mut buf = [0u8; 1024];
+            let mut recevied = None;
+
+            if let Some(ref sock) = self.sock {
+                if let Ok(Some((len, _addr))) = sock.recv_from(&mut buf) {
+                    recevied = Some(&buf[..len]);
+                } else {
+                    warn!("receive error on DNS socket");
+                }
+            } else {
+                error!("DNS socket closed");
+            }
+
+            if recevied.is_some() {
+                self.handle_data(recevied.unwrap());
+            }
+            */
         }
     }
 }
