@@ -2,8 +2,8 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::io::Result;
 
-use mio::{Token, Handler, EventSet, EventLoop, PollOpt, Evented};
 use mio::util::Slab;
+use mio::{Token, Handler, EventSet, EventLoop, PollOpt, Evented};
 
 
 pub trait Processor {

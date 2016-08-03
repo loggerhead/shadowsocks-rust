@@ -7,16 +7,16 @@ use std::str::FromStr;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4};
 
 use rand;
+use env_logger;
 use regex::Regex;
+use mio::{EventSet};
+use mio::udp::{UdpSocket};
+
 use common;
 use common::{Dict, slice2str, slice2string};
 use network;
 use network::{NetworkWriteBytes, NetworkReadBytes};
-use mio::{EventLoop, EventSet, PollOpt, Token, Evented};
-use mio::udp::{UdpSocket};
-use eventloop;
 use eventloop::{Dispatcher, Processor};
-use env_logger;
 
 
 // All communications inside of the domain protocol are carried in a single
@@ -362,7 +362,6 @@ enum HostnameStatus {
 pub type Callback = FnMut(Option<(String, String)>, Option<&str>);
 
 pub struct DNSResolver {
-
     hosts: Dict<String, String>,
     cache: Dict<String, String>,
     hostname_status: Dict<String, HostnameStatus>,
@@ -444,7 +443,10 @@ impl DNSResolver {
             for server in self.servers.iter() {
                 let server = format!("{}:53", server);
                 let addr = SocketAddr::V4(SocketAddrV4::from_str(&server).unwrap());
-                sock.send_to(&req, &addr);
+                if let Err(e) = sock.send_to(&req, &addr) {
+                    error!("{}", e);
+                    return;
+                }
             }
         } else {
             error!("DNS socket closed");
