@@ -119,10 +119,11 @@ fn build_request(address: &str, qtype: u16) -> Option<Vec<u8>> {
     try_opt!(r.put_u16(0));
     try_opt!(r.put_u16(0));
     // address
-    if let Some(addr) = build_address(address) {
-        r.extend(addr);
-    } else {
-        return None;
+    match build_address(address) {
+        Some(addr) => r.extend(addr),
+        None => {
+            return None;
+        }
     }
     // qtype and qclass
     try_opt!(r.put_u16(qtype));
@@ -284,30 +285,31 @@ fn parse_response(data: &[u8]) -> Option<DNSResponse> {
         return None;
     }
 
-    if let Some(header) = parse_header(data) {
-        let (_id, _qr, _tc, _ra, _rcode, qdcount, ancount, _nscount, _arcount) = header;
+    match parse_header(data) {
+        Some(header) => {
+            let (_id, _qr, _tc, _ra, _rcode, qdcount, ancount, _nscount, _arcount) = header;
 
-        let offset = 12u16;
-        let (offset, qds) = try_opt!(parse_records(data, offset, qdcount, true));
-        let (_offset, ans) = try_opt!(parse_records(data, offset, ancount, false));
-        // We don't need to parse the authority records and the additional records
-        let (_offset, _nss) = try_opt!(parse_records(data, _offset, _nscount, false));
-        let (_offset, _ars) = try_opt!(parse_records(data, _offset, _arcount, false));
+            let offset = 12u16;
+            let (offset, qds) = try_opt!(parse_records(data, offset, qdcount, true));
+            let (_offset, ans) = try_opt!(parse_records(data, offset, ancount, false));
+            // We don't need to parse the authority records and the additional records
+            let (_offset, _nss) = try_opt!(parse_records(data, _offset, _nscount, false));
+            let (_offset, _ars) = try_opt!(parse_records(data, _offset, _arcount, false));
 
-        let mut response = DNSResponse::new();
-        if qds.len() > 0 {
-            response.hostname = qds[0].0.clone();
-        }
-        for an in qds {
-            response.questions.push((an.1, an.2, an.3))
-        }
-        for an in ans {
-            response.answers.push((an.1, an.2, an.3))
-        }
+            let mut response = DNSResponse::new();
+            if qds.len() > 0 {
+                response.hostname = qds[0].0.clone();
+            }
+            for an in qds {
+                response.questions.push((an.1, an.2, an.3))
+            }
+            for an in ans {
+                response.answers.push((an.1, an.2, an.3))
+            }
 
-        Some(response)
-    } else {
-        None
+            Some(response)
+        }
+        None => None
     }
 }
 
@@ -386,11 +388,11 @@ impl DNSResolver {
             qtypes: Vec::new(),
         };
 
-        if let Some(servers) = server_list {
-            this.servers = servers;
-        } else {
-            this.parse_resolv();
+        match server_list {
+            Some(servers) => this.servers = servers,
+            None => this.parse_resolv(),
         }
+
         if prefer_ipv6.is_some() && prefer_ipv6.unwrap() {
             this.qtypes = vec![QTYPE_AAAA, QTYPE_A];
         } else {
@@ -440,18 +442,19 @@ impl DNSResolver {
 
     fn send_request(&self, hostname: String, qtype: u16) {
         let req = build_request(&hostname, qtype).unwrap();
-        if let Some(ref sock) = self.sock {
-            trace!("send query request of {} to servers", &hostname);
-            for server in self.servers.iter() {
-                let server = format!("{}:53", server);
-                let addr = SocketAddr::V4(SocketAddrV4::from_str(&server).unwrap());
-                if let Err(e) = sock.send_to(&req, &addr) {
-                    error!("{}", e);
-                    return;
+        match self.sock {
+            Some(ref sock) => {
+                trace!("send query request of {} to servers", &hostname);
+                for server in self.servers.iter() {
+                    let server = format!("{}:53", server);
+                    let addr = SocketAddr::V4(SocketAddrV4::from_str(&server).unwrap());
+                    if let Err(e) = sock.send_to(&req, &addr) {
+                        error!("{}", e);
+                        return;
+                    }
                 }
             }
-        } else {
-            error!("DNS socket closed");
+            None => error!("DNS socket closed"),
         }
     }
 
@@ -508,37 +511,38 @@ impl DNSResolver {
     }
 
     fn handle_data(&mut self, data: &[u8]) {
-        if let Some(response) = parse_response(data) {
-            let mut ip = String::new();
-            for answer in response.answers.iter() {
-                if (answer.1 == QTYPE_A || answer.1 == QTYPE_AAAA) && answer.2 == QCLASS_IN {
-                    ip = answer.0.clone();
-                    break;
-                }
-            }
-
-            let hostname = response.hostname;
-            let hostname_status = match self.hostname_status.get(&hostname) {
-                Some(&HostnameStatus::First) => 1,
-                Some(&HostnameStatus::Second) => 2,
-                _ => 0
-            };
-
-            if ip.len() == 0 && hostname_status == 1 {
-                self.hostname_status[hostname.clone()] = HostnameStatus::Second;
-                self.send_request(hostname, self.qtypes[1]);
-            } else if ip.len() > 0 {
-                self.call_callback(hostname, ip);
-            } else if hostname_status == 2 {
-                for question in response.questions {
-                    if question.1 == self.qtypes[1] {
-                        self.call_callback(hostname, String::new());
+        match parse_response(data) {
+            Some(response) => {
+                let mut ip = String::new();
+                for answer in response.answers.iter() {
+                    if (answer.1 == QTYPE_A || answer.1 == QTYPE_AAAA) && answer.2 == QCLASS_IN {
+                        ip = answer.0.clone();
                         break;
                     }
                 }
+
+                let hostname = response.hostname;
+                let hostname_status = match self.hostname_status.get(&hostname) {
+                    Some(&HostnameStatus::First) => 1,
+                    Some(&HostnameStatus::Second) => 2,
+                    _ => 0
+                };
+
+                if ip.len() == 0 && hostname_status == 1 {
+                    self.hostname_status[hostname.clone()] = HostnameStatus::Second;
+                    self.send_request(hostname, self.qtypes[1]);
+                } else if ip.len() > 0 {
+                    self.call_callback(hostname, ip);
+                } else if hostname_status == 2 {
+                    for question in response.questions {
+                        if question.1 == self.qtypes[1] {
+                            self.call_callback(hostname, String::new());
+                            break;
+                        }
+                    }
+                }
             }
-        } else {
-            info!("invalid DNS response");
+            None => info!("invalid DNS response"),
         }
     }
 
@@ -550,10 +554,11 @@ impl DNSResolver {
         let token = dispatcher.add_handler(this.clone()).unwrap();
         this.borrow_mut().token = Some(token);
 
-        let res = if let Some(ref socket) = this.borrow().sock {
-            dispatcher.register(socket, token, EventSet::readable()).map(|_| this.clone())
-        } else {
-            Ok(this.clone())
+        let res = match this.borrow().sock {
+            Some(ref socket) => {
+                dispatcher.register(socket, token, EventSet::readable()).map(|_| this.clone())
+            }
+            None => Ok(this.clone()),
         };
 
         res
@@ -572,14 +577,14 @@ impl Processor for DNSResolver {
             let mut buf = [0u8; 1024];
             let mut recevied = None;
 
-            if let Some(ref sock) = self.sock {
-                if let Ok(Some((len, _addr))) = sock.recv_from(&mut buf) {
-                    recevied = Some(&buf[..len]);
-                } else {
-                    warn!("receive error on DNS socket");
+            match self.sock {
+                Some(ref sock) => {
+                    match sock.recv_from(&mut buf) {
+                        Ok(Some((len, _addr))) => recevied = Some(&buf[..len]),
+                        _ => warn!("receive error on DNS socket"),
+                    }
                 }
-            } else {
-                error!("DNS socket closed");
+                None => error!("DNS socket closed"),
             }
 
             if recevied.is_some() {

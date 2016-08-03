@@ -2,7 +2,7 @@ use std::str::FromStr;
 use std::net::{SocketAddr, SocketAddrV4};
 use std::rc::Rc;
 use std::cell::RefCell;
-use std::io::Result;
+use std::io::{Result, Error, ErrorKind};
 
 use mio::{Token, EventSet};
 use mio::tcp::{TcpListener, TcpStream};
@@ -65,7 +65,7 @@ impl Processor for TCPRelay {
 
 struct TCPRelayHandler {
     local_token: Option<Token>,
-    local_sock: TcpStream,
+    local_sock: Option<TcpStream>,
     remote_token: Option<Token>,
 }
 
@@ -73,7 +73,7 @@ impl TCPRelayHandler {
     fn new(local_sock: TcpStream) -> TCPRelayHandler {
         TCPRelayHandler {
             local_token: None,
-            local_sock: local_sock,
+            local_sock: Some(local_sock),
             remote_token: None,
         }
     }
@@ -84,8 +84,14 @@ impl TCPRelayHandler {
         let token = dispatcher.add_handler(this.clone()).unwrap();
         this.borrow_mut().local_token = Some(token);
 
-        let local_sock = &this.borrow().local_sock;
-        dispatcher.register(local_sock, token, EventSet::readable()).map(|_| this.clone())
+        let res = match this.borrow().local_sock {
+            Some(ref local_sock) => {
+                dispatcher.register(local_sock, token, EventSet::readable()).map(|_| this.clone())
+            }
+            None => Err(Error::new(ErrorKind::NotConnected, "Local socket is not created")),
+        };
+
+        res
     }
 }
 
@@ -97,6 +103,12 @@ impl Processor for TCPRelayHandler {
         }
 
         if Some(token) == self.local_token {
+            if events.is_readable() || events.is_hup() {
+            }
+
+            if events.is_writable() {
+
+            }
             /*
             let mut buf = [0u8; 1024];
             let mut recevied = None;
