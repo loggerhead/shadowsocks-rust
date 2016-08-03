@@ -1,8 +1,11 @@
 use std::fmt;
-use std::io::Cursor;
+use std::rc::Rc;
+use std::cell::RefCell;
+use std::io::{Result, Cursor};
 use std::str;
 use std::str::FromStr;
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4};
+
 use rand;
 use regex::Regex;
 use common;
@@ -13,7 +16,6 @@ use mio::{EventLoop, EventSet, PollOpt, Token, Evented};
 use mio::udp::{UdpSocket};
 use eventloop;
 use eventloop::{Dispatcher, Processor};
-use std::net::{SocketAddr, SocketAddrV4};
 use env_logger;
 
 
@@ -360,6 +362,7 @@ enum HostnameStatus {
 pub type Callback = FnMut(Option<(String, String)>, Option<&str>);
 
 pub struct DNSResolver {
+
     hosts: Dict<String, String>,
     cache: Dict<String, String>,
     hostname_status: Dict<String, HostnameStatus>,
@@ -535,7 +538,28 @@ impl DNSResolver {
         }
     }
 
-    pub fn handle_event(&mut self, event_loop: &mut EventLoop<Dispatcher>, events: EventSet) {
+    pub fn add_to_loop(mut self, dispatcher: Rc<RefCell<Dispatcher>>) -> Result<Rc<RefCell<DNSResolver>>> {
+        self.sock = UdpSocket::v4().ok();
+
+        let this = Rc::new(RefCell::new(self));
+        let mut dispatcher = dispatcher.borrow_mut();
+        let token = dispatcher.add_handler(this.clone()).unwrap();
+
+        let res = if let Some(ref socket) = this.borrow().sock {
+            dispatcher.register(socket, token, EventSet::readable()).map(|_| this.clone())
+        } else {
+            Ok(this.clone())
+        };
+
+        res
+
+        // register_handler!(self, dispatcher, Processor::DNS, EventSet::readable())
+        // TODO: see `handle_periodic` in `asyncdns.py`
+    }
+}
+
+impl Processor for DNSResolver {
+    fn handle_event(&mut self, events: EventSet) {
         if events.is_error() {
             error!("events error happened on DNS socket");
             // TODO: close `self.sock` and reregister to eventloop
@@ -558,14 +582,7 @@ impl DNSResolver {
             }
         }
     }
-
-    pub fn add_to_loop(mut self, dispatcher: &mut Dispatcher) -> Token {
-        self.sock = UdpSocket::v4().ok();
-        register_handler!(self, dispatcher, Processor::DNS, EventSet::readable())
-        // TODO: see `handle_periodic` in `asyncdns.py`
-    }
 }
-
 
 #[cfg(test)]
 fn print_hostname_ip(hostname_ip: Option<(String, String)>, errmsg: Option<&str>) {
@@ -603,17 +620,11 @@ fn test() {
 
 
     let dns_resolver = DNSResolver::new(None, None);
-    let mut event_loop = EventLoop::new().unwrap();
-    let mut dispatcher = Dispatcher::new();
+    let mut dispatcher = Rc::new(RefCell::new(Dispatcher::new()));
 
-    let token = dns_resolver.add_to_loop(&mut event_loop, &mut dispatcher);
+    let dns_resolver = dns_resolver.add_to_loop(dispatcher.clone()).unwrap();
+    dns_resolver.borrow_mut().resolve("baidu.com".to_string(), print_hostname_ip);
+    dns_resolver.borrow_mut().resolve("bilibili.com".to_string(), print_hostname_ip);
 
-    match dispatcher.get_handler(token) {
-        &mut Processor::DNS(ref mut resolver) => {
-            resolver.resolve("baidu.com".to_string(), print_hostname_ip);
-            resolver.resolve("bilibili.com".to_string(), print_hostname_ip);
-        }
-    }
-
-    eventloop::run(&mut event_loop, &mut dispatcher);
+    dispatcher.borrow_mut().run();
 }

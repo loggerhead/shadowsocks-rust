@@ -1,12 +1,11 @@
 extern crate mio;
 extern crate env_logger;
-
 extern crate shadowsocks;
 
-use mio::EventLoop;
+use std::rc::Rc;
+use std::cell::RefCell;
 
 use shadowsocks::shell;
-use shadowsocks::eventloop;
 use shadowsocks::eventloop::Dispatcher;
 use shadowsocks::asyncdns::DNSResolver;
 
@@ -16,8 +15,8 @@ fn main() {
 
     let dns_resolver = DNSResolver::new(None, None);
 
-    let mut dispatcher = Dispatcher::new();
-    dns_resolver.add_to_loop(&mut dispatcher);
+    let dispatcher = Rc::new(RefCell::new(Dispatcher::new()));
+    dns_resolver.add_to_loop(dispatcher.clone()).unwrap();
 
-    dispatcher.run();
+    dispatcher.borrow_mut().run();
 }
