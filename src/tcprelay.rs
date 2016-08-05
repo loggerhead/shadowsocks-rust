@@ -10,8 +10,16 @@ use mio::tcp::{TcpListener, TcpStream};
 use eventloop::{Dispatcher, Processor};
 use asyncdns::DNSResolver;
 
+
+const METHOD_NOAUTH: u8 = 0;
 const BUF_SIZE: usize = 32 * 1024;
 
+
+enum CheckAuthResult {
+    Success,
+    BadSocksHeader,
+    NoAcceptableMethods,
+}
 // for each opening port, we have a TCP Relay
 // for each connection, we have a TCP Relay Handler to handle the connection
 //
@@ -125,31 +133,66 @@ impl TCPRelayHandler {
 
     }
 
-    fn handle_stage_stream(&self, data: &[u8]) {
+    fn handle_stage_stream(&mut self, data: &[u8]) {
 
     }
 
-    fn handle_stage_connecting(&self, data: &[u8]) {
+    fn handle_stage_connecting(&mut self, data: &[u8]) {
 
     }
 
-    fn handle_stage_addr(&self, data: &[u8]) {
+    fn handle_stage_addr(&mut self, data: &[u8]) {
 
     }
 
     fn handle_stage_init(&mut self, data: &[u8]) {
         match self.check_auth_method(data) {
-            // self.write_to_sock(&[0x05, 0xff], true);
-            _ => {
+            CheckAuthResult::Success => {
+                self.write_to_sock(&[0x05, 0x00], true);
+                self.stage = HandlerStage::Addr;
+            }
+            CheckAuthResult::BadSocksHeader => {
+                self.destroy();
+            }
+            CheckAuthResult::NoAcceptableMethods => {
+                self.write_to_sock(&[0x05, 0xff], true);
+                self.destroy();
+            }
+        }
+    }
+
+    fn check_auth_method(&self, data: &[u8]) -> CheckAuthResult {
+        if data.len() < 3 {
+            warn!("method selection header too short");
+            return CheckAuthResult::BadSocksHeader;
+        }
+
+        let socks_version = data[0];
+        if socks_version != 5 {
+            warn!("unsupported SOCKS protocol version {}", socks_version);
+            return CheckAuthResult::BadSocksHeader;
+        }
+
+        let nmethods = data[1];
+        if nmethods < 1 || data.len() as u8 != nmethods + 2 {
+            warn!("NMETHODS and number of METHODS mismatch");
+            return CheckAuthResult::BadSocksHeader;
+        }
+
+        let mut noauto_exist = false;
+        for method in &data[2..] {
+            if *method == METHOD_NOAUTH {
+                noauto_exist = true;
+                break;
             }
         }
 
-        self.write_to_sock(&[0x05, 0x00], true);
-        self.stage = HandlerStage::Addr;
-    }
+        if !noauto_exist {
+            warn!("none of SOCKS METHOD's requested by client is supported");
+            return CheckAuthResult::NoAcceptableMethods;
+        }
 
-    fn check_auth_method(&self, data: &[u8]) {
-
+        return CheckAuthResult::Success;
     }
 
     fn on_local_read(&mut self) {
@@ -188,6 +231,10 @@ impl TCPRelayHandler {
     }
 
     fn on_local_write(&mut self) {
+    }
+
+    fn destroy(&mut self) {
+
     }
 }
 
