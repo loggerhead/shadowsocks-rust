@@ -4,10 +4,10 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::io::{Read, Result, Error, ErrorKind};
 
-use mio::{Token, EventSet};
-use mio::tcp::{TcpListener, TcpStream};
+use mio::{EventLoop, Token, EventSet, PollOpt};
+use mio::tcp::{TcpStream};
 
-use eventloop::{Dispatcher, Processor};
+use relay::{Relay, Processor};
 use asyncdns::DNSResolver;
 
 
@@ -63,7 +63,7 @@ enum StreamWaitStatus {
 }
 
 
-struct TCPRelayHandler {
+pub struct TCPProcessor {
     stage: HandlerStage,
     dns_resolver: Rc<RefCell<DNSResolver>>,
     is_local: bool,
@@ -75,15 +75,15 @@ struct TCPRelayHandler {
     data_to_write_to_remote: Vec<u8>,
 }
 
-impl TCPRelayHandler {
-    fn new(local_sock: TcpStream, dns_resolver: Rc<RefCell<DNSResolver>>, is_local: bool) -> TCPRelayHandler {
+impl TCPProcessor {
+    pub fn new(local_sock: TcpStream, dns_resolver: Rc<RefCell<DNSResolver>>, is_local: bool) -> TCPProcessor {
         let stage = if is_local {
             HandlerStage::Init
         } else {
             HandlerStage::Addr
         };
 
-        TCPRelayHandler {
+        TCPProcessor {
             stage: stage,
             dns_resolver: dns_resolver,
             is_local: true,
@@ -96,20 +96,28 @@ impl TCPRelayHandler {
         }
     }
 
-    pub fn add_to_loop(mut self, dispatcher: Rc<RefCell<Dispatcher>>) -> Result<Rc<RefCell<TCPRelayHandler>>> {
-        let this = Rc::new(RefCell::new(self));
-        let mut dispatcher = dispatcher.borrow_mut();
-        let token = dispatcher.add_handler(this.clone()).unwrap();
-        this.borrow_mut().local_token = Some(token);
+    pub fn set_remote_token(&mut self, token: Token) {
+        self.remote_token = Some(token);
+    }
 
-        let res = match this.borrow().local_sock {
-            Some(ref local_sock) => {
-                dispatcher.register(local_sock, token, EventSet::readable()).map(|_| this.clone())
-            }
-            None => Err(Error::new(ErrorKind::NotConnected, "Local socket is not created")),
+    pub fn add_to_loop(&mut self, token: Token, event_loop: &mut EventLoop<Relay>, is_local: bool) -> Option<()> {
+        let mut sock = if is_local {
+            self.local_token = Some(token);
+            &mut self.local_sock
+        } else {
+            self.remote_token = Some(token);
+            &mut self.remote_sock
         };
 
-        res
+        match sock {
+            &mut Some(ref mut sock) => {
+                event_loop.register(sock,
+                                    token,
+                                    EventSet::readable(),
+                                    PollOpt::level()).ok()
+            }
+            _ => None
+        }
     }
 
     fn receive_data(&mut self, is_local_sock: bool) -> Result<Vec<u8>> {
@@ -233,13 +241,14 @@ impl TCPRelayHandler {
     fn on_local_write(&mut self) {
     }
 
-    fn destroy(&mut self) {
+    pub fn destroy(&mut self) {
 
     }
 }
 
-impl Processor for TCPRelayHandler {
-    fn handle_event(&mut self, token: Token, events: EventSet) {
+
+impl Processor for TCPProcessor {
+    fn process(&mut self, _event_loop: &mut EventLoop<Relay>, token: Token, events: EventSet) {
         if events.is_error() {
             error!("events error happened on TCPRelay");
             return;
@@ -254,64 +263,6 @@ impl Processor for TCPRelayHandler {
                 self.on_local_write();
             }
         } else if Some(token) == self.remote_token {
-        }
-    }
-}
-
-
-pub struct TCPRelay {
-    is_local: bool,
-    token: Option<Token>,
-    // hostname_to_cb: Dict<String, Vec<Box<Callback>>>,
-    dns_resolver: Rc<RefCell<DNSResolver>>,
-    dispatcher: Option<Rc<RefCell<Dispatcher>>>,
-    listener: TcpListener,
-}
-
-impl TCPRelay {
-    pub fn new(dns_resolver: Rc<RefCell<DNSResolver>>, is_local: bool) -> TCPRelay {
-        let socket_addr = SocketAddrV4::from_str("127.0.0.1:8488").unwrap();
-
-        TCPRelay {
-            is_local: is_local,
-            token: None,
-            dns_resolver: dns_resolver,
-            dispatcher: None,
-            listener: TcpListener::bind(&SocketAddr::V4(socket_addr)).unwrap(),
-        }
-    }
-
-    pub fn add_to_loop(mut self, dispatcher: Rc<RefCell<Dispatcher>>) -> Result<Rc<RefCell<TCPRelay>>> {
-        self.dispatcher = Some(dispatcher.clone());
-        let this = Rc::new(RefCell::new(self));
-        let mut dispatcher = dispatcher.borrow_mut();
-        let token = dispatcher.add_handler(this.clone()).unwrap();
-        this.borrow_mut().token = Some(token);
-
-        let listener = &this.borrow().listener;
-        dispatcher.register(listener, token, EventSet::readable()).map(|_| this.clone())
-    }
-}
-
-impl Processor for TCPRelay {
-    fn handle_event(&mut self, _token: Token, events: EventSet) {
-        if events.is_error() {
-            error!("events error happened on TCPRelay");
-        } else {
-            match self.listener.accept() {
-                Ok(Some((conn, _addr))) => {
-                    if let Some(ref dispatcher) = self.dispatcher {
-                        let handler = TCPRelayHandler::new(conn, self.dns_resolver.clone(), self.is_local);
-                        if handler.add_to_loop(dispatcher.clone()).is_err() {
-                            error!("Cannot add TCP handler to eventloop");
-                        }
-                    }
-                }
-                Ok(None) => { }
-                Err(e) => {
-                    warn!("TCPRelay accept error: {}", e);
-                }
-            }
         }
     }
 }

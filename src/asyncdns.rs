@@ -9,14 +9,14 @@ use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4};
 use rand;
 use env_logger;
 use regex::Regex;
-use mio::{Token, EventSet};
+use mio::{Token, EventSet, EventLoop, PollOpt};
 use mio::udp::{UdpSocket};
 
 use common;
 use common::{Dict, slice2str, slice2string};
 use network;
 use network::{NetworkWriteBytes, NetworkReadBytes};
-use eventloop::{Dispatcher, Processor};
+use relay::{Relay, Processor};
 
 
 // All communications inside of the domain protocol are carried in a single
@@ -546,30 +546,25 @@ impl DNSResolver {
         }
     }
 
-    pub fn add_to_loop(mut self, dispatcher: Rc<RefCell<Dispatcher>>) -> Result<Rc<RefCell<DNSResolver>>> {
+    pub fn add_to_loop(&mut self, token: Token, event_loop: &mut EventLoop<Relay>) {
         self.sock = UdpSocket::v4().ok();
 
-        let this = Rc::new(RefCell::new(self));
-        let mut dispatcher = dispatcher.borrow_mut();
-        let token = dispatcher.add_handler(this.clone()).unwrap();
-        this.borrow_mut().token = Some(token);
-
-        let res = match this.borrow().sock {
-            Some(ref socket) => {
-                dispatcher.register(socket, token, EventSet::readable()).map(|_| this.clone())
+        if let Some(ref socket) = self.sock {
+            if event_loop.register(socket,
+                                   token,
+                                   EventSet::readable(),
+                                   PollOpt::level()).is_err()
+            {
+                error!("add DNSResolver to event_loop failed.");
             }
-            None => Ok(this.clone()),
-        };
-
-        res
-
-        // register_handler!(self, dispatcher, Processor::DNS, EventSet::readable())
-        // TODO: see `handle_periodic` in `asyncdns.py`
+        } else {
+            error!("create UDP socket for DNSResolver failed.");
+        }
     }
 }
 
 impl Processor for DNSResolver {
-    fn handle_event(&mut self, _token: Token, events: EventSet) {
+    fn process(&mut self, event_loop: &mut EventLoop<Relay>, _token: Token, events: EventSet) {
         if events.is_error() {
             error!("events error happened on DNS socket");
             // TODO: close `self.sock` and reregister to eventloop
