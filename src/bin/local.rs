@@ -14,11 +14,12 @@ fn main() {
     env_logger::init().unwrap();
     let config = shell::get_config().expect("Invalid configuration");
 
-    let dns_resolver = DNSResolver::new(None, None);
-    let tcp_server = TCPRelay::new();
-
     let dispatcher = Rc::new(RefCell::new(Dispatcher::new()));
-    dns_resolver.add_to_loop(dispatcher.clone()).unwrap();
+    let dns_resolver = DNSResolver::new(None, None)
+                            .add_to_loop(dispatcher.clone())
+                            .unwrap();
+
+    let tcp_server = TCPRelay::new(dns_resolver.clone(), true);
     tcp_server.add_to_loop(dispatcher.clone()).unwrap();
 
     dispatcher.borrow_mut().run();

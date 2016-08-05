@@ -10,7 +10,6 @@ pub trait Processor {
     fn handle_event(&mut self, token: Token, events: EventSet);
 }
 
-
 pub struct Dispatcher {
     handlers: Slab<Rc<RefCell<Processor>>>,
     event_loop: Rc<RefCell<EventLoop<Dispatcher>>>,
