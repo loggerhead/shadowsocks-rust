@@ -1,4 +1,3 @@
-use std::str::FromStr;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::net::{SocketAddr, SocketAddrV4};
@@ -7,6 +6,7 @@ use mio::util::Slab;
 use mio::{Token, Handler, EventSet, EventLoop, PollOpt};
 use mio::tcp::{TcpListener};
 
+use network::str2addr4;
 use asyncdns::DNSResolver;
 use tcp_processor::TCPProcessor;
 
@@ -29,7 +29,7 @@ pub struct Relay {
 
 impl Relay {
     pub fn new() -> Relay {
-        let socket_addr = SocketAddrV4::from_str("127.0.0.1:8488").unwrap();
+        let socket_addr = str2addr4("127.0.0.1:8488").unwrap();
         let tcp_listener = TcpListener::bind(&SocketAddr::V4(socket_addr)).unwrap();
         let dns_resolver = Rc::new(RefCell::new(DNSResolver::new(None, None)));
         let beginning_token = Token(RELAY_TOKEN.as_usize() + 1);

@@ -9,11 +9,9 @@ use regex::Regex;
 use mio::{Token, EventSet, EventLoop, PollOpt};
 use mio::udp::{UdpSocket};
 
-use common;
-use common::{Dict, slice2str, slice2string};
-use network;
-use network::{NetworkWriteBytes, NetworkReadBytes};
 use relay::{Relay, Processor};
+use util::{handle_every_line, Dict, slice2str, slice2string};
+use network::{is_ip, slice2ip4, slice2ip6, str2addr4, NetworkWriteBytes, NetworkReadBytes};
 
 
 // All communications inside of the domain protocol are carried in a single
@@ -138,8 +136,8 @@ fn parse_ip(addrtype: u16, data: &[u8], length: usize, offset: usize) -> Option<
     let ip_part = &data[offset..offset + length];
 
     let ip = match addrtype {
-        QTYPE_A => format!("{}", Ipv4Addr::from(u8slice2sized!(ip_part, 4))),
-        QTYPE_AAAA => format!("{}", Ipv6Addr::from(u8slice2sized!(ip_part, 16))),
+        QTYPE_A => slice2ip4(ip_part),
+        QTYPE_AAAA => slice2ip6(ip_part),
         QTYPE_CNAME | QTYPE_NS => try_opt!(parse_name(data, offset as u16)).1,
         _ => String::from(try_opt!(slice2str(ip_part))),
     };
@@ -401,10 +399,10 @@ impl DNSResolver {
     }
 
     fn parse_resolv(&mut self) {
-        common::handle_every_line("/etc/resolv.conf", &mut |line| {
+        handle_every_line("/etc/resolv.conf", &mut |line| {
             if line.starts_with("nameserver") {
                 if let Some(server) = line.split_whitespace().nth(1) {
-                    if network::is_ip(server) {
+                    if is_ip(server) {
                         self.servers.push(server.to_string());
                     }
                 }
@@ -420,11 +418,11 @@ impl DNSResolver {
     }
 
     fn parse_hosts(&mut self) {
-        common::handle_every_line("/etc/hosts", &mut |line| {
+        handle_every_line("/etc/hosts", &mut |line| {
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() > 0 {
                 let ip = parts[0];
-                if network::is_ip(ip) {
+                if is_ip(ip) {
                     for hostname in parts[1..].iter() {
                         if hostname.len() > 0 {
                             self.hosts.put(hostname.to_string(), ip.to_string());
@@ -444,7 +442,7 @@ impl DNSResolver {
                 trace!("send query request of {} to servers", &hostname);
                 for server in self.servers.iter() {
                     let server = format!("{}:53", server);
-                    let addr = SocketAddr::V4(SocketAddrV4::from_str(&server).unwrap());
+                    let addr = SocketAddr::V4(str2addr4(&server).unwrap());
                     if let Err(e) = sock.send_to(&req, &addr) {
                         error!("{}", e);
                         return;
@@ -460,7 +458,7 @@ impl DNSResolver {
     {
         if hostname.len() == 0 {
             callback(None, Some("empty hostname"));
-        } else if network::is_ip(&hostname) {
+        } else if is_ip(&hostname) {
             callback(Some((hostname.clone(), hostname)), None);
         } else if self.hosts.has(&hostname) {
             let ip = self.hosts.get(&hostname).unwrap().clone();

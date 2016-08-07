@@ -1,7 +1,7 @@
 use std::io::Cursor;
 use std::str::FromStr;
 use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt};
-use std::net::{SocketAddrV4, SocketAddrV6};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
 
 
 pub trait NetworkWriteBytes: WriteBytesExt {
@@ -55,14 +55,13 @@ pub enum AddressFamily {
 }
 
 pub fn get_address_family(address: &str) -> Option<AddressFamily> {
-    match SocketAddrV4::from_str(&format!("{}:0", address)) {
-        Ok(_) => return Some(AddressFamily::AF_INET),
-        _ => {},
+    if str2addr4(&format!("{}:0", address)).is_some() {
+        return Some(AddressFamily::AF_INET);
     }
 
-    match SocketAddrV6::from_str(&format!("{}", address)) {
-        Ok(_) => return Some(AddressFamily::AF_INET6),
-        _ => return None,
+    match str2addr6(&format!("{}", address)) {
+        Some(_) => Some(AddressFamily::AF_INET6),
+        _ => None,
     }
 }
 
@@ -70,8 +69,7 @@ pub fn is_ip(address: &str) -> bool {
     get_address_family(address).is_some()
 }
 
-
-macro_rules! u8slice2sized {
+macro_rules! slice2sized {
     ($bytes:expr, $l: expr) => (
         {
             let mut arr = [0u8; $l];
@@ -82,4 +80,20 @@ macro_rules! u8slice2sized {
             arr
         }
     )
+}
+
+pub fn slice2ip4(data: &[u8]) -> String {
+    format!("{}", Ipv4Addr::from(slice2sized!(data, 4)))
+}
+
+pub fn slice2ip6(data: &[u8]) -> String {
+    format!("{}", Ipv6Addr::from(slice2sized!(data, 16)))
+}
+
+pub fn str2addr4(ip: &str) -> Option<SocketAddrV4> {
+    SocketAddrV4::from_str(ip).ok()
+}
+
+pub fn str2addr6(ip: &str) -> Option<SocketAddrV6> {
+    SocketAddrV6::from_str(ip).ok()
 }

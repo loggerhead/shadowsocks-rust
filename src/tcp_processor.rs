@@ -6,11 +6,18 @@ use mio::{EventLoop, Token, EventSet, PollOpt};
 use mio::tcp::TcpStream;
 
 use relay::{Relay, Processor};
+use common::{parse_header, ADDRTYPE_AUTH};
+use network::slice2ip4;
 use asyncdns::DNSResolver;
 
 
-const METHOD_NOAUTH: u8 = 0;
 const BUF_SIZE: usize = 32 * 1024;
+// SOCKS method definition
+const METHOD_NOAUTH: u8 = 0;
+// SOCKS command definition
+const CMD_CONNECT: u8 = 1;
+const CMD_BIND: u8 = 2;
+const CMD_UDP_ASSOCIATE: u8 = 3;
 
 
 #[derive(PartialEq)]
@@ -77,6 +84,8 @@ pub struct TCPProcessor {
     data_to_write_to_remote: Vec<u8>,
     upstream_status: StreamStatus,
     downstream_status: StreamStatus,
+    client_address: Option<(String, u16)>,
+    server_address: Option<(String, u16)>,
 }
 
 impl TCPProcessor {
@@ -88,6 +97,11 @@ impl TCPProcessor {
             HandlerStage::Init
         } else {
             HandlerStage::Addr
+        };
+
+        let mut client_address = None;
+        if let Ok(addr) = local_sock.peer_addr() {
+            client_address = Some((format!("{}", addr.ip()), addr.port()));
         };
 
         TCPProcessor {
@@ -102,6 +116,8 @@ impl TCPProcessor {
             data_to_write_to_remote: Vec::new(),
             upstream_status: StreamStatus::Reading,
             downstream_status: StreamStatus::Init,
+            client_address: client_address,
+            server_address: None,
         }
     }
 
@@ -271,6 +287,46 @@ impl TCPProcessor {
 
     fn handle_stage_addr(&mut self, event_loop: &mut EventLoop<Relay>, data: &[u8]) {
         debug!("handle stage addr");
+        let data = if self.is_local {
+            match data[1] {
+                CMD_UDP_ASSOCIATE => {
+                    unimplemented!();
+                }
+                CMD_CONNECT => {
+                    &data[3..]
+                }
+                cmd => {
+                    error!("unknown socks command: {}", cmd);
+                    self.destroy(event_loop);
+                    return;
+                }
+            }
+        } else {
+            data
+        };
+
+        match parse_header(data) {
+            Some((addr_type, remote_addr, remote_port, header_len)) => {
+                let remote_address = slice2ip4(remote_addr);
+                info!("connecting {}:{}", remote_address, remote_port);
+                if !self.is_local && addr_type & ADDRTYPE_AUTH != 0 {
+                    unimplemented!();
+                }
+
+                self.server_address = Some((remote_address, remote_port));
+                self.update_stream(event_loop, StreamDirection::Up, StreamStatus::Writing);
+                self.stage = HandlerStage::DNS;
+
+                if self.is_local {
+
+                } else {
+
+                }
+            }
+            None => {
+                error!("can not parse socks header");
+            }
+        }
     }
 
     fn handle_stage_init(&mut self, event_loop: &mut EventLoop<Relay>, data: &[u8]) {
