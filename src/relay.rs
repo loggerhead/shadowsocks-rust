@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::net::{SocketAddr, SocketAddrV4};
 
 use mio::util::Slab;
-use mio::{Token, Handler, EventSet, EventLoop, PollOpt, Evented};
+use mio::{Token, Handler, EventSet, EventLoop, PollOpt};
 use mio::tcp::{TcpListener};
 
 use asyncdns::DNSResolver;
@@ -12,16 +12,16 @@ use tcp_processor::TCPProcessor;
 
 
 const RELAY_TOKEN: Token = Token(0);
-const DNS_RESOLVER_TOKEN: Token = Token(1);
-const BEGINNING_TOKEN: Token = Token(2);
+
 
 pub trait Processor {
     fn process(&mut self, event_loop: &mut EventLoop<Relay>, token: Token, events: EventSet);
+    fn is_destroyed(&self) -> bool;
 }
 
 
 pub struct Relay {
-    listener: TcpListener,
+    tcp_listener: TcpListener,
     dns_resolver: Rc<RefCell<DNSResolver>>,
     processors: Slab<Rc<RefCell<Processor>>>,
 }
@@ -32,11 +32,12 @@ impl Relay {
         let socket_addr = SocketAddrV4::from_str("127.0.0.1:8488").unwrap();
         let tcp_listener = TcpListener::bind(&SocketAddr::V4(socket_addr)).unwrap();
         let dns_resolver = Rc::new(RefCell::new(DNSResolver::new(None, None)));
+        let beginning_token = Token(RELAY_TOKEN.as_usize() + 1);
 
         Relay {
-            listener: tcp_listener,
+            tcp_listener: tcp_listener,
             dns_resolver: dns_resolver.clone(),
-            processors: Slab::new_starting_at(BEGINNING_TOKEN, 8192),
+            processors: Slab::new_starting_at(beginning_token, 8192),
         }
     }
 
@@ -50,7 +51,16 @@ impl Relay {
 
     pub fn run(&mut self) {
         let mut event_loop = EventLoop::new().unwrap();
-        self.dns_resolver.borrow_mut().add_to_loop(DNS_RESOLVER_TOKEN, &mut event_loop);
+
+        let dns_resolver = self.dns_resolver.clone();
+        let token = self.add_processor(dns_resolver).unwrap();
+        self.dns_resolver.borrow_mut().add_to_loop(token, &mut event_loop);
+        event_loop.register(&self.tcp_listener,
+            RELAY_TOKEN,
+            EventSet::readable(),
+            PollOpt::level()).unwrap();
+
+        debug!("start event loop");
         event_loop.run(self).unwrap();
     }
 }
@@ -60,15 +70,18 @@ impl Handler for Relay {
     type Message = ();
 
     fn ready(&mut self, event_loop: &mut EventLoop<Relay>, token: Token, events: EventSet) {
+        debug!("recevied request of {:?}", token);
         match token {
             RELAY_TOKEN => {
                 self.process(event_loop, token, events);
             }
-            DNS_RESOLVER_TOKEN => {
-                self.dns_resolver.borrow_mut().process(event_loop, token, events);
-            }
             token @ Token(_) => {
-                self.processors[token].borrow_mut().process(event_loop, token, events);
+                if !self.processors[token].borrow().is_destroyed() {
+                    self.processors[token].borrow_mut().process(event_loop, token, events);
+                    return;
+                }
+
+                self.processors.remove(token);
             }
         }
     }
@@ -76,39 +89,48 @@ impl Handler for Relay {
 
 
 impl Processor for Relay {
-    fn process(&mut self, event_loop: &mut EventLoop<Relay>, token: Token, events: EventSet) {
+    fn process(&mut self, event_loop: &mut EventLoop<Relay>, _token: Token, events: EventSet) {
         if events.is_error() {
             error!("events error happened on Relay");
-        } else {
-            match self.listener.accept() {
-                Ok(Some((conn, _addr))) => {
-                    let tcp_processor = TCPProcessor::new(conn, self.dns_resolver.clone(), true);
-                    let tcp_processor = Rc::new(RefCell::new(tcp_processor));
+            return;
+        }
 
-                    let res = match self.add_processor(tcp_processor.clone()) {
-                        Some(token) => {
-                            tcp_processor.borrow_mut().add_to_loop(token, event_loop, true)
-                        }
-                        None => None,
-                    };
-                    if res.is_none() {
-                        error!("Cannot add TCP processor to eventloop");
-                        return;
-                    }
+        match self.tcp_listener.accept() {
+            Ok(Some((conn, _addr))) => {
+                debug!("new connection from {}", _addr);
+                let tcp_processor = TCPProcessor::new(conn, self.dns_resolver.clone(), true);
+                let tcp_processor = Rc::new(RefCell::new(tcp_processor));
 
-                    if let Some(token) = self.add_processor(tcp_processor.clone()) {
-                        tcp_processor.borrow_mut().set_remote_token(token);
-                    } else {
-                        tcp_processor.borrow_mut().destroy();
+                // register local socket of tcp_processor
+                let add_result = match self.add_processor(tcp_processor.clone()) {
+                    Some(token) => {
+                        tcp_processor.borrow_mut().add_to_loop(token, event_loop, true)
                     }
+                    None => None,
+                };
+                if add_result.is_none() {
+                    error!("cannot add TCP processor to eventloop");
+                    return;
                 }
-                Ok(None) => {
-                    debug!("Accept nothing...");
-                }
-                Err(e) => {
-                    error!("Error when accept TCP connection: {}", e);
+
+                // get remote token of tcp_processor
+                if let Some(token) = self.add_processor(tcp_processor.clone()) {
+                    tcp_processor.borrow_mut().set_remote_token(token);
+                } else {
+                    error!("cannot add TCP processor to eventloop");
+                    tcp_processor.borrow_mut().destroy(event_loop);
                 }
             }
+            Ok(None) => {
+                debug!("Accept nothing...");
+            }
+            Err(e) => {
+                error!("Error when accept TCP connection: {}", e);
+            }
         }
+    }
+
+    fn is_destroyed(&self) -> bool {
+        return false;
     }
 }

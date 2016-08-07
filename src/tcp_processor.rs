@@ -1,5 +1,3 @@
-use std::str::FromStr;
-use std::net::{SocketAddr, SocketAddrV4};
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::io::{Read, Result, Error, ErrorKind};
@@ -15,6 +13,7 @@ const METHOD_NOAUTH: u8 = 0;
 const BUF_SIZE: usize = 32 * 1024;
 
 
+#[derive(PartialEq)]
 enum CheckAuthResult {
     Success,
     BadSocksHeader,
@@ -28,6 +27,7 @@ enum CheckAuthResult {
 //    remote:  connected to remote server
 
 // for each handler, it could be at one of several stages:
+#[derive(PartialEq)]
 enum HandlerStage {
     // only sslocal: auth METHOD received from local, reply with selection message
     Init,
@@ -49,12 +49,14 @@ enum HandlerStage {
 //                 read local and write to remote
 //    downstream:  from server to client direction
 //                 read remote and write to local
+#[derive(PartialEq)]
 enum StreamDirection {
     Up,
     Down,
 }
 
 // for each stream, it's waiting for reading, or writing, or both
+#[derive(PartialEq)]
 enum StreamWaitStatus {
     Init,
     Reading,
@@ -141,30 +143,31 @@ impl TCPProcessor {
 
     }
 
-    fn handle_stage_stream(&mut self, data: &[u8]) {
+    fn handle_stage_stream(&mut self, event_loop: &mut EventLoop<Relay>, data: &[u8]) {
 
     }
 
-    fn handle_stage_connecting(&mut self, data: &[u8]) {
+    fn handle_stage_connecting(&mut self, event_loop: &mut EventLoop<Relay>, data: &[u8]) {
 
     }
 
-    fn handle_stage_addr(&mut self, data: &[u8]) {
+    fn handle_stage_addr(&mut self, event_loop: &mut EventLoop<Relay>, data: &[u8]) {
 
     }
 
-    fn handle_stage_init(&mut self, data: &[u8]) {
+    fn handle_stage_init(&mut self, event_loop: &mut EventLoop<Relay>, data: &[u8]) {
+        debug!("handle stage init");
         match self.check_auth_method(data) {
             CheckAuthResult::Success => {
                 self.write_to_sock(&[0x05, 0x00], true);
                 self.stage = HandlerStage::Addr;
             }
             CheckAuthResult::BadSocksHeader => {
-                self.destroy();
+                self.destroy(event_loop);
             }
             CheckAuthResult::NoAcceptableMethods => {
                 self.write_to_sock(&[0x05, 0xff], true);
-                self.destroy();
+                self.destroy(event_loop);
             }
         }
     }
@@ -203,34 +206,34 @@ impl TCPProcessor {
         return CheckAuthResult::Success;
     }
 
-    fn on_local_read(&mut self) {
+    fn on_local_read(&mut self, event_loop: &mut EventLoop<Relay>) {
         let data = match self.receive_data(true) {
             Ok(data) => {
                 if data.len() == 0 {
-                    // TODO: destroy
+                    self.destroy(event_loop);
                     return;
+                } else {
+                    data
                 }
-
-                data
             }
             Err(e) => {
-                // TODO: handle error
+                error!("got read data error on local socket");
                 return;
             }
         };
 
         match self.stage {
             HandlerStage::Init => {
-                self.handle_stage_init(&data);
+                self.handle_stage_init(event_loop, &data);
             }
             HandlerStage::Addr => {
-                self.handle_stage_addr(&data);
+                self.handle_stage_addr(event_loop, &data);
             }
             HandlerStage::Connecting => {
-                self.handle_stage_connecting(&data);
+                self.handle_stage_connecting(event_loop, &data);
             }
             HandlerStage::Stream => {
-                self.handle_stage_stream(&data);
+                self.handle_stage_stream(event_loop, &data);
             }
             _ => {
 
@@ -238,31 +241,49 @@ impl TCPProcessor {
         }
     }
 
-    fn on_local_write(&mut self) {
+    fn on_local_write(&mut self, event_loop: &mut EventLoop<Relay>) {
     }
 
-    pub fn destroy(&mut self) {
+    pub fn destroy(&mut self, event_loop: &mut EventLoop<Relay>) {
+        if self.is_destroyed() {
+            debug!("already destroyes");
+            return;
+        }
 
+        self.stage = HandlerStage::Destroyed;
+
+        if self.local_sock.is_some() {
+            let sock = self.local_sock.take();
+            event_loop.deregister(&sock.unwrap()).ok();
+        }
     }
 }
 
 
 impl Processor for TCPProcessor {
-    fn process(&mut self, _event_loop: &mut EventLoop<Relay>, token: Token, events: EventSet) {
-        if events.is_error() {
-            error!("events error happened on TCPRelay");
-            return;
-        }
-
+    fn process(&mut self, event_loop: &mut EventLoop<Relay>, token: Token, events: EventSet) {
         if Some(token) == self.local_token {
+            if events.is_error() {
+                error!("got events error from local socket on TCPRelay");
+                self.destroy(event_loop);
+                return;
+            }
+
             if events.is_readable() || events.is_hup() {
-                self.on_local_read();
+                self.on_local_read(event_loop);
+                if self.is_destroyed() {
+                    return;
+                }
             }
 
             if events.is_writable() {
-                self.on_local_write();
+                self.on_local_write(event_loop);
             }
         } else if Some(token) == self.remote_token {
         }
+    }
+
+    fn is_destroyed(&self) -> bool {
+        return self.stage == HandlerStage::Destroyed;
     }
 }

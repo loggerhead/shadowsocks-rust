@@ -1,9 +1,7 @@
+#[macro_use] extern crate log;
 extern crate mio;
 extern crate env_logger;
 extern crate shadowsocks;
-
-use std::rc::Rc;
-use std::cell::RefCell;
 
 use shadowsocks::shell;
 use shadowsocks::relay::Relay;

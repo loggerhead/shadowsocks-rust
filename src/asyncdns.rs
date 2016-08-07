@@ -1,13 +1,10 @@
 use std::fmt;
-use std::rc::Rc;
-use std::cell::RefCell;
-use std::io::{Result, Cursor};
+use std::io::{Cursor};
 use std::str;
 use std::str::FromStr;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4};
 
 use rand;
-use env_logger;
 use regex::Regex;
 use mio::{Token, EventSet, EventLoop, PollOpt};
 use mio::udp::{UdpSocket};
@@ -586,6 +583,10 @@ impl Processor for DNSResolver {
                 self.handle_data(recevied.unwrap());
             }
         }
+    }
+
+    fn is_destroyed(&self) -> bool {
+        return false;
     }
 }
 
