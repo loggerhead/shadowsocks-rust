@@ -1,6 +1,6 @@
 use std::rc::Rc;
 use std::cell::RefCell;
-use std::io::{Read, Result, Error, ErrorKind};
+use std::io::{Read, Write, Result, Error, ErrorKind};
 
 use mio::{EventLoop, Token, EventSet, PollOpt};
 use mio::tcp::{TcpStream};
@@ -57,7 +57,7 @@ enum StreamDirection {
 
 // for each stream, it's waiting for reading, or writing, or both
 #[derive(PartialEq)]
-enum StreamWaitStatus {
+enum StreamStatus {
     Init,
     Reading,
     Writing,
@@ -122,6 +122,10 @@ impl TCPProcessor {
         }
     }
 
+    fn update_stream(&mut self, event_loop: &mut EventLoop<Relay>, direction: StreamDirection, status: StreamStatus) {
+
+    }
+
     fn receive_data(&mut self, is_local_sock: bool) -> Result<Vec<u8>> {
         let sock = if is_local_sock {
             &mut self.local_sock
@@ -139,34 +143,80 @@ impl TCPProcessor {
         }
     }
 
-    fn write_to_sock(&self, data: &[u8], is_local_sock: bool) {
+    fn write_to_sock(&mut self, event_loop: &mut EventLoop<Relay>, data: &[u8], is_local_sock: bool) {
+        let (need_destroy, uncomplete) = {
+            let mut sock;
+            let mut data_to_write;
+            if is_local_sock {
+                sock = &mut self.local_sock;
+                data_to_write = &mut self.data_to_write_to_local;
+            } else {
+                sock = &mut self.remote_sock;
+                data_to_write = &mut self.data_to_write_to_remote;
+            }
 
+            match sock {
+                &mut Some(ref mut sock) => {
+                    match sock.write(data) {
+                        Ok(size) => {
+                            if size == data.len() {
+                                (false, false)
+                            } else {
+                                data_to_write.extend_from_slice(&data[size..]);
+                                (false, true)
+                            }
+                        }
+                        Err(e) => {
+                            error!("write_to_sock error: {}", e);
+                            (true, true)
+                        }
+                    }
+                }
+                _ => { (false, true) }
+            }
+        };
+
+        if need_destroy {
+            self.destroy(event_loop);
+        } else if uncomplete {
+            if is_local_sock {
+                self.update_stream(event_loop, StreamDirection::Down, StreamStatus::Writing);
+            } else {
+                self.update_stream(event_loop, StreamDirection::Up, StreamStatus::Writing);
+            }
+        } else {
+            if is_local_sock {
+                self.update_stream(event_loop, StreamDirection::Down, StreamStatus::Reading);
+            } else {
+                self.update_stream(event_loop, StreamDirection::Up, StreamStatus::Reading);
+            }
+        }
     }
 
     fn handle_stage_stream(&mut self, event_loop: &mut EventLoop<Relay>, data: &[u8]) {
-
+        debug!("handle stage stream");
     }
 
     fn handle_stage_connecting(&mut self, event_loop: &mut EventLoop<Relay>, data: &[u8]) {
-
+        debug!("handle stage connecting");
     }
 
     fn handle_stage_addr(&mut self, event_loop: &mut EventLoop<Relay>, data: &[u8]) {
-
+        debug!("handle stage addr");
     }
 
     fn handle_stage_init(&mut self, event_loop: &mut EventLoop<Relay>, data: &[u8]) {
         debug!("handle stage init");
         match self.check_auth_method(data) {
             CheckAuthResult::Success => {
-                self.write_to_sock(&[0x05, 0x00], true);
+                self.write_to_sock(event_loop, &[0x05, 0x00], true);
                 self.stage = HandlerStage::Addr;
             }
             CheckAuthResult::BadSocksHeader => {
                 self.destroy(event_loop);
             }
             CheckAuthResult::NoAcceptableMethods => {
-                self.write_to_sock(&[0x05, 0xff], true);
+                self.write_to_sock(event_loop, &[0x05, 0xff], true);
                 self.destroy(event_loop);
             }
         }

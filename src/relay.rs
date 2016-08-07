@@ -70,12 +70,12 @@ impl Handler for Relay {
     type Message = ();
 
     fn ready(&mut self, event_loop: &mut EventLoop<Relay>, token: Token, events: EventSet) {
-        debug!("recevied request of {:?}", token);
         match token {
             RELAY_TOKEN => {
                 self.process(event_loop, token, events);
             }
             token @ Token(_) => {
+                debug!("recevied request of {:?}", token);
                 if !self.processors[token].borrow().is_destroyed() {
                     self.processors[token].borrow_mut().process(event_loop, token, events);
                     return;
