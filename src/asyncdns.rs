@@ -1,8 +1,7 @@
 use std::fmt;
-use std::io::{Cursor};
 use std::str;
-use std::str::FromStr;
-use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4};
+use std::io::Cursor;
+use std::net::SocketAddr;
 
 use rand;
 use regex::Regex;
@@ -599,6 +598,7 @@ fn print_hostname_ip(hostname_ip: Option<(String, String)>, errmsg: Option<&str>
 
 #[test]
 fn test() {
+    extern crate env_logger;
     env_logger::init().unwrap();
 
     // answer of "baidu.com"
@@ -619,12 +619,11 @@ fn test() {
     assert!(parse_response(data).is_some());
 
 
-    let dns_resolver = DNSResolver::new(None, None);
-    let mut dispatcher = Rc::new(RefCell::new(Dispatcher::new()));
+    let mut relay = Relay::new();
 
-    let dns_resolver = dns_resolver.add_to_loop(dispatcher.clone()).unwrap();
-    dns_resolver.borrow_mut().resolve("baidu.com".to_string(), print_hostname_ip);
-    dns_resolver.borrow_mut().resolve("bilibili.com".to_string(), print_hostname_ip);
+    let resolver = relay.get_dns_resolver();
+    resolver.borrow_mut().resolve("baidu.com".to_string(), print_hostname_ip);
+    resolver.borrow_mut().resolve("bilibili.com".to_string(), print_hostname_ip);
 
-    dispatcher.borrow_mut().run();
+    relay.run();
 }

@@ -49,6 +49,10 @@ impl Relay {
         self.processors.remove(token);
     }
 
+    pub fn get_dns_resolver(&self) -> Rc<RefCell<DNSResolver>> {
+        self.dns_resolver.clone()
+    }
+
     fn add_to_loop(&mut self, token: Token, event_loop: &mut EventLoop<Relay>, events: EventSet) -> Option<()> {
         event_loop.register(&self.tcp_listener, token, events, PollOpt::level()).ok()
     }
@@ -57,7 +61,7 @@ impl Relay {
     pub fn run(&mut self) {
         let mut event_loop = EventLoop::new().unwrap();
 
-        let dns_resolver = self.dns_resolver.clone();
+        let dns_resolver = self.get_dns_resolver();
         let token = self.add_processor(dns_resolver).unwrap();
 
         self.dns_resolver.borrow_mut().add_to_loop(token, &mut event_loop, EventSet::readable());
@@ -101,7 +105,7 @@ impl Processor for Relay {
         match self.tcp_listener.accept() {
             Ok(Some((conn, _addr))) => {
                 debug!("new connection from {}", _addr);
-                let tcp_processor = TCPProcessor::new(conn, self.dns_resolver.clone(), true);
+                let tcp_processor = TCPProcessor::new(conn, self.get_dns_resolver(), true);
                 let tcp_processor = Rc::new(RefCell::new(tcp_processor));
 
                 // register local socket of tcp_processor

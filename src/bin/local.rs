@@ -8,7 +8,7 @@ use shadowsocks::relay::Relay;
 
 fn main() {
     env_logger::init().unwrap();
-    let config = shell::get_config().expect("Invalid configuration");
+    let _config = shell::get_config().expect("Invalid configuration");
 
     Relay::new().run();
 }

@@ -7,7 +7,7 @@ pub const ADDRTYPE_AUTH: u8 = 0x10;
 pub const ADDRTYPE_MASK: u8 = 0xF;
 
 pub fn parse_header(data: &[u8]) -> Option<(u8, &[u8], u16, usize)> {
-    let mut addr_type = data[0];
+    let addr_type = data[0];
     let mut dest_addr: &[u8] = &[];
     let mut dest_port = 0;
     let mut header_len = 0;
