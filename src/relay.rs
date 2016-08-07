@@ -49,16 +49,19 @@ impl Relay {
         self.processors.remove(token);
     }
 
+    fn add_to_loop(&mut self, token: Token, event_loop: &mut EventLoop<Relay>, events: EventSet) -> Option<()> {
+        event_loop.register(&self.tcp_listener, token, events, PollOpt::level()).ok()
+    }
+
+
     pub fn run(&mut self) {
         let mut event_loop = EventLoop::new().unwrap();
 
         let dns_resolver = self.dns_resolver.clone();
         let token = self.add_processor(dns_resolver).unwrap();
-        self.dns_resolver.borrow_mut().add_to_loop(token, &mut event_loop);
-        event_loop.register(&self.tcp_listener,
-            RELAY_TOKEN,
-            EventSet::readable(),
-            PollOpt::level()).unwrap();
+
+        self.dns_resolver.borrow_mut().add_to_loop(token, &mut event_loop, EventSet::readable());
+        self.add_to_loop(RELAY_TOKEN, &mut event_loop, EventSet::readable() | EventSet::error());
 
         debug!("start event loop");
         event_loop.run(self).unwrap();
@@ -104,7 +107,7 @@ impl Processor for Relay {
                 // register local socket of tcp_processor
                 let add_result = match self.add_processor(tcp_processor.clone()) {
                     Some(token) => {
-                        tcp_processor.borrow_mut().add_to_loop(token, event_loop, true)
+                        tcp_processor.borrow_mut().add_to_loop(token, event_loop, EventSet::readable() | EventSet::hup(), true)
                     }
                     None => None,
                 };

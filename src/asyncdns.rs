@@ -543,15 +543,11 @@ impl DNSResolver {
         }
     }
 
-    pub fn add_to_loop(&mut self, token: Token, event_loop: &mut EventLoop<Relay>) {
+    pub fn add_to_loop(&mut self, token: Token, event_loop: &mut EventLoop<Relay>, events: EventSet) {
         self.sock = UdpSocket::v4().ok();
 
         if let Some(ref socket) = self.sock {
-            if event_loop.register(socket,
-                                   token,
-                                   EventSet::readable(),
-                                   PollOpt::level()).is_err()
-            {
+            if event_loop.register(socket, token, events, PollOpt::level()).is_err() {
                 error!("add DNSResolver to event_loop failed.");
             }
         } else {

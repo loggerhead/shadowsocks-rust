@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use std::io::{Read, Write, Result, Error, ErrorKind};
 
 use mio::{EventLoop, Token, EventSet, PollOpt};
-use mio::tcp::{TcpStream};
+use mio::tcp::TcpStream;
 
 use relay::{Relay, Processor};
 use asyncdns::DNSResolver;
@@ -75,10 +75,15 @@ pub struct TCPProcessor {
     remote_sock: Option<TcpStream>,
     data_to_write_to_local: Vec<u8>,
     data_to_write_to_remote: Vec<u8>,
+    upstream_status: StreamStatus,
+    downstream_status: StreamStatus,
 }
 
 impl TCPProcessor {
-    pub fn new(local_sock: TcpStream, dns_resolver: Rc<RefCell<DNSResolver>>, is_local: bool) -> TCPProcessor {
+    pub fn new(local_sock: TcpStream,
+               dns_resolver: Rc<RefCell<DNSResolver>>,
+               is_local: bool)
+               -> TCPProcessor {
         let stage = if is_local {
             HandlerStage::Init
         } else {
@@ -95,6 +100,8 @@ impl TCPProcessor {
             remote_sock: None,
             data_to_write_to_local: Vec::new(),
             data_to_write_to_remote: Vec::new(),
+            upstream_status: StreamStatus::Reading,
+            downstream_status: StreamStatus::Init,
         }
     }
 
@@ -102,7 +109,12 @@ impl TCPProcessor {
         self.remote_token = Some(token);
     }
 
-    pub fn add_to_loop(&mut self, token: Token, event_loop: &mut EventLoop<Relay>, is_local: bool) -> Option<()> {
+    pub fn add_to_loop(&mut self,
+                       token: Token,
+                       event_loop: &mut EventLoop<Relay>,
+                       events: EventSet,
+                       is_local: bool)
+                       -> Option<()> {
         let mut sock = if is_local {
             self.local_token = Some(token);
             &mut self.local_sock
@@ -113,17 +125,72 @@ impl TCPProcessor {
 
         match sock {
             &mut Some(ref mut sock) => {
-                event_loop.register(sock,
-                                    token,
-                                    EventSet::readable(),
-                                    PollOpt::level()).ok()
+                event_loop.register(sock, token, events, PollOpt::level()).ok()
             }
-            _ => None
+            _ => None,
         }
     }
 
-    fn update_stream(&mut self, event_loop: &mut EventLoop<Relay>, direction: StreamDirection, status: StreamStatus) {
+    fn update_stream(&mut self,
+                     event_loop: &mut EventLoop<Relay>,
+                     direction: StreamDirection,
+                     status: StreamStatus) {
+        match direction {
+            StreamDirection::Down => {
+                if self.downstream_status != status {
+                    self.downstream_status = status;
+                } else {
+                    return;
+                }
+            }
+            StreamDirection::Up => {
+                if self.upstream_status != status {
+                    self.upstream_status = status;
+                } else {
+                    return;
+                }
+            }
+        }
 
+        if self.local_sock.is_some() {
+            let mut events = EventSet::error() | EventSet::hup();
+            match self.downstream_status {
+                StreamStatus::Writing |
+                StreamStatus::ReadWriting => {
+                    events = events | EventSet::writable();
+                }
+                _ => {}
+            }
+            match self.upstream_status {
+                StreamStatus::Reading |
+                StreamStatus::ReadWriting => {
+                    events = events | EventSet::readable();
+                }
+                _ => {}
+            }
+            let token = self.local_token;
+            self.add_to_loop(token.unwrap(), event_loop, events, true);
+        }
+
+        if self.remote_sock.is_some() {
+            let mut events = EventSet::error() | EventSet::hup();
+            match self.downstream_status {
+                StreamStatus::Reading |
+                StreamStatus::ReadWriting => {
+                    events = events | EventSet::readable();
+                }
+                _ => {}
+            }
+            match self.upstream_status {
+                StreamStatus::Writing |
+                StreamStatus::ReadWriting => {
+                    events = events | EventSet::writable();
+                }
+                _ => {}
+            }
+            let token = self.remote_token;
+            self.add_to_loop(token.unwrap(), event_loop, events, false);
+        }
     }
 
     fn receive_data(&mut self, is_local_sock: bool) -> Result<Vec<u8>> {
@@ -136,14 +203,15 @@ impl TCPProcessor {
         let mut buf = [0u8; BUF_SIZE];
 
         match sock {
-            &mut Some(ref mut sock) => {
-                sock.read(&mut buf).map(|len| buf[..len].to_vec())
-            }
+            &mut Some(ref mut sock) => sock.read(&mut buf).map(|len| buf[..len].to_vec()),
             _ => Err(Error::new(ErrorKind::NotConnected, "socket is not initialize")),
         }
     }
 
-    fn write_to_sock(&mut self, event_loop: &mut EventLoop<Relay>, data: &[u8], is_local_sock: bool) {
+    fn write_to_sock(&mut self,
+                     event_loop: &mut EventLoop<Relay>,
+                     data: &[u8],
+                     is_local_sock: bool) {
         let (need_destroy, uncomplete) = {
             let mut sock;
             let mut data_to_write;
@@ -172,7 +240,7 @@ impl TCPProcessor {
                         }
                     }
                 }
-                _ => { (false, true) }
+                _ => (false, true),
             }
         };
 
@@ -285,14 +353,11 @@ impl TCPProcessor {
             HandlerStage::Stream => {
                 self.handle_stage_stream(event_loop, &data);
             }
-            _ => {
-
-            }
+            _ => {}
         }
     }
 
-    fn on_local_write(&mut self, event_loop: &mut EventLoop<Relay>) {
-    }
+    fn on_local_write(&mut self, event_loop: &mut EventLoop<Relay>) {}
 
     pub fn destroy(&mut self, event_loop: &mut EventLoop<Relay>) {
         if self.is_destroyed() {
