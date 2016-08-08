@@ -83,10 +83,12 @@ macro_rules! slice2sized {
 }
 
 pub fn slice2ip4(data: &[u8]) -> String {
+    assert!(data.len() >= 4);
     format!("{}", Ipv4Addr::from(slice2sized!(data, 4)))
 }
 
 pub fn slice2ip6(data: &[u8]) -> String {
+    assert!(data.len() >= 16);
     format!("{}", Ipv6Addr::from(slice2sized!(data, 16)))
 }
 

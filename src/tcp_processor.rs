@@ -306,8 +306,7 @@ impl TCPProcessor {
         };
 
         match parse_header(data) {
-            Some((addr_type, remote_addr, remote_port, header_len)) => {
-                let remote_address = slice2ip4(remote_addr);
+            Some((addr_type, remote_address, remote_port, header_len)) => {
                 info!("connecting {}:{}", remote_address, remote_port);
                 if !self.is_local && addr_type & ADDRTYPE_AUTH != 0 {
                     unimplemented!();
