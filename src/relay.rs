@@ -16,6 +16,7 @@ const RELAY_TOKEN: Token = Token(0);
 
 pub trait Processor {
     fn process(&mut self, event_loop: &mut EventLoop<Relay>, token: Token, events: EventSet);
+    fn destroy(&mut self, event_loop: &mut EventLoop<Relay>);
     fn is_destroyed(&self) -> bool;
 }
 
@@ -82,7 +83,7 @@ impl Handler for Relay {
                 self.process(event_loop, token, events);
             }
             token @ Token(_) => {
-                debug!("recevied request of {:?}", token);
+                debug!("got events {:?} for {:?}", events, token);
                 if !self.processors[token].borrow().is_destroyed() {
                     self.processors[token].borrow_mut().process(event_loop, token, events);
                     return;
@@ -137,6 +138,10 @@ impl Processor for Relay {
         }
     }
 
+    fn destroy(&mut self, event_loop: &mut EventLoop<Relay>) {
+
+    }
+    
     fn is_destroyed(&self) -> bool {
         return false;
     }

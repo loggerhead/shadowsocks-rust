@@ -378,7 +378,7 @@ impl DNSResolver {
             cache: Dict::new(),
             hostname_status: Dict::new(),
             hostname_to_cb: Dict::new(),
-            sock: None,
+            sock: UdpSocket::v4().ok(),
             qtypes: Vec::new(),
         };
 
@@ -541,7 +541,10 @@ impl DNSResolver {
     }
 
     pub fn add_to_loop(&mut self, token: Token, event_loop: &mut EventLoop<Relay>, events: EventSet) {
-        self.sock = UdpSocket::v4().ok();
+        if self.sock.is_none() {
+            self.sock = UdpSocket::v4().ok();
+        }
+        self.token = Some(token);
 
         if let Some(ref socket) = self.sock {
             if event_loop.register(socket, token, events, PollOpt::level()).is_err() {
@@ -557,7 +560,14 @@ impl Processor for DNSResolver {
     fn process(&mut self, event_loop: &mut EventLoop<Relay>, _token: Token, events: EventSet) {
         if events.is_error() {
             error!("events error happened on DNS socket");
-            // TODO: close `self.sock` and reregister to eventloop
+            let sock = self.sock.take();
+            if sock.is_some() {
+                let sock = sock.unwrap();
+                event_loop.deregister(&sock).ok();
+            }
+
+            let token = self.token.unwrap();
+            self.add_to_loop(token, event_loop, EventSet::readable());
         } else {
             let mut buf = [0u8; 1024];
             let mut recevied = None;
@@ -565,7 +575,9 @@ impl Processor for DNSResolver {
             match self.sock {
                 Some(ref sock) => {
                     match sock.recv_from(&mut buf) {
-                        Ok(Some((len, _addr))) => recevied = Some(&buf[..len]),
+                        Ok(Some((len, _addr))) => {
+                            recevied = Some(&buf[..len]);
+                        }
                         _ => warn!("receive error on DNS socket"),
                     }
                 }
@@ -576,6 +588,10 @@ impl Processor for DNSResolver {
                 self.handle_data(recevied.unwrap());
             }
         }
+    }
+
+    fn destroy(&mut self, event_loop: &mut EventLoop<Relay>) {
+
     }
 
     fn is_destroyed(&self) -> bool {
@@ -621,9 +637,11 @@ fn test() {
 
     let mut relay = Relay::new();
 
-    let resolver = relay.get_dns_resolver();
-    resolver.borrow_mut().resolve("baidu.com".to_string(), print_hostname_ip);
-    resolver.borrow_mut().resolve("bilibili.com".to_string(), print_hostname_ip);
+    {
+        let resolver = relay.get_dns_resolver();
+        resolver.borrow_mut().resolve("baidu.com".to_string(), print_hostname_ip);
+        resolver.borrow_mut().resolve("bilibili.com".to_string(), print_hostname_ip);
+    }
 
     relay.run();
 }

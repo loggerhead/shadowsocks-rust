@@ -414,20 +414,6 @@ impl TCPProcessor {
     }
 
     fn on_local_write(&mut self, event_loop: &mut EventLoop<Relay>) {}
-
-    pub fn destroy(&mut self, event_loop: &mut EventLoop<Relay>) {
-        if self.is_destroyed() {
-            debug!("already destroyes");
-            return;
-        }
-
-        self.stage = HandlerStage::Destroyed;
-
-        if self.local_sock.is_some() {
-            let sock = self.local_sock.take();
-            event_loop.deregister(&sock.unwrap()).ok();
-        }
-    }
 }
 
 
@@ -451,6 +437,20 @@ impl Processor for TCPProcessor {
                 self.on_local_write(event_loop);
             }
         } else if Some(token) == self.remote_token {
+        }
+    }
+
+    fn destroy(&mut self, event_loop: &mut EventLoop<Relay>) {
+        if self.is_destroyed() {
+            debug!("already destroyes");
+            return;
+        }
+
+        self.stage = HandlerStage::Destroyed;
+
+        if self.local_sock.is_some() {
+            let sock = self.local_sock.take();
+            event_loop.deregister(&sock.unwrap()).ok();
         }
     }
 
