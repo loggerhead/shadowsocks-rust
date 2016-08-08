@@ -279,10 +279,12 @@ impl TCPProcessor {
 
     fn handle_stage_stream(&mut self, event_loop: &mut EventLoop<Relay>, data: &[u8]) {
         debug!("handle stage stream");
+        unimplemented!();
     }
 
     fn handle_stage_connecting(&mut self, event_loop: &mut EventLoop<Relay>, data: &[u8]) {
         debug!("handle stage connecting");
+        unimplemented!();
     }
 
     fn handle_stage_addr(&mut self, event_loop: &mut EventLoop<Relay>, data: &[u8]) {
@@ -306,23 +308,24 @@ impl TCPProcessor {
         };
 
         match parse_header(data) {
-            Some((addr_type, remote_address, remote_port, header_len)) => {
+            Some((addr_type, remote_address, remote_port, header_length)) => {
                 info!("connecting {}:{}", remote_address, remote_port);
-                if !self.is_local && addr_type & ADDRTYPE_AUTH != 0 {
-                    unimplemented!();
-                }
-
                 if self.is_local {
                     let response = &[0x05, 0x00, 0x00, 0x01,
                                      0x00, 0x00, 0x00, 0x00,
                                      0x10, 0x10];
                     self.write_to_sock(event_loop, response, true);
 
+                    // TODO: realize encrypt
                     // let data_to_send = self.encryptor.encrypt(data);
-                    // self.data_to_write_to_remote.extend_from_slice(data_to_send);
+                    let data_to_send = data;
+                    self.data_to_write_to_remote.extend_from_slice(data_to_send);
                     self.dns_resolver.borrow_mut().resolve(remote_address.clone(), self.remote_token.unwrap());
                 } else {
-
+                    if data.len() > header_length {
+                        self.data_to_write_to_remote.extend_from_slice(&data[header_length..]);
+                    }
+                    self.dns_resolver.borrow_mut().resolve(remote_address.clone(), self.remote_token.unwrap());
                 }
 
                 self.server_address = Some((remote_address, remote_port));
@@ -331,6 +334,7 @@ impl TCPProcessor {
             }
             None => {
                 error!("can not parse socks header");
+                self.destroy(event_loop);
             }
         }
     }
@@ -420,11 +424,14 @@ impl TCPProcessor {
         }
     }
 
-    fn on_local_write(&mut self, event_loop: &mut EventLoop<Relay>) {}
+    fn on_local_write(&mut self, event_loop: &mut EventLoop<Relay>) {
+        unimplemented!();
+    }
 }
 
 impl Caller for TCPProcessor {
     fn handle_dns_resolved(&mut self, hostname_ip: Option<(String, String)>, errmsg: Option<&str>) {
+        debug!("handle_dns_resolved: {:?}, {:?}", hostname_ip, errmsg);
     }
 }
 
