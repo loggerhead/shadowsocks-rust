@@ -60,8 +60,8 @@ impl<K, V> Dict<K, V>
         self.get(k).is_some()
     }
 
-    pub fn del(&mut self, k: &K) {
-        self.map.remove(k);
+    pub fn del(&mut self, k: &K) -> Option<V> {
+        self.map.remove(k)
     }
 }
 

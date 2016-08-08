@@ -8,7 +8,7 @@ use mio::tcp::TcpStream;
 use relay::{Relay, Processor};
 use common::{parse_header, ADDRTYPE_AUTH};
 use network::slice2ip4;
-use asyncdns::DNSResolver;
+use asyncdns::{Caller, DNSResolver};
 
 
 const BUF_SIZE: usize = 32 * 1024;
@@ -312,21 +312,29 @@ impl TCPProcessor {
                     unimplemented!();
                 }
 
-                self.server_address = Some((remote_address, remote_port));
-                self.update_stream(event_loop, StreamDirection::Up, StreamStatus::Writing);
-                self.stage = HandlerStage::DNS;
-
                 if self.is_local {
+                    let response = &[0x05, 0x00, 0x00, 0x01,
+                                     0x00, 0x00, 0x00, 0x00,
+                                     0x10, 0x10];
+                    self.write_to_sock(event_loop, response, true);
 
+                    // let data_to_send = self.encryptor.encrypt(data);
+                    // self.data_to_write_to_remote.extend_from_slice(data_to_send);
+                    self.dns_resolver.borrow_mut().resolve(remote_address.clone(), self.remote_token.unwrap());
                 } else {
 
                 }
+
+                self.server_address = Some((remote_address, remote_port));
+                self.update_stream(event_loop, StreamDirection::Up, StreamStatus::Writing);
+                self.stage = HandlerStage::DNS;
             }
             None => {
                 error!("can not parse socks header");
             }
         }
     }
+
 
     fn handle_stage_init(&mut self, event_loop: &mut EventLoop<Relay>, data: &[u8]) {
         debug!("handle stage init");
@@ -415,6 +423,10 @@ impl TCPProcessor {
     fn on_local_write(&mut self, event_loop: &mut EventLoop<Relay>) {}
 }
 
+impl Caller for TCPProcessor {
+    fn handle_dns_resolved(&mut self, hostname_ip: Option<(String, String)>, errmsg: Option<&str>) {
+    }
+}
 
 impl Processor for TCPProcessor {
     fn process(&mut self, event_loop: &mut EventLoop<Relay>, token: Token, events: EventSet) {
@@ -451,6 +463,8 @@ impl Processor for TCPProcessor {
             let sock = self.local_sock.take();
             event_loop.deregister(&sock.unwrap()).ok();
         }
+
+        self.dns_resolver.borrow_mut().remove_caller(self.remote_token.unwrap());
     }
 
     fn is_destroyed(&self) -> bool {

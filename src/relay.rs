@@ -1,6 +1,6 @@
 use std::rc::Rc;
 use std::cell::RefCell;
-use std::net::{SocketAddr, SocketAddrV4};
+use std::net::{SocketAddr};
 
 use mio::util::Slab;
 use mio::{Token, Handler, EventSet, EventLoop, PollOpt};
@@ -124,6 +124,8 @@ impl Processor for Relay {
                 // get remote token of tcp_processor
                 if let Some(token) = self.add_processor(tcp_processor.clone()) {
                     tcp_processor.borrow_mut().set_remote_token(token);
+                    let dns_resolver = self.get_dns_resolver();
+                    dns_resolver.borrow_mut().add_caller(token, tcp_processor);
                 } else {
                     error!("cannot add TCP processor to eventloop");
                     tcp_processor.borrow_mut().destroy(event_loop);
@@ -141,7 +143,7 @@ impl Processor for Relay {
     fn destroy(&mut self, event_loop: &mut EventLoop<Relay>) {
 
     }
-    
+
     fn is_destroyed(&self) -> bool {
         return false;
     }
