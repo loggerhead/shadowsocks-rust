@@ -6,8 +6,7 @@ use mio::{EventLoop, Token, EventSet, PollOpt};
 use mio::tcp::TcpStream;
 
 use relay::{Relay, Processor};
-use common::{parse_header, ADDRTYPE_AUTH};
-use network::slice2ip4;
+use common::parse_header;
 use asyncdns::{Caller, DNSResolver};
 
 

@@ -11,6 +11,7 @@ dependencies = [
  "mio 0.5.1 (registry+git://crates.mirrors.ustc.edu.cn/index)",
  "rand 0.3.14 (registry+git://crates.mirrors.ustc.edu.cn/index)",
  "regex 0.1.71 (registry+git://crates.mirrors.ustc.edu.cn/index)",
+ "rust-crypto 0.2.36 (registry+git://crates.mirrors.ustc.edu.cn/index)",
  "toml 0.1.30 (registry+git://crates.mirrors.ustc.edu.cn/index)",
  "try_opt 0.1.1 (registry+git://crates.mirrors.ustc.edu.cn/index)",
 ]
@@ -55,6 +56,11 @@ dependencies = [
 [[package]]
 name = "fnv"
 version = "1.0.2"
+source = "registry+git://crates.mirrors.ustc.edu.cn/index"
+
+[[package]]
+name = "gcc"
+version = "0.3.32"
 source = "registry+git://crates.mirrors.ustc.edu.cn/index"
 
 [[package]]
@@ -174,6 +180,18 @@ dependencies = [
 name = "regex-syntax"
 version = "0.3.3"
 source = "registry+git://crates.mirrors.ustc.edu.cn/index"
+
+[[package]]
+name = "rust-crypto"
+version = "0.2.36"
+source = "registry+git://crates.mirrors.ustc.edu.cn/index"
+dependencies = [
+ "gcc 0.3.32 (registry+git://crates.mirrors.ustc.edu.cn/index)",
+ "libc 0.2.12 (registry+git://crates.mirrors.ustc.edu.cn/index)",
+ "rand 0.3.14 (registry+git://crates.mirrors.ustc.edu.cn/index)",
+ "rustc-serialize 0.3.19 (registry+git://crates.mirrors.ustc.edu.cn/index)",
+ "time 0.1.35 (registry+git://crates.mirrors.ustc.edu.cn/index)",
+]
 
 [[package]]
 name = "rustc-serialize"

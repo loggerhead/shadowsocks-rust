@@ -10,6 +10,7 @@ extern crate fnv;
 extern crate rand;
 extern crate toml;
 extern crate regex;
+extern crate crypto;
 extern crate byteorder;
 extern crate env_logger;
 
@@ -18,5 +19,6 @@ pub mod util;
 pub mod relay;
 pub mod shell;
 pub mod common;
+pub mod encrypt;
 pub mod asyncdns;
 pub mod tcp_processor;
