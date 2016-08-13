@@ -480,6 +480,11 @@ impl Caller for TCPProcessor {
 
 impl Processor for TCPProcessor {
     fn process(&mut self, event_loop: &mut EventLoop<Relay>, token: Token, events: EventSet) {
+        if self.is_destroyed() {
+            debug!("ignore process: destroyed");
+            return;
+        }
+
         if Some(token) == self.local_token {
             if events.is_error() {
                 error!("got events error from local socket on TCPRelay");
@@ -498,7 +503,22 @@ impl Processor for TCPProcessor {
                 self.on_local_write(event_loop);
             }
         } else if Some(token) == self.remote_token {
-            unimplemented!();
+            if events.is_error() {
+                error!("got events error from remote socket on TCPRelay");
+                self.destroy(event_loop);
+                return;
+            }
+
+            if events.is_readable() || events.is_hup() {
+                self.on_remote_read(event_loop);
+                if self.is_destroyed() {
+                    return;
+                }
+            }
+
+            if events.is_writable() {
+                self.on_remote_write(event_loop);
+            }
         }
     }
 
@@ -519,6 +539,6 @@ impl Processor for TCPProcessor {
     }
 
     fn is_destroyed(&self) -> bool {
-        return self.stage == HandlerStage::Destroyed;
+        self.stage == HandlerStage::Destroyed
     }
 }
