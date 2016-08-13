@@ -231,6 +231,18 @@ impl TCPProcessor {
         }
     }
 
+    fn write_data(&mut self, event_loop: &mut EventLoop<Relay>, is_local_sock: bool) {
+        if is_local_sock {
+            let data = self.data_to_write_to_local.clone();
+            self.write_to_sock(event_loop, &data, true);
+            self.data_to_write_to_local.clear();
+        } else {
+            let data = self.data_to_write_to_remote.clone();
+            self.write_to_sock(event_loop, &data, false);
+            self.data_to_write_to_remote.clone();
+        };
+    }
+
     fn write_to_sock(&mut self,
                      event_loop: &mut EventLoop<Relay>,
                      data: &[u8],
@@ -284,9 +296,9 @@ impl TCPProcessor {
         }
     }
 
-    fn handle_stage_stream(&mut self, _event_loop: &mut EventLoop<Relay>, data: &[u8]) {
+    fn handle_stage_stream(&mut self, event_loop: &mut EventLoop<Relay>, data: &[u8]) {
         debug!("handle stage stream");
-        self.data_to_write_to_remote.extend_from_slice(data);
+        self.write_to_sock(event_loop, data, false);
     }
 
     fn handle_stage_connecting(&mut self, _event_loop: &mut EventLoop<Relay>, data: &[u8]) {
@@ -442,7 +454,19 @@ impl TCPProcessor {
         // if self.is_local {
         //     data = self.encryptor.update(data);
         // }
-        unimplemented!();
+        match self.receive_data(false) {
+            Ok(data) => {
+                if data.len() == 0 {
+                    self.destroy(event_loop);
+                } else {
+                    self.write_to_sock(event_loop, &data, true);
+                }
+            }
+            Err(e) => {
+                error!("got read data error on remote socket: {}", e);
+                self.destroy(event_loop);
+            }
+        };
     }
 
     fn on_local_write(&mut self, event_loop: &mut EventLoop<Relay>) {
@@ -451,9 +475,7 @@ impl TCPProcessor {
         //     data = self.encryptor.update(data);
         // }
         if self.data_to_write_to_local.len() > 0 {
-            let data = self.data_to_write_to_local.clone();
-            self.data_to_write_to_local.clear();
-            self.write_to_sock(event_loop, &data, true);
+            self.write_data(event_loop, true);
         } else {
             self.update_stream(event_loop, StreamDirection::Down, StreamStatus::Reading);
         }
@@ -464,10 +486,9 @@ impl TCPProcessor {
         // if self.is_local {
         //     data = self.encryptor.update(data);
         // }
+        self.stage = HandlerStage::Stream;
         if self.data_to_write_to_remote.len() > 0 {
-            let data = self.data_to_write_to_remote.clone();
-            self.data_to_write_to_remote.clear();
-            self.write_to_sock(event_loop, &data, true);
+            self.write_data(event_loop, false);
         } else {
             self.update_stream(event_loop, StreamDirection::Up, StreamStatus::Reading);
         }
