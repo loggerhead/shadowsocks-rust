@@ -281,9 +281,9 @@ impl TCPProcessor {
         }
     }
 
-    fn handle_stage_stream(&mut self, event_loop: &mut EventLoop<Relay>, data: &[u8]) {
+    fn handle_stage_stream(&mut self, _event_loop: &mut EventLoop<Relay>, data: &[u8]) {
         debug!("handle stage stream");
-        unimplemented!();
+        self.data_to_write_to_remote.extend_from_slice(data);
     }
 
     fn handle_stage_connecting(&mut self, _event_loop: &mut EventLoop<Relay>, data: &[u8]) {
@@ -297,6 +297,8 @@ impl TCPProcessor {
             match data[1] {
                 CMD_UDP_ASSOCIATE => {
                     unimplemented!();
+                    self.stage = HandlerStage::UDPAssoc;
+                    return;
                 }
                 CMD_CONNECT => {
                     &data[3..]
@@ -339,7 +341,6 @@ impl TCPProcessor {
             }
         }
     }
-
 
     fn handle_stage_init(&mut self, event_loop: &mut EventLoop<Relay>, data: &[u8]) {
         debug!("handle stage init");
@@ -433,14 +434,6 @@ impl TCPProcessor {
         }
     }
 
-    fn on_local_write(&mut self, event_loop: &mut EventLoop<Relay>) {
-        // TODO: encrypt
-        // if !self.is_local {
-        //     data = self.encryptor.update(data);
-        // }
-        unimplemented!();
-    }
-
     fn on_remote_read(&mut self, event_loop: &mut EventLoop<Relay>) {
         // TODO: decrypt
         // if self.is_local {
@@ -449,18 +442,39 @@ impl TCPProcessor {
         unimplemented!();
     }
 
+    fn on_local_write(&mut self, event_loop: &mut EventLoop<Relay>) {
+        // TODO: encrypt
+        // if !self.is_local {
+        //     data = self.encryptor.update(data);
+        // }
+        if self.data_to_write_to_local.len() > 0 {
+            let data = self.data_to_write_to_local.clone();
+            self.data_to_write_to_local.clear();
+            self.write_to_sock(event_loop, &data, true);
+        } else {
+            self.update_stream(event_loop, StreamDirection::Down, StreamStatus::Reading);
+        }
+    }
+
     fn on_remote_write(&mut self, event_loop: &mut EventLoop<Relay>) {
         // TODO: encrypt
         // if self.is_local {
         //     data = self.encryptor.update(data);
         // }
-        unimplemented!();
+        if self.data_to_write_to_remote.len() > 0 {
+            let data = self.data_to_write_to_remote.clone();
+            self.data_to_write_to_remote.clear();
+            self.write_to_sock(event_loop, &data, true);
+        } else {
+            self.update_stream(event_loop, StreamDirection::Up, StreamStatus::Reading);
+        }
     }
 }
 
 impl Caller for TCPProcessor {
     fn handle_dns_resolved(&mut self, hostname_ip: Option<(String, String)>, errmsg: Option<&str>) {
         debug!("handle_dns_resolved: {:?}, {:?}", hostname_ip, errmsg);
+        unimplemented!();
     }
 }
 
@@ -484,6 +498,7 @@ impl Processor for TCPProcessor {
                 self.on_local_write(event_loop);
             }
         } else if Some(token) == self.remote_token {
+            unimplemented!();
         }
     }
 
