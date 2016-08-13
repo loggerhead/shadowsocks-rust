@@ -286,9 +286,9 @@ impl TCPProcessor {
         unimplemented!();
     }
 
-    fn handle_stage_connecting(&mut self, event_loop: &mut EventLoop<Relay>, data: &[u8]) {
+    fn handle_stage_connecting(&mut self, _event_loop: &mut EventLoop<Relay>, data: &[u8]) {
         debug!("handle stage connecting");
-        unimplemented!();
+        self.data_to_write_to_remote.extend_from_slice(data);
     }
 
     fn handle_stage_addr(&mut self, event_loop: &mut EventLoop<Relay>, data: &[u8]) {
@@ -396,6 +396,9 @@ impl TCPProcessor {
         // TODO: decrypt
         // if !self.is_local {
         //     data = self.encryptor.update(data);
+        //     if data.is_none() {
+        //         self.destroy(event_loop);
+        //     }
         // }
 
         let data = match self.receive_data(true) {
