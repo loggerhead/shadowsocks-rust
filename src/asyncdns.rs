@@ -8,7 +8,7 @@ use std::net::SocketAddr;
 use rand;
 use regex::Regex;
 use mio::{Token, EventSet, EventLoop, PollOpt};
-use mio::udp::{UdpSocket};
+use mio::udp::UdpSocket;
 
 use relay::{Relay, Processor};
 use util::{handle_every_line, Dict, slice2str, slice2string};

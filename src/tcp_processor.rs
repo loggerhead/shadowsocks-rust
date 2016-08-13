@@ -108,6 +108,8 @@ impl TCPProcessor {
             client_address = Some((format!("{}", addr.ip()), addr.port()));
         };
 
+        local_sock.set_nodelay(true).ok();
+
         TCPProcessor {
             stage: stage,
             dns_resolver: dns_resolver,
@@ -471,12 +473,11 @@ impl TCPProcessor {
         }
     }
 
-    // TODO: check other nodelay
     fn create_remote_socket(&mut self, ip: &str, port: u16) -> Result<TcpStream> {
         match pair2socket_addr(ip, port) {
             Ok(addr) => {
                 TcpStream::connect(&addr).map(|sock| {
-                    sock.set_nodelay(true);
+                    sock.set_nodelay(true).ok();
                     sock
                 })
             }
