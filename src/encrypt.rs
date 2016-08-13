@@ -57,7 +57,7 @@ fn hmac_md5(cipher_iv: &[u8], data: &[u8]) -> MacResult {
 }
 
 
-struct Encryptor {
+pub struct Encryptor {
     is_first_packet: bool,
     is_local: bool,
     key: Vec<u8>,
@@ -73,8 +73,7 @@ struct Encryptor {
 // +----------------+-----------+------+
 //                      16         16
 impl Encryptor {
-    fn new(password: &str, is_local: bool) -> Encryptor {
-        let mut iv = vec![0u8; 16];
+    pub fn new(password: &str, is_local: bool) -> Encryptor {
         let (key, password_iv) = gen_key_iv(password, 256, 32);
 
         let mut this = Encryptor {
@@ -82,7 +81,7 @@ impl Encryptor {
             is_local: is_local,
             key: key,
             password_iv: password_iv,
-            cipher_iv: iv,
+            cipher_iv: vec![0u8; 16],
             cipher: None,
         };
 
@@ -94,7 +93,7 @@ impl Encryptor {
         this
     }
 
-    fn update(&mut self, data: &[u8]) -> Option<Vec<u8>> {
+    pub fn update(&mut self, data: &[u8]) -> Option<Vec<u8>> {
         if self.is_first_packet {
             self.is_first_packet = false;
             if self.is_local {

@@ -8,6 +8,7 @@ use mio::tcp::TcpStream;
 use relay::{Relay, Processor};
 use common::parse_header;
 use asyncdns::{Caller, DNSResolver};
+use encrypt::Encryptor;
 
 
 const BUF_SIZE: usize = 32 * 1024;
@@ -85,6 +86,7 @@ pub struct TCPProcessor {
     downstream_status: StreamStatus,
     client_address: Option<(String, u16)>,
     server_address: Option<(String, u16)>,
+    encryptor: Encryptor,
 }
 
 impl TCPProcessor {
@@ -92,6 +94,8 @@ impl TCPProcessor {
                dns_resolver: Rc<RefCell<DNSResolver>>,
                is_local: bool)
                -> TCPProcessor {
+        // TODO: change to configuable
+        let password = "test";
         let stage = if is_local {
             HandlerStage::Init
         } else {
@@ -106,7 +110,7 @@ impl TCPProcessor {
         TCPProcessor {
             stage: stage,
             dns_resolver: dns_resolver,
-            is_local: true,
+            is_local: is_local,
             local_token: None,
             local_sock: Some(local_sock),
             remote_token: None,
@@ -117,6 +121,7 @@ impl TCPProcessor {
             downstream_status: StreamStatus::Init,
             client_address: client_address,
             server_address: None,
+            encryptor: Encryptor::new(password, is_local),
         }
     }
 
@@ -307,7 +312,7 @@ impl TCPProcessor {
         };
 
         match parse_header(data) {
-            Some((addr_type, remote_address, remote_port, header_length)) => {
+            Some((_addr_type, remote_address, remote_port, header_length)) => {
                 info!("connecting {}:{}", remote_address, remote_port);
                 if self.is_local {
                     let response = &[0x05, 0x00, 0x00, 0x01,
@@ -315,10 +320,7 @@ impl TCPProcessor {
                                      0x10, 0x10];
                     self.write_to_sock(event_loop, response, true);
 
-                    // TODO: realize encrypt
-                    // let data_to_send = self.encryptor.encrypt(data);
-                    let data_to_send = data;
-                    self.data_to_write_to_remote.extend_from_slice(data_to_send);
+                    self.data_to_write_to_remote.extend_from_slice(data);
                     self.dns_resolver.borrow_mut().resolve(remote_address.clone(), self.remote_token.unwrap());
                 } else {
                     if data.len() > header_length {
@@ -391,6 +393,11 @@ impl TCPProcessor {
     }
 
     fn on_local_read(&mut self, event_loop: &mut EventLoop<Relay>) {
+        // TODO: decrypt
+        // if !self.is_local {
+        //     data = self.encryptor.update(data);
+        // }
+
         let data = match self.receive_data(true) {
             Ok(data) => {
                 if data.len() == 0 {
@@ -424,6 +431,26 @@ impl TCPProcessor {
     }
 
     fn on_local_write(&mut self, event_loop: &mut EventLoop<Relay>) {
+        // TODO: encrypt
+        // if !self.is_local {
+        //     data = self.encryptor.update(data);
+        // }
+        unimplemented!();
+    }
+
+    fn on_remote_read(&mut self, event_loop: &mut EventLoop<Relay>) {
+        // TODO: decrypt
+        // if self.is_local {
+        //     data = self.encryptor.update(data);
+        // }
+        unimplemented!();
+    }
+
+    fn on_remote_write(&mut self, event_loop: &mut EventLoop<Relay>) {
+        // TODO: encrypt
+        // if self.is_local {
+        //     data = self.encryptor.update(data);
+        // }
         unimplemented!();
     }
 }
