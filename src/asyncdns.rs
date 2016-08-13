@@ -325,10 +325,10 @@ fn is_valid_hostname(hostname: &str) -> bool {
 
     let hostname = hostname.trim_right_matches('.');
     hostname.as_bytes()
-        .split(|b| *b == '.' as u8)
-        .all(|x| {
-            let s = slice2str(x).unwrap_or("");
-            !s.starts_with("-") && !s.ends_with("-") && RE.is_match(s)
+        .split(|c| *c == b'.')
+        .all(|s| {
+            let s = slice2str(s).unwrap_or("");
+            s.len() > 0 && !s.starts_with("-") && !s.ends_with("-") && RE.is_match(s)
         })
 }
 
@@ -473,7 +473,11 @@ impl DNSResolver {
             if hostname.len() == 0 {
                 caller.borrow_mut().handle_dns_resolved(event_loop, None, Some("empty hostname"));
             } else if is_ip(&hostname) {
-                caller.borrow_mut().handle_dns_resolved(event_loop, Some((hostname.clone(), hostname)), None);
+                // TODO: check if bellow code would work or not in rust 1.12.0 stable
+                unsafe {
+                    let caller = &mut *caller.as_ptr();
+                    caller.handle_dns_resolved(event_loop, Some((hostname.clone(), hostname)), None);
+                }
             } else if self.hosts.has(&hostname) {
                 let ip = self.hosts.get(&hostname).unwrap().clone();
                 caller.borrow_mut().handle_dns_resolved(event_loop, Some((hostname, ip)), None);

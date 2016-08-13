@@ -36,7 +36,7 @@ enum CheckAuthResult {
 
 // for each handler, it could be at one of several stages:
 #[derive(PartialEq)]
-enum HandlerStage {
+enum HandleStage {
     // only sslocal: auth METHOD received from local, reply with selection message
     Init,
     // addr received from local, query DNS for remote
@@ -74,7 +74,7 @@ enum StreamStatus {
 
 
 pub struct TCPProcessor {
-    stage: HandlerStage,
+    stage: HandleStage,
     dns_resolver: Rc<RefCell<DNSResolver>>,
     is_local: bool,
     local_token: Option<Token>,
@@ -98,9 +98,9 @@ impl TCPProcessor {
         // TODO: change to configuable
         let password = "test";
         let stage = if is_local {
-            HandlerStage::Init
+            HandleStage::Init
         } else {
-            HandlerStage::Addr
+            HandleStage::Addr
         };
 
         let mut client_address = None;
@@ -298,6 +298,9 @@ impl TCPProcessor {
 
     fn handle_stage_stream(&mut self, event_loop: &mut EventLoop<Relay>, data: &[u8]) {
         debug!("handle stage stream");
+        // TODO: encrypt
+        if !self.is_local {
+        }
         self.write_to_sock(event_loop, data, false);
     }
 
@@ -312,7 +315,7 @@ impl TCPProcessor {
             match data[1] {
                 CMD_UDP_ASSOCIATE => {
                     unimplemented!();
-                    self.stage = HandlerStage::UDPAssoc;
+                    self.stage = HandleStage::UDPAssoc;
                     return;
                 }
                 CMD_CONNECT => {
@@ -338,7 +341,8 @@ impl TCPProcessor {
                     self.write_to_sock(event_loop, response, true);
 
                     self.data_to_write_to_remote.extend_from_slice(data);
-                    self.dns_resolver.borrow_mut().resolve(event_loop, remote_address.clone(), self.remote_token.unwrap());
+                    // TODO: change to configuable
+                    self.dns_resolver.borrow_mut().resolve(event_loop, "127.0.0.1".to_string(), self.remote_token.unwrap());
                 } else {
                     if data.len() > header_length {
                         self.data_to_write_to_remote.extend_from_slice(&data[header_length..]);
@@ -348,7 +352,7 @@ impl TCPProcessor {
 
                 self.server_address = Some((remote_address, remote_port));
                 self.update_stream(event_loop, StreamDirection::Up, StreamStatus::Writing);
-                self.stage = HandlerStage::DNS;
+                self.stage = HandleStage::DNS;
             }
             None => {
                 error!("can not parse socks header");
@@ -362,7 +366,7 @@ impl TCPProcessor {
         match self.check_auth_method(data) {
             CheckAuthResult::Success => {
                 self.write_to_sock(event_loop, &[0x05, 0x00], true);
-                self.stage = HandlerStage::Addr;
+                self.stage = HandleStage::Addr;
             }
             CheckAuthResult::BadSocksHeader => {
                 self.destroy(event_loop);
@@ -433,16 +437,16 @@ impl TCPProcessor {
         };
 
         match self.stage {
-            HandlerStage::Init => {
+            HandleStage::Init => {
                 self.handle_stage_init(event_loop, &data);
             }
-            HandlerStage::Addr => {
+            HandleStage::Addr => {
                 self.handle_stage_addr(event_loop, &data);
             }
-            HandlerStage::Connecting => {
+            HandleStage::Connecting => {
                 self.handle_stage_connecting(event_loop, &data);
             }
-            HandlerStage::Stream => {
+            HandleStage::Stream => {
                 self.handle_stage_stream(event_loop, &data);
             }
             _ => {}
@@ -486,7 +490,7 @@ impl TCPProcessor {
         // if self.is_local {
         //     data = self.encryptor.update(data);
         // }
-        self.stage = HandlerStage::Stream;
+        self.stage = HandleStage::Stream;
         if self.data_to_write_to_remote.len() > 0 {
             self.write_data(event_loop, false);
         } else {
@@ -519,8 +523,8 @@ impl Caller for TCPProcessor {
         }
 
         match hostname_ip {
-            Some((hostname, ip)) => {
-                self.stage = HandlerStage::Connecting;
+            Some((_hostname, ip)) => {
+                self.stage = HandleStage::Connecting;
                 let port = if self.is_local {
                     // TODO: change to configuable
                     8588
@@ -607,7 +611,7 @@ impl Processor for TCPProcessor {
             return;
         }
 
-        self.stage = HandlerStage::Destroyed;
+        self.stage = HandleStage::Destroyed;
 
         if self.local_sock.is_some() {
             let sock = self.local_sock.take();
@@ -618,6 +622,6 @@ impl Processor for TCPProcessor {
     }
 
     fn is_destroyed(&self) -> bool {
-        self.stage == HandlerStage::Destroyed
+        self.stage == HandleStage::Destroyed
     }
 }

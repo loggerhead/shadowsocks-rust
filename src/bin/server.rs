@@ -10,5 +10,5 @@ fn main() {
     env_logger::init().unwrap();
     let _config = shell::get_config().expect("Invalid configuration");
 
-    Relay::new("127.0.0.1:8488").run();
+    Relay::new("127.0.0.1:8588").run();
 }

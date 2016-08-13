@@ -29,8 +29,8 @@ pub struct Relay {
 
 
 impl Relay {
-    pub fn new() -> Relay {
-        let socket_addr = str2addr4("127.0.0.1:8488").unwrap();
+    pub fn new(address: &str) -> Relay {
+        let socket_addr = str2addr4(address).unwrap();
         let tcp_listener = TcpListener::bind(&SocketAddr::V4(socket_addr)).unwrap();
         let dns_resolver = Rc::new(RefCell::new(DNSResolver::new(None, None)));
         let beginning_token = Token(RELAY_TOKEN.as_usize() + 1);
@@ -146,7 +146,7 @@ impl Processor for Relay {
 
     fn is_destroyed(&self) -> bool {
         unimplemented!();
-        
+
         false
     }
 }
