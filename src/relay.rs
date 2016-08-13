@@ -84,12 +84,12 @@ impl Handler for Relay {
             }
             token @ Token(_) => {
                 debug!("got events {:?} for {:?}", events, token);
-                if !self.processors[token].borrow().is_destroyed() {
+                let is_destroyed = self.processors[token].borrow().is_destroyed();
+                if is_destroyed {
+                    self.processors.remove(token);
+                } else {
                     self.processors[token].borrow_mut().process(event_loop, token, events);
-                    return;
                 }
-
-                self.processors.remove(token);
             }
         }
     }
@@ -141,10 +141,12 @@ impl Processor for Relay {
     }
 
     fn destroy(&mut self, event_loop: &mut EventLoop<Relay>) {
-
+        unimplemented!();
     }
 
     fn is_destroyed(&self) -> bool {
-        return false;
+        unimplemented!();
+        
+        false
     }
 }

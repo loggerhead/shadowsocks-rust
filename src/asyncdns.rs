@@ -66,7 +66,7 @@ type ResponseHeader = (u16, u16, u16, u16, u16, u16, u16, u16, u16);
 
 
 pub trait Caller {
-    fn handle_dns_resolved(&mut self, Option<(String, String)>, Option<&str>);
+    fn handle_dns_resolved(&mut self, event_loop: &mut EventLoop<Relay>, Option<(String, String)>, Option<&str>);
 }
 
 // For detail, see page 7 of RFC 1035
@@ -468,21 +468,21 @@ impl DNSResolver {
         }
     }
 
-    pub fn resolve(&mut self, hostname: String, caller_token: Token) {
+    pub fn resolve(&mut self, event_loop: &mut EventLoop<Relay>, hostname: String, caller_token: Token) {
         if let Some(caller) = self.callers.get(&caller_token) {
             if hostname.len() == 0 {
-                caller.borrow_mut().handle_dns_resolved(None, Some("empty hostname"));
+                caller.borrow_mut().handle_dns_resolved(event_loop, None, Some("empty hostname"));
             } else if is_ip(&hostname) {
-                caller.borrow_mut().handle_dns_resolved(Some((hostname.clone(), hostname)), None);
+                caller.borrow_mut().handle_dns_resolved(event_loop, Some((hostname.clone(), hostname)), None);
             } else if self.hosts.has(&hostname) {
                 let ip = self.hosts.get(&hostname).unwrap().clone();
-                caller.borrow_mut().handle_dns_resolved(Some((hostname, ip)), None);
+                caller.borrow_mut().handle_dns_resolved(event_loop, Some((hostname, ip)), None);
             } else if self.cache.has(&hostname) {
                 let ip = self.cache.get(&hostname).unwrap().clone();
-                caller.borrow_mut().handle_dns_resolved(Some((hostname, ip)), None);
+                caller.borrow_mut().handle_dns_resolved(event_loop, Some((hostname, ip)), None);
             } else if !is_valid_hostname(&hostname) {
                 let errmsg = format!("invalid hostname: {}", hostname);
-                caller.borrow_mut().handle_dns_resolved(None, Some(&errmsg));
+                caller.borrow_mut().handle_dns_resolved(event_loop, None, Some(&errmsg));
             } else {
                 if self.hostname_to_caller.has(&hostname) {
                     let arr = self.hostname_to_caller.get_mut(&hostname).unwrap();
@@ -499,7 +499,7 @@ impl DNSResolver {
         }
     }
 
-    fn call_callback(&mut self, hostname: String, ip: String) {
+    fn call_callback(&mut self, event_loop: &mut EventLoop<Relay>, hostname: String, ip: String) {
         if let Some(callers) = self.hostname_to_caller.get_mut(&hostname) {
             for caller in callers.iter_mut() {
                 let errmsg = format!("unknown hostname {}", hostname.clone());
@@ -510,7 +510,7 @@ impl DNSResolver {
                     Some(errmsg.as_str())
                 };
 
-                caller.borrow_mut().handle_dns_resolved(Some((hostname.clone(), ip.clone())), error);
+                caller.borrow_mut().handle_dns_resolved(event_loop, Some((hostname.clone(), ip.clone())), error);
             }
         }
 
@@ -522,7 +522,7 @@ impl DNSResolver {
         }
     }
 
-    fn handle_data(&mut self, data: &[u8]) {
+    fn handle_data(&mut self, event_loop: &mut EventLoop<Relay>, data: &[u8]) {
         match parse_response(data) {
             Some(response) => {
                 let mut ip = String::new();
@@ -544,11 +544,11 @@ impl DNSResolver {
                     self.hostname_status[hostname.clone()] = HostnameStatus::Second;
                     self.send_request(hostname, self.qtypes[1]);
                 } else if ip.len() > 0 {
-                    self.call_callback(hostname, ip);
+                    self.call_callback(event_loop, hostname, ip);
                 } else if hostname_status == 2 {
                     for question in response.questions {
                         if question.1 == self.qtypes[1] {
-                            self.call_callback(hostname, String::new());
+                            self.call_callback(event_loop, hostname, String::new());
                             break;
                         }
                     }
@@ -603,35 +603,17 @@ impl Processor for DNSResolver {
             }
 
             if recevied.is_some() {
-                self.handle_data(recevied.unwrap());
+                self.handle_data(event_loop, recevied.unwrap());
             }
         }
     }
 
     fn destroy(&mut self, event_loop: &mut EventLoop<Relay>) {
-
+        unimplemented!();
     }
 
     fn is_destroyed(&self) -> bool {
-        return false;
-    }
-}
-
-#[cfg(test)]
-struct FakeCaller;
-
-#[cfg(test)]
-impl Caller for FakeCaller {
-    fn handle_dns_resolved(&mut self, hostname_ip: Option<(String, String)>, errmsg: Option<&str>) {
-        match hostname_ip {
-            Some((hostname, ip)) => println!("{}: {}", hostname, ip),
-            None => {
-                match errmsg {
-                    Some(msg) => println!("resolve hostname error: {}", msg),
-                    None => println!("strange..."),
-                }
-            }
-        }
+        self.token == None
     }
 }
 
@@ -642,31 +624,30 @@ fn test() {
 
     // answer of "baidu.com"
     let data: &[u8] = &[
-        13, 13, 129, 128, 0, 1, 0, 4, 0, 5, 0, 0, 5, 98, 97, 105,
-        100, 117, 3, 99, 111, 109, 0, 0, 1, 0, 1, 192, 12, 0, 1, 0,
-        1, 0, 0, 0, 54, 0, 4, 180, 149, 132, 47, 192, 12, 0, 1, 0,
-        1, 0, 0, 0, 54, 0, 4, 220, 181, 57, 217, 192, 12, 0, 1, 0,
-        1, 0, 0, 0, 54, 0, 4, 111, 13, 101, 208, 192, 12, 0, 1, 0,
-        1, 0, 0, 0, 54, 0, 4, 123, 125, 114, 144, 192, 12, 0, 2, 0,
-        1, 0, 1, 79, 48, 0, 6, 3, 100, 110, 115, 192, 12, 192, 12, 0,
-        2, 0, 1, 0, 1, 79, 48, 0, 6, 3, 110, 115, 55, 192, 12, 192,
-        12, 0, 2, 0, 1, 0, 1, 79, 48, 0, 6, 3, 110, 115, 51, 192,
-        12, 192, 12, 0, 2, 0, 1, 0, 1, 79, 48, 0, 6, 3, 110, 115,
-        52, 192, 12, 192, 12, 0, 2, 0, 1, 0, 1, 79, 48, 0, 6, 3,
-        110, 115, 50, 192, 12
+        0x0d, 0x0d, 0x81, 0x80, 0x00, 0x01, 0x00, 0x04,
+        0x00, 0x05, 0x00, 0x00, 0x05, 0x62, 0x61, 0x69,
+        0x64, 0x75, 0x03, 0x63, 0x6f, 0x6d, 0x00, 0x00,
+        0x01, 0x00, 0x01, 0xc0, 0x0c, 0x00, 0x01, 0x00,
+        0x01, 0x00, 0x00, 0x00, 0x36, 0x00, 0x04, 0xb4,
+        0x95, 0x84, 0x2f, 0xc0, 0x0c, 0x00, 0x01, 0x00,
+        0x01, 0x00, 0x00, 0x00, 0x36, 0x00, 0x04, 0xdc,
+        0xb5, 0x39, 0xd9, 0xc0, 0x0c, 0x00, 0x01, 0x00,
+        0x01, 0x00, 0x00, 0x00, 0x36, 0x00, 0x04, 0x6f,
+        0x0d, 0x65, 0xd0, 0xc0, 0x0c, 0x00, 0x01, 0x00,
+        0x01, 0x00, 0x00, 0x00, 0x36, 0x00, 0x04, 0x7b,
+        0x7d, 0x72, 0x90, 0xc0, 0x0c, 0x00, 0x02, 0x00,
+        0x01, 0x00, 0x01, 0x4f, 0x30, 0x00, 0x06, 0x03,
+        0x64, 0x6e, 0x73, 0xc0, 0x0c, 0xc0, 0x0c, 0x00,
+        0x02, 0x00, 0x01, 0x00, 0x01, 0x4f, 0x30, 0x00,
+        0x06, 0x03, 0x6e, 0x73, 0x37, 0xc0, 0x0c, 0xc0,
+        0x0c, 0x00, 0x02, 0x00, 0x01, 0x00, 0x01, 0x4f,
+        0x30, 0x00, 0x06, 0x03, 0x6e, 0x73, 0x33, 0xc0,
+        0x0c, 0xc0, 0x0c, 0x00, 0x02, 0x00, 0x01, 0x00,
+        0x01, 0x4f, 0x30, 0x00, 0x06, 0x03, 0x6e, 0x73,
+        0x34, 0xc0, 0x0c, 0xc0, 0x0c, 0x00, 0x02, 0x00,
+        0x01, 0x00, 0x01, 0x4f, 0x30, 0x00, 0x06, 0x03,
+        0x6e, 0x73, 0x32, 0xc0, 0x0c,
     ];
+
     assert!(parse_response(data).is_some());
-
-
-    let mut relay = Relay::new();
-
-    let mut resolver = relay.get_dns_resolver();
-    let caller = Rc::new(RefCell::new(FakeCaller {}));
-    let token = Token(0);
-    resolver.borrow_mut().add_caller(token, caller);
-    resolver.borrow_mut().resolve("baidu.com".to_string(), token);
-    resolver.borrow_mut().resolve("bilibili.com".to_string(), token);
-    resolver.borrow_mut().remove_caller(token);
-
-    relay.run();
 }

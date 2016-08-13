@@ -323,12 +323,12 @@ impl TCPProcessor {
                     self.write_to_sock(event_loop, response, true);
 
                     self.data_to_write_to_remote.extend_from_slice(data);
-                    self.dns_resolver.borrow_mut().resolve(remote_address.clone(), self.remote_token.unwrap());
+                    self.dns_resolver.borrow_mut().resolve(event_loop, remote_address.clone(), self.remote_token.unwrap());
                 } else {
                     if data.len() > header_length {
                         self.data_to_write_to_remote.extend_from_slice(&data[header_length..]);
                     }
-                    self.dns_resolver.borrow_mut().resolve(remote_address.clone(), self.remote_token.unwrap());
+                    self.dns_resolver.borrow_mut().resolve(event_loop, remote_address.clone(), self.remote_token.unwrap());
                 }
 
                 self.server_address = Some((remote_address, remote_port));
@@ -472,9 +472,22 @@ impl TCPProcessor {
 }
 
 impl Caller for TCPProcessor {
-    fn handle_dns_resolved(&mut self, hostname_ip: Option<(String, String)>, errmsg: Option<&str>) {
+    fn handle_dns_resolved(&mut self, event_loop: &mut EventLoop<Relay>, hostname_ip: Option<(String, String)>, errmsg: Option<&str>) {
         debug!("handle_dns_resolved: {:?}, {:?}", hostname_ip, errmsg);
-        unimplemented!();
+        if errmsg.is_some() {
+            info!("resolve DNS error: {}", errmsg.unwrap());
+            self.destroy(event_loop);
+            return;
+        }
+
+        match hostname_ip {
+            Some((hostname, ip)) => {
+
+            }
+            _ => {
+                self.destroy(event_loop);
+            }
+        }
     }
 }
 
