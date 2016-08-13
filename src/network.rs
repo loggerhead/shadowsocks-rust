@@ -1,7 +1,8 @@
 use std::io::Cursor;
 use std::str::FromStr;
 use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt};
-use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, AddrParseError};
+use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 
 
 pub trait NetworkWriteBytes: WriteBytesExt {
@@ -98,4 +99,10 @@ pub fn str2addr4(ip: &str) -> Option<SocketAddrV4> {
 
 pub fn str2addr6(ip: &str) -> Option<SocketAddrV6> {
     SocketAddrV6::from_str(ip).ok()
+}
+
+pub fn pair2socket_addr(ip: &str, port: u16) -> Result<SocketAddr, AddrParseError> {
+    Ipv4Addr::from_str(ip).map(|ip| {
+        SocketAddr::new(IpAddr::V4(ip), port)
+    })
 }

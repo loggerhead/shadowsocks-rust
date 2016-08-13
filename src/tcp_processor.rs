@@ -7,6 +7,7 @@ use mio::tcp::TcpStream;
 
 use relay::{Relay, Processor};
 use common::parse_header;
+use network::pair2socket_addr;
 use asyncdns::{Caller, DNSResolver};
 use encrypt::Encryptor;
 
@@ -469,6 +470,21 @@ impl TCPProcessor {
             self.update_stream(event_loop, StreamDirection::Up, StreamStatus::Reading);
         }
     }
+
+    // TODO: check other nodelay
+    fn create_remote_socket(&mut self, ip: &str, port: u16) -> Result<TcpStream> {
+        match pair2socket_addr(ip, port) {
+            Ok(addr) => {
+                TcpStream::connect(&addr).map(|sock| {
+                    sock.set_nodelay(true);
+                    sock
+                })
+            }
+            Err(e) => {
+                Err(Error::new(ErrorKind::InvalidData, e))
+            }
+        }
+    }
 }
 
 impl Caller for TCPProcessor {
@@ -482,7 +498,22 @@ impl Caller for TCPProcessor {
 
         match hostname_ip {
             Some((hostname, ip)) => {
+                self.stage = HandlerStage::Connecting;
+                let addr = ip;
+                let port = if self.is_local {
+                    // TODO: change to configuable
+                    8488
+                } else {
+                    match self.server_address {
+                        Some((_, port)) => port,
+                        _ => {
+                            self.destroy(event_loop);
+                            return;
+                        }
+                    }
+                };
 
+                // TODO: create remote socket
             }
             _ => {
                 self.destroy(event_loop);
