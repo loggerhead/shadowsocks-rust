@@ -314,8 +314,8 @@ impl TCPProcessor {
         let data = if self.is_local {
             match data[1] {
                 CMD_UDP_ASSOCIATE => {
-                    unimplemented!();
                     self.stage = HandleStage::UDPAssoc;
+                    unimplemented!();
                     return;
                 }
                 CMD_CONNECT => {
@@ -540,6 +540,7 @@ impl Caller for TCPProcessor {
 
                 self.remote_sock = match self.create_connection(&ip, port) {
                     Ok(sock) => {
+                        debug!("created remote socket to {}:{}", ip, port);
                         let token = self.remote_token;
                         self.add_to_loop(token.unwrap(), event_loop, EventSet::writable() | EventSet::error(), true);
                         self.update_stream(event_loop, StreamDirection::Up, StreamStatus::ReadWriting);
@@ -570,7 +571,7 @@ impl Processor for TCPProcessor {
 
         if Some(token) == self.local_token {
             if events.is_error() {
-                error!("got events error from local socket on TCPRelay");
+                error!("got events error from local socket on TCPProcessor");
                 self.destroy(event_loop);
                 return;
             }
@@ -587,7 +588,7 @@ impl Processor for TCPProcessor {
             }
         } else if Some(token) == self.remote_token {
             if events.is_error() {
-                error!("got events error from remote socket on TCPRelay");
+                error!("got events error from remote socket on TCPProcessor");
                 self.destroy(event_loop);
                 return;
             }

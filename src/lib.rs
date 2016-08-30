@@ -14,7 +14,8 @@ extern crate crypto;
 extern crate byteorder;
 extern crate env_logger;
 
-#[macro_use] pub mod network;
+#[macro_use]
+pub mod network;
 pub mod util;
 pub mod relay;
 pub mod shell;

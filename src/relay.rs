@@ -47,7 +47,8 @@ impl Relay {
     }
 
     pub fn remove_processor(&mut self, token: Token) {
-        self.processors.remove(token);
+        // TODO: actually remove it from processors
+        // self.processors.remove(token);
     }
 
     pub fn get_dns_resolver(&self) -> Rc<RefCell<DNSResolver>> {
@@ -78,15 +79,15 @@ impl Handler for Relay {
     type Message = ();
 
     fn ready(&mut self, event_loop: &mut EventLoop<Relay>, token: Token, events: EventSet) {
+        debug!("got events {:?} for {:?}", events, token);
         match token {
             RELAY_TOKEN => {
                 self.process(event_loop, token, events);
             }
             token @ Token(_) => {
-                debug!("got events {:?} for {:?}", events, token);
                 let is_destroyed = self.processors[token].borrow().is_destroyed();
                 if is_destroyed {
-                    self.processors.remove(token);
+                    self.remove_processor(token);
                 } else {
                     self.processors[token].borrow_mut().process(event_loop, token, events);
                 }
