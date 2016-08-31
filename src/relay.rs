@@ -143,7 +143,7 @@ impl Processor for Relay {
 
         match self.tcp_listener.accept() {
             Ok(Some((conn, _addr))) => {
-                debug!("new connection from {}", _addr);
+                debug!("create processor for {}", _addr);
                 let tcp_processor = Rc::new(RefCell::new(TCPProcessor::new(self.conf.clone(),
                                                                            self.notifier.clone(),
                                                                            conn,
