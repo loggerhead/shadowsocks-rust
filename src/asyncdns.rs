@@ -4,6 +4,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::io::Cursor;
 use std::net::SocketAddr;
+use std::sync::mpsc::Sender;
 
 use rand;
 use regex::Regex;
@@ -363,6 +364,7 @@ enum HostnameStatus {
 pub type Callback = FnMut(&mut Caller, Option<(String, String)>, Option<&str>);
 
 pub struct DNSResolver {
+    notifier: Rc<Sender<Token>>,
     token: Option<Token>,
     hosts: Dict<String, String>,
     cache: Dict<String, String>,
@@ -376,8 +378,9 @@ pub struct DNSResolver {
 
 // TODO: add LRU `self.cache` to cache query result, see https://github.com/contain-rs/lru-cache
 impl DNSResolver {
-    pub fn new(server_list: Option<Vec<String>>, prefer_ipv6: Option<bool>) -> DNSResolver {
+    pub fn new(notifier: Rc<Sender<Token>>, server_list: Option<Vec<String>>, prefer_ipv6: Option<bool>) -> DNSResolver {
         let mut this = DNSResolver {
+            notifier: notifier,
             token: None,
             servers: Vec::new(),
             hosts: Dict::new(),
@@ -627,6 +630,9 @@ impl Processor for DNSResolver {
 
     fn destroy(&mut self, event_loop: &mut EventLoop<Relay>) {
         unimplemented!();
+        if (self.token.is_some()) {
+            self.notifier.send(self.token.unwrap());
+        }
     }
 
     fn is_destroyed(&self) -> bool {

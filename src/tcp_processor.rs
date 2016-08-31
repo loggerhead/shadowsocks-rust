@@ -1,10 +1,12 @@
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::io::{Read, Write, Result, Error, ErrorKind};
+use std::sync::mpsc::Sender;
 
 use mio::{EventLoop, Token, EventSet, PollOpt};
 use mio::tcp::TcpStream;
 
+use util::get_basic_events;
 use relay::{Relay, Processor};
 use common::parse_header;
 use network::pair2socket_addr;
@@ -74,6 +76,7 @@ enum StreamStatus {
 
 
 pub struct TCPProcessor {
+    notifier: Rc<Sender<Token>>,
     stage: HandleStage,
     dns_resolver: Rc<RefCell<DNSResolver>>,
     is_local: bool,
@@ -91,7 +94,8 @@ pub struct TCPProcessor {
 }
 
 impl TCPProcessor {
-    pub fn new(local_sock: TcpStream,
+    pub fn new(notifier: Rc<Sender<Token>>,
+               local_sock: TcpStream,
                dns_resolver: Rc<RefCell<DNSResolver>>,
                is_local: bool)
                -> TCPProcessor {
@@ -111,6 +115,7 @@ impl TCPProcessor {
         local_sock.set_nodelay(true).ok();
 
         TCPProcessor {
+            notifier: notifier,
             stage: stage,
             dns_resolver: dns_resolver,
             is_local: is_local,
@@ -154,66 +159,22 @@ impl TCPProcessor {
         }
     }
 
-    fn update_stream(&mut self,
-                     event_loop: &mut EventLoop<Relay>,
-                     direction: StreamDirection,
-                     status: StreamStatus) {
-        match direction {
-            StreamDirection::Down => {
-                if self.downstream_status != status {
-                    self.downstream_status = status;
-                } else {
-                    return;
-                }
-            }
-            StreamDirection::Up => {
-                if self.upstream_status != status {
-                    self.upstream_status = status;
-                } else {
-                    return;
-                }
-            }
-        }
+    fn change_status(&mut self, event_loop: &mut EventLoop<Relay>, events: EventSet, is_local: bool) {
+        let token = if is_local {
+            self.local_token
+        } else {
+            self.remote_token
+        };
 
-        if self.local_sock.is_some() {
-            let mut events = EventSet::error() | EventSet::hup();
-            match self.downstream_status {
-                StreamStatus::Writing |
-                StreamStatus::ReadWriting => {
-                    events = events | EventSet::writable();
-                }
-                _ => {}
-            }
-            match self.upstream_status {
-                StreamStatus::Reading |
-                StreamStatus::ReadWriting => {
-                    events = events | EventSet::readable();
-                }
-                _ => {}
-            }
-            let token = self.local_token;
-            self.add_to_loop(token.unwrap(), event_loop, events, true);
-        }
+        self.add_to_loop(token.unwrap(), event_loop, events, is_local);
+    }
 
-        if self.remote_sock.is_some() {
-            let mut events = EventSet::error() | EventSet::hup();
-            match self.downstream_status {
-                StreamStatus::Reading |
-                StreamStatus::ReadWriting => {
-                    events = events | EventSet::readable();
-                }
-                _ => {}
-            }
-            match self.upstream_status {
-                StreamStatus::Writing |
-                StreamStatus::ReadWriting => {
-                    events = events | EventSet::writable();
-                }
-                _ => {}
-            }
-            let token = self.remote_token;
-            self.add_to_loop(token.unwrap(), event_loop, events, false);
-        }
+    fn change_to_writable(&mut self, event_loop: &mut EventLoop<Relay>, is_local: bool) {
+        self.change_status(event_loop, get_basic_events() | EventSet::writable() | EventSet::hup(), is_local);
+    }
+
+    fn change_to_readable(&mut self, event_loop: &mut EventLoop<Relay>, is_local: bool) {
+        self.change_status(event_loop, get_basic_events() | EventSet::hup(), is_local);
     }
 
     fn receive_data(&mut self, is_local_sock: bool) -> Result<Vec<u8>> {
@@ -231,15 +192,15 @@ impl TCPProcessor {
         }
     }
 
-    fn write_data(&mut self, event_loop: &mut EventLoop<Relay>, is_local_sock: bool) {
+    fn send_buf_data(&mut self, event_loop: &mut EventLoop<Relay>, is_local_sock: bool) {
         if is_local_sock {
             let data = self.data_to_write_to_local.clone();
-            self.write_to_sock(event_loop, &data, true);
             self.data_to_write_to_local.clear();
+            self.write_to_sock(event_loop, &data, true);
         } else {
             let data = self.data_to_write_to_remote.clone();
+            self.data_to_write_to_remote.clear();
             self.write_to_sock(event_loop, &data, false);
-            self.data_to_write_to_remote.clone();
         };
     }
 
@@ -282,17 +243,7 @@ impl TCPProcessor {
         if need_destroy {
             self.destroy(event_loop);
         } else if uncomplete {
-            if is_local_sock {
-                self.update_stream(event_loop, StreamDirection::Down, StreamStatus::Writing);
-            } else {
-                self.update_stream(event_loop, StreamDirection::Up, StreamStatus::Writing);
-            }
-        } else {
-            if is_local_sock {
-                self.update_stream(event_loop, StreamDirection::Down, StreamStatus::Reading);
-            } else {
-                self.update_stream(event_loop, StreamDirection::Up, StreamStatus::Reading);
-            }
+            self.change_to_writable(event_loop, is_local_sock);
         }
     }
 
@@ -333,7 +284,6 @@ impl TCPProcessor {
 
         match parse_header(data) {
             Some((_addr_type, remote_address, remote_port, header_length)) => {
-                info!("connecting {}:{}", remote_address, remote_port);
                 if self.is_local {
                     let response = &[0x05, 0x00, 0x00, 0x01,
                                      0x00, 0x00, 0x00, 0x00,
@@ -351,7 +301,6 @@ impl TCPProcessor {
                 }
 
                 self.server_address = Some((remote_address, remote_port));
-                self.update_stream(event_loop, StreamDirection::Up, StreamStatus::Writing);
                 self.stage = HandleStage::DNS;
             }
             None => {
@@ -479,9 +428,9 @@ impl TCPProcessor {
         //     data = self.encryptor.update(data);
         // }
         if self.data_to_write_to_local.len() > 0 {
-            self.write_data(event_loop, true);
+            self.send_buf_data(event_loop, true);
         } else {
-            self.update_stream(event_loop, StreamDirection::Down, StreamStatus::Reading);
+            self.change_to_readable(event_loop, true);
         }
     }
 
@@ -492,9 +441,9 @@ impl TCPProcessor {
         // }
         self.stage = HandleStage::Stream;
         if self.data_to_write_to_remote.len() > 0 {
-            self.write_data(event_loop, false);
+            self.send_buf_data(event_loop, false);
         } else {
-            self.update_stream(event_loop, StreamDirection::Up, StreamStatus::Reading);
+            self.change_to_readable(event_loop, false);
         }
     }
 
@@ -515,7 +464,7 @@ impl TCPProcessor {
 
 impl Caller for TCPProcessor {
     fn handle_dns_resolved(&mut self, event_loop: &mut EventLoop<Relay>, hostname_ip: Option<(String, String)>, errmsg: Option<&str>) {
-        debug!("handle_dns_resolved: {:?}, {:?}", hostname_ip, errmsg);
+        debug!("handle_dns_resolved: {:?}", hostname_ip);
         if errmsg.is_some() {
             info!("resolve DNS error: {}", errmsg.unwrap());
             self.destroy(event_loop);
@@ -542,9 +491,8 @@ impl Caller for TCPProcessor {
                     Ok(sock) => {
                         debug!("created remote socket to {}:{}", ip, port);
                         let token = self.remote_token;
-                        self.add_to_loop(token.unwrap(), event_loop, EventSet::writable() | EventSet::error(), true);
-                        self.update_stream(event_loop, StreamDirection::Up, StreamStatus::ReadWriting);
-                        self.update_stream(event_loop, StreamDirection::Down, StreamStatus::Reading);
+                        self.add_to_loop(token.unwrap(), event_loop, get_basic_events() | EventSet::writable() | EventSet::hup(), true);
+                        self.send_buf_data(event_loop, false);
 
                         Some(sock)
                     }
@@ -617,6 +565,12 @@ impl Processor for TCPProcessor {
         if self.local_sock.is_some() {
             let sock = self.local_sock.take();
             event_loop.deregister(&sock.unwrap()).ok();
+            self.notifier.send(self.local_token.unwrap());
+        }
+        if self.remote_sock.is_some() {
+            let sock = self.remote_sock.take();
+            event_loop.deregister(&sock.unwrap()).ok();
+            self.notifier.send(self.remote_token.unwrap());
         }
 
         self.dns_resolver.borrow_mut().remove_caller(self.remote_token.unwrap());

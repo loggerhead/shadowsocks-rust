@@ -1,11 +1,13 @@
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::net::{SocketAddr};
+use std::sync::mpsc::{channel, Sender, Receiver};
 
 use mio::util::Slab;
 use mio::{Token, Handler, EventSet, EventLoop, PollOpt};
 use mio::tcp::{TcpListener};
 
+use util::get_basic_events;
 use network::str2addr4;
 use asyncdns::DNSResolver;
 use tcp_processor::TCPProcessor;
@@ -22,6 +24,8 @@ pub trait Processor {
 
 
 pub struct Relay {
+    notifier: Rc<Sender<Token>>,
+    waiter: Receiver<Token>,
     tcp_listener: TcpListener,
     dns_resolver: Rc<RefCell<DNSResolver>>,
     processors: Slab<Rc<RefCell<Processor>>>,
@@ -30,12 +34,16 @@ pub struct Relay {
 
 impl Relay {
     pub fn new(address: &str) -> Relay {
+        let (notifier, waiter) = channel();
+        let notifier = Rc::new(notifier);
         let socket_addr = str2addr4(address).unwrap();
         let tcp_listener = TcpListener::bind(&SocketAddr::V4(socket_addr)).unwrap();
-        let dns_resolver = Rc::new(RefCell::new(DNSResolver::new(None, None)));
+        let dns_resolver = Rc::new(RefCell::new(DNSResolver::new(notifier.clone(), None, None)));
         let beginning_token = Token(RELAY_TOKEN.as_usize() + 1);
 
         Relay {
+            notifier: notifier,
+            waiter: waiter,
             tcp_listener: tcp_listener,
             dns_resolver: dns_resolver.clone(),
             processors: Slab::new_starting_at(beginning_token, 8192),
@@ -44,11 +52,6 @@ impl Relay {
 
     pub fn add_processor(&mut self, processor: Rc<RefCell<Processor>>) -> Option<Token> {
         self.processors.insert_with(move |_token| processor)
-    }
-
-    pub fn remove_processor(&mut self, token: Token) {
-        // TODO: actually remove it from processors
-        // self.processors.remove(token);
     }
 
     pub fn get_dns_resolver(&self) -> Rc<RefCell<DNSResolver>> {
@@ -66,8 +69,8 @@ impl Relay {
         let dns_resolver = self.get_dns_resolver();
         let token = self.add_processor(dns_resolver).unwrap();
 
-        self.dns_resolver.borrow_mut().add_to_loop(token, &mut event_loop, EventSet::readable());
-        self.add_to_loop(RELAY_TOKEN, &mut event_loop, EventSet::readable() | EventSet::error());
+        self.dns_resolver.borrow_mut().add_to_loop(token, &mut event_loop, get_basic_events());
+        self.add_to_loop(RELAY_TOKEN, &mut event_loop, get_basic_events());
 
         debug!("start event loop");
         event_loop.run(self).unwrap();
@@ -79,18 +82,23 @@ impl Handler for Relay {
     type Message = ();
 
     fn ready(&mut self, event_loop: &mut EventLoop<Relay>, token: Token, events: EventSet) {
+        match self.waiter.try_recv() {
+            Ok(t) => {
+                // TODO: remove from processors
+                debug!("remove processor {:?}", t);
+                println!("processors = {:?}", self.processors);
+                // self.processors.remove(token);
+            },
+            _ => { }
+        }
+
         debug!("got events {:?} for {:?}", events, token);
         match token {
             RELAY_TOKEN => {
                 self.process(event_loop, token, events);
             }
             token @ Token(_) => {
-                let is_destroyed = self.processors[token].borrow().is_destroyed();
-                if is_destroyed {
-                    self.remove_processor(token);
-                } else {
-                    self.processors[token].borrow_mut().process(event_loop, token, events);
-                }
+                self.processors[token].borrow_mut().process(event_loop, token, events);
             }
         }
     }
@@ -107,13 +115,13 @@ impl Processor for Relay {
         match self.tcp_listener.accept() {
             Ok(Some((conn, _addr))) => {
                 debug!("new connection from {}", _addr);
-                let tcp_processor = TCPProcessor::new(conn, self.get_dns_resolver(), true);
+                let tcp_processor = TCPProcessor::new(self.notifier.clone(), conn, self.get_dns_resolver(), true);
                 let tcp_processor = Rc::new(RefCell::new(tcp_processor));
 
                 // register local socket of tcp_processor
                 let add_result = match self.add_processor(tcp_processor.clone()) {
                     Some(token) => {
-                        tcp_processor.borrow_mut().add_to_loop(token, event_loop, EventSet::readable() | EventSet::hup(), true)
+                        tcp_processor.borrow_mut().add_to_loop(token, event_loop, get_basic_events() | EventSet::hup(), true)
                     }
                     None => None,
                 };

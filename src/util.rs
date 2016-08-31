@@ -5,8 +5,14 @@ use std::io::BufReader;
 use std::fs::File;
 use std::collections::HashMap;
 use std::hash::{Hash, BuildHasherDefault};
-use fnv::FnvHasher;
 
+use fnv::FnvHasher;
+use mio::EventSet;
+
+
+pub fn get_basic_events() -> EventSet {
+    EventSet::readable() | EventSet::error()
+}
 
 pub fn slice2str(data: &[u8]) -> Option<&str> {
     str::from_utf8(data).ok()
