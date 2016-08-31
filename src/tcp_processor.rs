@@ -25,7 +25,7 @@ const CMD_BIND: u8 = 2;
 const CMD_UDP_ASSOCIATE: u8 = 3;
 
 
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 enum CheckAuthResult {
     Success,
     BadSocksHeader,
@@ -39,7 +39,7 @@ enum CheckAuthResult {
 //    remote:  connected to remote server
 
 // for each handler, it could be at one of several stages:
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 enum HandleStage {
     // only sslocal: auth METHOD received from local, reply with selection message
     Init,
@@ -494,6 +494,7 @@ impl Caller for TCPProcessor {
 
 impl Processor for TCPProcessor {
     fn process(&mut self, event_loop: &mut EventLoop<Relay>, token: Token, events: EventSet) {
+        debug!("current handle stage is {:?}", self.stage);
         if self.is_destroyed() {
             debug!("ignore process: destroyed");
             return;
@@ -538,9 +539,10 @@ impl Processor for TCPProcessor {
 
     fn destroy(&mut self, event_loop: &mut EventLoop<Relay>) {
         if self.is_destroyed() {
-            debug!("already destroyes");
+            debug!("already destroyed");
             return;
         }
+        debug!("destroy processor: {:?}, {:?}", self.local_token, self.remote_token);
 
         self.stage = HandleStage::Destroyed;
 
