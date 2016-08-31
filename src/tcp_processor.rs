@@ -411,7 +411,9 @@ impl TCPProcessor {
         // }
         if self.data_to_write_to_local.len() > 0 {
             self.send_buf_data(event_loop, true);
-        } else {
+        }
+
+        if self.data_to_write_to_local.len() == 0 {
             self.change_to_readable(event_loop, true);
         }
     }
@@ -422,9 +424,12 @@ impl TCPProcessor {
         //     data = self.encryptor.update(data);
         // }
         self.stage = HandleStage::Stream;
+        
         if self.data_to_write_to_remote.len() > 0 {
             self.send_buf_data(event_loop, false);
-        } else {
+        }
+
+        if self.data_to_write_to_remote.len() == 0 {
             self.change_to_readable(event_loop, false);
         }
     }
@@ -501,6 +506,7 @@ impl Processor for TCPProcessor {
         }
 
         if Some(token) == self.local_token {
+            error!("got events for local socket {:?}: {:?}", token, events);
             if events.is_error() {
                 error!("got events error from local socket on TCPProcessor");
                 self.destroy(event_loop);
@@ -518,6 +524,7 @@ impl Processor for TCPProcessor {
                 self.on_local_write(event_loop);
             }
         } else if Some(token) == self.remote_token {
+            error!("got events for remote socket {:?}: {:?}", token, events);
             if events.is_error() {
                 error!("got events error from remote socket on TCPProcessor");
                 self.destroy(event_loop);

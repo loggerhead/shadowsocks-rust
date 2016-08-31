@@ -122,7 +122,6 @@ impl Handler for Relay {
             _ => { }
         }
 
-        debug!("got events {:?} for {:?}", events, token);
         match token {
             RELAY_TOKEN => {
                 self.process(event_loop, token, events);
