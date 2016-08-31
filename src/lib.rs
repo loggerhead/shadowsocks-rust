@@ -18,7 +18,7 @@ extern crate env_logger;
 pub mod network;
 pub mod util;
 pub mod relay;
-pub mod shell;
+pub mod config;
 pub mod common;
 pub mod encrypt;
 pub mod asyncdns;

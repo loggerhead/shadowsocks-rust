@@ -3,12 +3,15 @@ extern crate mio;
 extern crate env_logger;
 extern crate shadowsocks;
 
-use shadowsocks::shell;
+use shadowsocks::config;
 use shadowsocks::relay::Relay;
 
 fn main() {
     env_logger::init().unwrap();
-    let _config = shell::get_config().expect("Invalid configuration");
+    let conf = config::get_config("server_conf.toml").unwrap_or_else(|e| {
+        error!("{}", e);
+        panic!();
+    });
 
-    Relay::new("127.0.0.1:8588").run();
+    Relay::new(conf, false).run();
 }

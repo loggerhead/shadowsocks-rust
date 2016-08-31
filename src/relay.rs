@@ -6,10 +6,12 @@ use std::sync::mpsc::{channel, Sender, Receiver};
 use mio::util::Slab;
 use mio::{Token, Handler, EventSet, EventLoop, PollOpt};
 use mio::tcp::{TcpListener};
+use toml::Table;
 
-use util::get_basic_events;
+use config;
 use network::str2addr4;
 use asyncdns::DNSResolver;
+use util::get_basic_events;
 use tcp_processor::TCPProcessor;
 
 
@@ -24,6 +26,8 @@ pub trait Processor {
 
 
 pub struct Relay {
+    is_local: bool,
+    conf: Rc<Table>,
     notifier: Rc<Sender<Token>>,
     waiter: Receiver<Token>,
     tcp_listener: TcpListener,
@@ -33,15 +37,33 @@ pub struct Relay {
 
 
 impl Relay {
-    pub fn new(address: &str) -> Relay {
+    pub fn new(conf: Table, is_local: bool) -> Relay {
+        let conf = Rc::new(conf);
+        let address = format!("{}:{}", config::get_str(&conf, "local_address"),
+                                       config::get_i64(&conf, "local_port"));
+
         let (notifier, waiter) = channel();
         let notifier = Rc::new(notifier);
-        let socket_addr = str2addr4(address).unwrap();
-        let tcp_listener = TcpListener::bind(&SocketAddr::V4(socket_addr)).unwrap();
+        let socket_addr = match str2addr4(&address) {
+            Some(addr) => addr,
+            None => {
+                error!("invalid socket address: {}", address);
+                panic!();
+            }
+        };
+        let tcp_listener = match TcpListener::bind(&SocketAddr::V4(socket_addr)) {
+            Ok(listener) => listener,
+            Err(e) => {
+                error!("cannot bind address {} because {}", address, e);
+                panic!();
+            }
+        };
         let dns_resolver = Rc::new(RefCell::new(DNSResolver::new(notifier.clone(), None, None)));
         let beginning_token = Token(RELAY_TOKEN.as_usize() + 1);
 
         Relay {
+            is_local: is_local,
+            conf: conf,
             notifier: notifier,
             waiter: waiter,
             tcp_listener: tcp_listener,
@@ -115,13 +137,18 @@ impl Processor for Relay {
         match self.tcp_listener.accept() {
             Ok(Some((conn, _addr))) => {
                 debug!("new connection from {}", _addr);
-                let tcp_processor = TCPProcessor::new(self.notifier.clone(), conn, self.get_dns_resolver(), true);
-                let tcp_processor = Rc::new(RefCell::new(tcp_processor));
-
+                let tcp_processor = Rc::new(RefCell::new(TCPProcessor::new(self.conf.clone(),
+                                                                           self.notifier.clone(),
+                                                                           conn,
+                                                                           self.get_dns_resolver(),
+                                                                           self.is_local)));
                 // register local socket of tcp_processor
                 let add_result = match self.add_processor(tcp_processor.clone()) {
                     Some(token) => {
-                        tcp_processor.borrow_mut().add_to_loop(token, event_loop, get_basic_events() | EventSet::hup(), true)
+                        tcp_processor.borrow_mut().add_to_loop(token,
+                                                               event_loop,
+                                                               get_basic_events() | EventSet::hup(),
+                                                               self.is_local)
                     }
                     None => None,
                 };
@@ -155,7 +182,5 @@ impl Processor for Relay {
 
     fn is_destroyed(&self) -> bool {
         unimplemented!();
-
-        false
     }
 }

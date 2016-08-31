@@ -5,13 +5,15 @@ use std::sync::mpsc::Sender;
 
 use mio::{EventLoop, Token, EventSet, PollOpt};
 use mio::tcp::TcpStream;
+use toml::Table;
 
+use config;
+use encrypt::Encryptor;
+use common::parse_header;
 use util::get_basic_events;
 use relay::{Relay, Processor};
-use common::parse_header;
 use network::pair2socket_addr;
 use asyncdns::{Caller, DNSResolver};
-use encrypt::Encryptor;
 
 
 const BUF_SIZE: usize = 32 * 1024;
@@ -54,28 +56,8 @@ enum HandleStage {
     Destroyed,
 }
 
-// for each handler, we have 2 stream directions:
-//    upstream:    from client to server direction
-//                 read local and write to remote
-//    downstream:  from server to client direction
-//                 read remote and write to local
-#[derive(PartialEq)]
-enum StreamDirection {
-    Up,
-    Down,
-}
-
-// for each stream, it's waiting for reading, or writing, or both
-#[derive(PartialEq)]
-enum StreamStatus {
-    Init,
-    Reading,
-    Writing,
-    ReadWriting,
-}
-
-
 pub struct TCPProcessor {
+    conf: Rc<Table>,
     notifier: Rc<Sender<Token>>,
     stage: HandleStage,
     dns_resolver: Rc<RefCell<DNSResolver>>,
@@ -86,21 +68,20 @@ pub struct TCPProcessor {
     remote_sock: Option<TcpStream>,
     data_to_write_to_local: Vec<u8>,
     data_to_write_to_remote: Vec<u8>,
-    upstream_status: StreamStatus,
-    downstream_status: StreamStatus,
     client_address: Option<(String, u16)>,
     server_address: Option<(String, u16)>,
     encryptor: Encryptor,
 }
 
 impl TCPProcessor {
-    pub fn new(notifier: Rc<Sender<Token>>,
+    pub fn new(conf: Rc<Table>,
+               notifier: Rc<Sender<Token>>,
                local_sock: TcpStream,
                dns_resolver: Rc<RefCell<DNSResolver>>,
                is_local: bool)
                -> TCPProcessor {
-        // TODO: change to configuable
-        let password = "test";
+
+        let encryptor = Encryptor::new(config::get_str(&conf, "password"), is_local);
         let stage = if is_local {
             HandleStage::Init
         } else {
@@ -115,6 +96,7 @@ impl TCPProcessor {
         local_sock.set_nodelay(true).ok();
 
         TCPProcessor {
+            conf: conf,
             notifier: notifier,
             stage: stage,
             dns_resolver: dns_resolver,
@@ -125,11 +107,9 @@ impl TCPProcessor {
             remote_sock: None,
             data_to_write_to_local: Vec::new(),
             data_to_write_to_remote: Vec::new(),
-            upstream_status: StreamStatus::Reading,
-            downstream_status: StreamStatus::Init,
             client_address: client_address,
             server_address: None,
-            encryptor: Encryptor::new(password, is_local),
+            encryptor: encryptor,
         }
     }
 
@@ -380,7 +360,7 @@ impl TCPProcessor {
                 }
             }
             Err(e) => {
-                error!("got read data error on local socket");
+                error!("got read data error on local socket: {}", e);
                 return;
             }
         };
@@ -475,8 +455,8 @@ impl Caller for TCPProcessor {
             Some((_hostname, ip)) => {
                 self.stage = HandleStage::Connecting;
                 let port = if self.is_local {
-                    // TODO: change to configuable
-                    8588
+                    // TODO: change to select a server
+                    config::get_i64(&self.conf, "remote_port") as u16
                 } else {
                     match self.server_address {
                         Some((_, port)) => port,
@@ -565,12 +545,13 @@ impl Processor for TCPProcessor {
         if self.local_sock.is_some() {
             let sock = self.local_sock.take();
             event_loop.deregister(&sock.unwrap()).ok();
-            self.notifier.send(self.local_token.unwrap());
+            // TODO: print error
+            self.notifier.send(self.local_token.unwrap()).ok();
         }
         if self.remote_sock.is_some() {
             let sock = self.remote_sock.take();
             event_loop.deregister(&sock.unwrap()).ok();
-            self.notifier.send(self.remote_token.unwrap());
+            self.notifier.send(self.remote_token.unwrap()).ok();
         }
 
         self.dns_resolver.borrow_mut().remove_caller(self.remote_token.unwrap());

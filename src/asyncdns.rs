@@ -630,8 +630,9 @@ impl Processor for DNSResolver {
 
     fn destroy(&mut self, event_loop: &mut EventLoop<Relay>) {
         unimplemented!();
-        if (self.token.is_some()) {
-            self.notifier.send(self.token.unwrap());
+        if self.token.is_some() {
+            // TODO: handle send desctory message failed
+            self.notifier.send(self.token.unwrap()).ok();
         }
     }
 

@@ -1,0 +1,4 @@
+local_port = 8388
+password = "fuckGFW4times!"
+timeout = 300
+method = "aes-256-cfb"

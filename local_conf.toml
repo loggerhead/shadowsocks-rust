@@ -1,0 +1,9 @@
+servers = [
+    "127.0.0.1:8388",
+    "proxy.loggerhead.me:22"
+]
+remote_port = 8388
+local_port = 8488
+password = "fuckGFW4times!"
+timeout = 300
+method = "aes-256-cfb"
