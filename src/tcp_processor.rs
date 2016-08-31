@@ -121,9 +121,9 @@ impl TCPProcessor {
                        token: Token,
                        event_loop: &mut EventLoop<Relay>,
                        events: EventSet,
-                       is_local: bool)
+                       is_local_sock: bool)
                        -> Option<()> {
-        let mut sock = if is_local {
+        let mut sock = if is_local_sock {
             self.local_token = Some(token);
             &mut self.local_sock
         } else {
@@ -139,22 +139,24 @@ impl TCPProcessor {
         }
     }
 
-    fn change_status(&mut self, event_loop: &mut EventLoop<Relay>, events: EventSet, is_local: bool) {
-        let token = if is_local {
+    fn change_status(&mut self, event_loop: &mut EventLoop<Relay>, events: EventSet, is_local_sock: bool) {
+        let token = if is_local_sock {
             self.local_token
         } else {
             self.remote_token
         };
 
-        self.add_to_loop(token.unwrap(), event_loop, events, is_local);
+        self.add_to_loop(token.unwrap(), event_loop, events, is_local_sock);
     }
 
-    fn change_to_writable(&mut self, event_loop: &mut EventLoop<Relay>, is_local: bool) {
-        self.change_status(event_loop, get_basic_events() | EventSet::writable() | EventSet::hup(), is_local);
+    fn change_to_writable(&mut self, event_loop: &mut EventLoop<Relay>, is_local_sock: bool) {
+        self.change_status(event_loop,
+                           get_basic_events() | EventSet::writable() | EventSet::hup(),
+                           is_local_sock);
     }
 
-    fn change_to_readable(&mut self, event_loop: &mut EventLoop<Relay>, is_local: bool) {
-        self.change_status(event_loop, get_basic_events() | EventSet::hup(), is_local);
+    fn change_to_readable(&mut self, event_loop: &mut EventLoop<Relay>, is_local_sock: bool) {
+        self.change_status(event_loop, get_basic_events() | EventSet::hup(), is_local_sock);
     }
 
     fn receive_data(&mut self, is_local_sock: bool) -> Result<Vec<u8>> {

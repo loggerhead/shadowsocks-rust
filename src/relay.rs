@@ -52,7 +52,10 @@ impl Relay {
             }
         };
         let tcp_listener = match TcpListener::bind(&SocketAddr::V4(socket_addr)) {
-            Ok(listener) => listener,
+            Ok(listener) => {
+                info!("listen on {}", address);
+                listener
+            }
             Err(e) => {
                 error!("cannot bind address {} because {}", address, e);
                 panic!();
@@ -148,12 +151,12 @@ impl Processor for Relay {
                         tcp_processor.borrow_mut().add_to_loop(token,
                                                                event_loop,
                                                                get_basic_events() | EventSet::hup(),
-                                                               self.is_local)
+                                                               true)
                     }
                     None => None,
                 };
                 if add_result.is_none() {
-                    error!("cannot add TCP processor to eventloop");
+                    error!("register TCP processor to eventloop failed");
                     return;
                 }
 
@@ -163,7 +166,7 @@ impl Processor for Relay {
                     let dns_resolver = self.get_dns_resolver();
                     dns_resolver.borrow_mut().add_caller(token, tcp_processor);
                 } else {
-                    error!("cannot add TCP processor to eventloop");
+                    error!("cannot generate remote token for TCP processor");
                     tcp_processor.borrow_mut().destroy(event_loop);
                 }
             }
