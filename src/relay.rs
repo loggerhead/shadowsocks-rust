@@ -53,7 +53,12 @@ impl Relay {
         };
         let tcp_listener = match TcpListener::bind(&SocketAddr::V4(socket_addr)) {
             Ok(listener) => {
-                info!("listen on {}", address);
+                if is_local {
+                    info!("ssclient listen on {}", address);
+                } else {
+                    info!("ssserver listen on {}", address);
+                }
+
                 listener
             }
             Err(e) => {
