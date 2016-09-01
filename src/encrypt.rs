@@ -157,15 +157,13 @@ impl Encryptor {
 #[cfg(test)]
 mod test {
     use encrypt::Encryptor;
-
     use std::str;
 
     #[test]
-    fn test() {
+    fn encrypt_and_decrypt_in_order() {
         let password = "foo";
         let messages = vec!["a", "hi", "foo", "hello", "world"];
 
-        // ordered
         let mut encryptor = Encryptor::new(password);
         for msg in messages.iter() {
             let encrypted = encryptor.encrypt(msg.as_bytes());
@@ -178,11 +176,28 @@ mod test {
 
             assert_eq!(msg.as_bytes()[..], decrypted[..]);
         }
+    }
 
-        // chaos
+    #[test]
+    fn encrypt_and_decrypt_without_order() {
+        let password = "foo";
+        let messages = vec!["a", "hi", "foo", "hello", "world"];
+
         let mut encryptor = Encryptor::new(password);
         let mut buf_msg = vec![];
         let mut buf_encrypted = vec![];
+
+        macro_rules! assert_decrypt {
+            () => (
+                let decrypted = encryptor.decrypt(&buf_encrypted);
+                assert!(decrypted.is_some());
+                let decrypted = decrypted.unwrap();
+                assert_eq!(buf_msg[..], decrypted[..]);
+                buf_msg.clear();
+                buf_encrypted.clear();
+            );
+        }
+
         for i in 0..messages.len() {
             let msg = messages[i].as_bytes();
             let encrypted = encryptor.encrypt(msg);
@@ -193,19 +208,9 @@ mod test {
             buf_encrypted.extend_from_slice(&encrypted);
 
             if i % 2 == 0 {
-                let decrypted = encryptor.decrypt(&buf_encrypted);
-                assert!(decrypted.is_some());
-                let decrypted = decrypted.unwrap();
-                assert_eq!(buf_msg[..], decrypted[..]);
-                buf_msg.clear();
-                buf_encrypted.clear();
+                assert_decrypt!();
             }
         }
-        let decrypted = encryptor.decrypt(&buf_encrypted);
-        assert!(decrypted.is_some());
-        let decrypted = decrypted.unwrap();
-        assert_eq!(buf_msg[..], decrypted[..]);
-        buf_msg.clear();
-        buf_encrypted.clear();
+        assert_decrypt!();
     }
 }

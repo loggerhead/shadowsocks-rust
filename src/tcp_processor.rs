@@ -453,9 +453,7 @@ impl TCPProcessor {
                         HandleStage::Stream => {
                             self.handle_stage_stream(event_loop, &data);
                         }
-                        _ => {
-                            unimplemented!();
-                        }
+                        _ => { }
                     }
                 } else {
                     self.destroy(event_loop);
