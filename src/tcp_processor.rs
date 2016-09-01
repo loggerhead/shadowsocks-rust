@@ -188,19 +188,59 @@ impl TCPProcessor {
         self.change_status(event_loop, get_basic_events() | EventSet::hup(), is_local_sock);
     }
 
-    fn receive_data(&mut self, is_local_sock: bool) -> Result<Vec<u8>> {
-        let sock = if is_local_sock {
-            &mut self.local_sock
-        } else {
-            &mut self.remote_sock
-        };
-
+    fn receive_data(&mut self, event_loop: &mut EventLoop<Relay>, is_local_sock: bool) -> Option<Vec<u8>> {
+        let mut need_destroy = false;
         let mut buf = [0u8; BUF_SIZE];
 
-        match sock {
-            &mut Some(ref mut sock) => sock.read(&mut buf).map(|len| buf[..len].to_vec()),
-            _ => Err(Error::new(ErrorKind::NotConnected, "socket is not initialize")),
+        macro_rules! read_data {
+            ($sock:expr) => (
+                match $sock {
+                    &mut Some(ref mut sock) => {
+                        match sock.read(&mut buf) {
+                            Ok(len) => {
+                                if (self.is_local && !is_local_sock) || (!self.is_local && is_local_sock) {
+                                    match self.encryptor.decrypt(&buf[..len]) {
+                                        Some(data) => Some(data),
+                                        None => {
+                                            info!("cannot decrypt data, maybe a error client");
+                                            need_destroy = true;
+                                            None
+                                        }
+                                    }
+                                } else {
+                                    Some(buf[..len].to_vec())
+                                }
+                            }
+                            Err(e) => {
+                                // TODO: consider destroy processor
+                                if is_local_sock {
+                                    error!("read data from local socket failed because {}", e);
+                                } else {
+                                    error!("read data from remote socket failed because {}", e);
+                                }
+                                None
+                            }
+                        }
+                    }
+                    _ => {
+                        error!("socket is not initialize");
+                        None
+                    }
+                }
+            );
         }
+
+        let data = if is_local_sock {
+            read_data!(&mut self.local_sock)
+        } else {
+            read_data!(&mut self.remote_sock)
+        };
+
+        if need_destroy {
+            self.destroy(event_loop);
+        }
+
+        data
     }
 
     fn send_buf_data(&mut self, event_loop: &mut EventLoop<Relay>, is_local_sock: bool) {
@@ -220,6 +260,25 @@ impl TCPProcessor {
                      event_loop: &mut EventLoop<Relay>,
                      data: &[u8],
                      is_local_sock: bool) {
+        if data.len() == 0 {
+            return;
+        }
+
+        let data = if (self.is_local && !is_local_sock) || (!self.is_local && is_local_sock) {
+            match self.encryptor.encrypt(data) {
+                Some(data) => {
+                    data
+                }
+                _ => {
+                    error!("encrypt data failed");
+                    self.destroy(event_loop);
+                    return;
+                }
+            }
+        } else {
+            data.to_vec()
+        };
+
         let (any_error, uncomplete_len) = {
             let mut sock = if is_local_sock {
                 &mut self.local_sock
@@ -229,7 +288,7 @@ impl TCPProcessor {
 
             match sock {
                 &mut Some(ref mut sock) => {
-                    match sock.write(data) {
+                    match sock.write(&data) {
                         Ok(size) => {
                             if is_local_sock {
                                 debug!("writed {} bytes to local socket", size);
@@ -268,18 +327,7 @@ impl TCPProcessor {
 
     fn handle_stage_stream(&mut self, event_loop: &mut EventLoop<Relay>, data: &[u8]) {
         debug!("handle stage stream");
-        if self.is_local {
-            match self.encryptor.encrypt(data) {
-                Some(data) => {
-                    self.write_to_sock(event_loop, &data, false);
-                }
-                _ => {
-                    self.destroy(event_loop);
-                }
-            }
-        } else {
-            self.write_to_sock(event_loop, data, false);
-        };
+        self.write_to_sock(event_loop, data, false);
     }
 
     fn handle_stage_connecting(&mut self, _event_loop: &mut EventLoop<Relay>, data: &[u8]) {
@@ -389,90 +437,48 @@ impl TCPProcessor {
     }
 
     fn on_local_read(&mut self, event_loop: &mut EventLoop<Relay>) {
-        let data = match self.receive_data(true) {
-            Ok(data) => {
-                if data.len() == 0 {
-                    self.destroy(event_loop);
-                    return;
-                } else {
-                    if self.is_local {
-                        data
-                    } else {
-                        match self.encryptor.decrypt(&data) {
-                            Some(data) => data,
-                            _ => {
-                                self.destroy(event_loop);
-                                return;
-                            }
+        match self.receive_data(event_loop, true) {
+            Some(data) => {
+                if data.len() > 0 {
+                    match self.stage {
+                        HandleStage::Init => {
+                            self.handle_stage_init(event_loop, &data);
+                        }
+                        HandleStage::Addr => {
+                            self.handle_stage_addr(event_loop, &data);
+                        }
+                        HandleStage::Connecting => {
+                            self.handle_stage_connecting(event_loop, &data);
+                        }
+                        HandleStage::Stream => {
+                            self.handle_stage_stream(event_loop, &data);
+                        }
+                        _ => {
+                            unimplemented!();
                         }
                     }
+                } else {
+                    self.destroy(event_loop);
                 }
             }
-            Err(e) => {
-                error!("got read data error on local socket: {}", e);
-                return;
-            }
-        };
-
-        match self.stage {
-            HandleStage::Init => {
-                self.handle_stage_init(event_loop, &data);
-            }
-            HandleStage::Addr => {
-                self.handle_stage_addr(event_loop, &data);
-            }
-            HandleStage::Connecting => {
-                self.handle_stage_connecting(event_loop, &data);
-            }
-            HandleStage::Stream => {
-                self.handle_stage_stream(event_loop, &data);
-            }
-            _ => {}
+            _ => { }
         }
     }
 
     fn on_remote_read(&mut self, event_loop: &mut EventLoop<Relay>) {
-        match self.receive_data(false) {
-            Ok(data) => {
-                if data.len() == 0 {
-                    self.destroy(event_loop);
+        match self.receive_data(event_loop, false) {
+            Some(data) => {
+                if data.len() > 0 {
+                    self.write_to_sock(event_loop, &data, true);
                 } else {
-                    if self.is_local {
-                        match self.encryptor.decrypt(&data) {
-                            Some(data) => {
-                                self.write_to_sock(event_loop, &data, true);
-                            }
-                            _ => {
-                                self.destroy(event_loop);
-                                return;
-                            }
-                        }
-                    } else {
-                        self.write_to_sock(event_loop, &data, true);
-                    };
+                    self.destroy(event_loop);
                 }
             }
-            Err(e) => {
-                error!("got read data error on remote socket: {}", e);
-                self.destroy(event_loop);
-            }
-        };
+            _ => { }
+        }
     }
 
     fn on_local_write(&mut self, event_loop: &mut EventLoop<Relay>) {
-        if !self.is_local {
-            match self.encryptor.encrypt(&self.data_to_write_to_local) {
-                Some(data) => {
-                    self.data_to_write_to_local.clear();
-                    self.data_to_write_to_local.extend_from_slice(&data);
-                }
-                _ => {
-                    self.destroy(event_loop);
-                    return;
-                }
-            }
-        }
-
         if self.data_to_write_to_local.len() > 0 {
             self.send_buf_data(event_loop, true);
         }
@@ -484,19 +490,6 @@ impl TCPProcessor {
 
     fn on_remote_write(&mut self, event_loop: &mut EventLoop<Relay>) {
         self.stage = HandleStage::Stream;
-
-        if self.is_local {
-            match self.encryptor.encrypt(&self.data_to_write_to_remote) {
-                Some(data) => {
-                    self.data_to_write_to_remote.clear();
-                    self.data_to_write_to_remote.extend_from_slice(&data);
-                }
-                _ => {
-                    self.destroy(event_loop);
-                    return;
-                }
-            }
-        }
 
         if self.data_to_write_to_remote.len() > 0 {
             self.send_buf_data(event_loop, false);
