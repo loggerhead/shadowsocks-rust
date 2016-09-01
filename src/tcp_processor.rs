@@ -21,7 +21,7 @@ const BUF_SIZE: usize = 32 * 1024;
 const METHOD_NOAUTH: u8 = 0;
 // SOCKS command definition
 const CMD_CONNECT: u8 = 1;
-const CMD_BIND: u8 = 2;
+const _CMD_BIND: u8 = 2;
 const CMD_UDP_ASSOCIATE: u8 = 3;
 
 
@@ -81,7 +81,7 @@ impl TCPProcessor {
                is_local: bool)
                -> TCPProcessor {
 
-        let encryptor = Encryptor::new(config::get_str(&conf, "password"), is_local);
+        let encryptor = Encryptor::new(config::get_str(&conf, "password"));
         let stage = if is_local {
             HandleStage::Init
         } else {
@@ -268,10 +268,18 @@ impl TCPProcessor {
 
     fn handle_stage_stream(&mut self, event_loop: &mut EventLoop<Relay>, data: &[u8]) {
         debug!("handle stage stream");
-        // TODO: encrypt
-        if !self.is_local {
-        }
-        self.write_to_sock(event_loop, data, false);
+        if self.is_local {
+            match self.encryptor.encrypt(data) {
+                Some(data) => {
+                    self.write_to_sock(event_loop, &data, false);
+                }
+                _ => {
+                    self.destroy(event_loop);
+                }
+            }
+        } else {
+            self.write_to_sock(event_loop, data, false);
+        };
     }
 
     fn handle_stage_connecting(&mut self, _event_loop: &mut EventLoop<Relay>, data: &[u8]) {
@@ -381,21 +389,23 @@ impl TCPProcessor {
     }
 
     fn on_local_read(&mut self, event_loop: &mut EventLoop<Relay>) {
-        // TODO: decrypt
-        // if !self.is_local {
-        //     data = self.encryptor.update(data);
-        //     if data.is_none() {
-        //         self.destroy(event_loop);
-        //     }
-        // }
-
         let data = match self.receive_data(true) {
             Ok(data) => {
                 if data.len() == 0 {
                     self.destroy(event_loop);
                     return;
                 } else {
-                    data
+                    if self.is_local {
+                        data
+                    } else {
+                        match self.encryptor.decrypt(&data) {
+                            Some(data) => data,
+                            _ => {
+                                self.destroy(event_loop);
+                                return;
+                            }
+                        }
+                    }
                 }
             }
             Err(e) => {
@@ -422,16 +432,24 @@ impl TCPProcessor {
     }
 
     fn on_remote_read(&mut self, event_loop: &mut EventLoop<Relay>) {
-        // TODO: decrypt
-        // if self.is_local {
-        //     data = self.encryptor.update(data);
-        // }
         match self.receive_data(false) {
             Ok(data) => {
                 if data.len() == 0 {
                     self.destroy(event_loop);
                 } else {
-                    self.write_to_sock(event_loop, &data, true);
+                    if self.is_local {
+                        match self.encryptor.decrypt(&data) {
+                            Some(data) => {
+                                self.write_to_sock(event_loop, &data, true);
+                            }
+                            _ => {
+                                self.destroy(event_loop);
+                                return;
+                            }
+                        }
+                    } else {
+                        self.write_to_sock(event_loop, &data, true);
+                    };
                 }
             }
             Err(e) => {
@@ -442,10 +460,19 @@ impl TCPProcessor {
     }
 
     fn on_local_write(&mut self, event_loop: &mut EventLoop<Relay>) {
-        // TODO: encrypt
-        // if !self.is_local {
-        //     data = self.encryptor.update(data);
-        // }
+        if !self.is_local {
+            match self.encryptor.encrypt(&self.data_to_write_to_local) {
+                Some(data) => {
+                    self.data_to_write_to_local.clear();
+                    self.data_to_write_to_local.extend_from_slice(&data);
+                }
+                _ => {
+                    self.destroy(event_loop);
+                    return;
+                }
+            }
+        }
+
         if self.data_to_write_to_local.len() > 0 {
             self.send_buf_data(event_loop, true);
         }
@@ -456,11 +483,20 @@ impl TCPProcessor {
     }
 
     fn on_remote_write(&mut self, event_loop: &mut EventLoop<Relay>) {
-        // TODO: encrypt
-        // if self.is_local {
-        //     data = self.encryptor.update(data);
-        // }
         self.stage = HandleStage::Stream;
+
+        if self.is_local {
+            match self.encryptor.encrypt(&self.data_to_write_to_remote) {
+                Some(data) => {
+                    self.data_to_write_to_remote.clear();
+                    self.data_to_write_to_remote.extend_from_slice(&data);
+                }
+                _ => {
+                    self.destroy(event_loop);
+                    return;
+                }
+            }
+        }
 
         if self.data_to_write_to_remote.len() > 0 {
             self.send_buf_data(event_loop, false);
@@ -598,7 +634,7 @@ impl Processor for TCPProcessor {
             let token = self.local_token.unwrap();
             match self.notifier.send(token) {
                 Err(e) => {
-                    error!("cannot notify relay to remove local token {:?}", token);
+                    error!("cannot notify relay to remove local token {:?} because {}", token, e);
                 }
                 _ => {}
             }
@@ -609,7 +645,7 @@ impl Processor for TCPProcessor {
             let token = self.remote_token.unwrap();
             match self.notifier.send(token) {
                 Err(e) => {
-                    error!("cannot notify relay to remove remote token {:?}", token);
+                    error!("cannot notify relay to remove remote token {:?} because {}", token, e);
                 }
                 _ => {}
             }

@@ -182,7 +182,7 @@ impl Processor for Relay {
         }
     }
 
-    fn destroy(&mut self, event_loop: &mut EventLoop<Relay>) {
+    fn destroy(&mut self, _event_loop: &mut EventLoop<Relay>) {
         unimplemented!();
     }
 

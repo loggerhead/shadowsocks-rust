@@ -54,12 +54,12 @@ use network::{is_ip, slice2ip4, slice2ip6, str2addr4, NetworkWriteBytes, Network
 //     |                    ARCOUNT                    |
 //     +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
 
-const QTYPE_ANY  : u16 = 255;
 const QTYPE_A    : u16 = 1;
 const QTYPE_AAAA : u16 = 28;
 const QTYPE_CNAME: u16 = 5;
 const QTYPE_NS   : u16 = 2;
 const QCLASS_IN  : u16 = 1;
+const _QTYPE_ANY  : u16 = 255;
 
 type ResponseRecord = (String, String, u16, u16);
 type ResponseHeader = (u16, u16, u16, u16, u16, u16, u16, u16, u16);
@@ -628,11 +628,16 @@ impl Processor for DNSResolver {
         }
     }
 
-    fn destroy(&mut self, event_loop: &mut EventLoop<Relay>) {
-        unimplemented!();
+    fn destroy(&mut self, _event_loop: &mut EventLoop<Relay>) {
+        // TODO: consider how to destroy DNS resolver
         if self.token.is_some() {
-            // TODO: handle send desctory message failed
-            self.notifier.send(self.token.unwrap()).ok();
+            let token = self.token.unwrap();
+            match self.notifier.send(token) {
+                Err(e) => {
+                    error!("cannot notify relay to remove dns resolver token {:?} because {}", token, e);
+                }
+                _ => {}
+            }
         }
     }
 
