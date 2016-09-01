@@ -150,9 +150,9 @@ impl TCPProcessor {
         match result {
             Some(_) => {
                 if is_local_sock {
-                    error!("local socket {:?} has registred events {:?} to event loop", events, token);
+                    debug!("local socket {:?} has registred events {:?} to event loop", events, token);
                 } else {
-                    error!("remote socket {:?} has registred events {:?} to event loop", events, token);
+                    debug!("remote socket {:?} has registred events {:?} to event loop", events, token);
                 }
             }
             None => {
@@ -239,7 +239,11 @@ impl TCPProcessor {
                             (false, data.len() - size)
                         }
                         Err(e) => {
-                            error!("write_to_sock error: {}", e);
+                            if is_local_sock {
+                                error!("write to local socket error: {}", e);
+                            } else {
+                                error!("write to remote socket error: {}", e);
+                            }
                             (true, data.len())
                         }
                     }
@@ -513,7 +517,7 @@ impl Caller for TCPProcessor {
                         Some(sock)
                     }
                     Err(e) => {
-                        error!("connect to {} failed: {}", ip, e);
+                        error!("create remote socket for connecting to {} failed: {}", ip, e);
                         self.destroy(event_loop);
                         return;
                     }
@@ -524,7 +528,6 @@ impl Caller for TCPProcessor {
                                  event_loop,
                                  get_basic_events() | EventSet::writable() | EventSet::hup(),
                                  false);
-                self.send_buf_data(event_loop, false);
             }
             _ => {
                 self.destroy(event_loop);
