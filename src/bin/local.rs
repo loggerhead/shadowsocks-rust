@@ -1,6 +1,3 @@
-#[macro_use]
-extern crate log;
-extern crate mio;
 extern crate clap;
 extern crate env_logger;
 extern crate shadowsocks;
@@ -13,7 +10,7 @@ fn main() {
     // TODO: parse config from command line
     // https://crates.io/crates/clap
     let conf = config::get_config("tests/config/local_conf.toml").unwrap_or_else(|e| {
-        error!("{}", e);
+        println!("{}", e);
         panic!();
     });
 

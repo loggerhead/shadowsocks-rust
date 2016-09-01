@@ -61,7 +61,7 @@ pub struct TCPProcessor {
     notifier: Rc<Sender<Token>>,
     stage: HandleStage,
     dns_resolver: Rc<RefCell<DNSResolver>>,
-    is_local: bool,
+    is_client: bool,
     local_token: Option<Token>,
     local_sock: Option<TcpStream>,
     remote_token: Option<Token>,
@@ -78,11 +78,11 @@ impl TCPProcessor {
                notifier: Rc<Sender<Token>>,
                local_sock: TcpStream,
                dns_resolver: Rc<RefCell<DNSResolver>>,
-               is_local: bool)
+               is_client: bool)
                -> TCPProcessor {
 
         let encryptor = Encryptor::new(config::get_str(&conf, "password"));
-        let stage = if is_local {
+        let stage = if is_client {
             HandleStage::Init
         } else {
             HandleStage::Addr
@@ -100,7 +100,7 @@ impl TCPProcessor {
             notifier: notifier,
             stage: stage,
             dns_resolver: dns_resolver,
-            is_local: is_local,
+            is_client: is_client,
             local_token: None,
             local_sock: Some(local_sock),
             remote_token: None,
@@ -198,7 +198,7 @@ impl TCPProcessor {
                     &mut Some(ref mut sock) => {
                         match sock.read(&mut buf) {
                             Ok(len) => {
-                                if (self.is_local && !is_local_sock) || (!self.is_local && is_local_sock) {
+                                if (self.is_client && !is_local_sock) || (!self.is_client && is_local_sock) {
                                     match self.encryptor.decrypt(&buf[..len]) {
                                         Some(data) => Some(data),
                                         None => {
@@ -264,7 +264,7 @@ impl TCPProcessor {
             return;
         }
 
-        let data = if (self.is_local && !is_local_sock) || (!self.is_local && is_local_sock) {
+        let data = if (self.is_client && !is_local_sock) || (!self.is_client && is_local_sock) {
             match self.encryptor.encrypt(data) {
                 Some(data) => {
                     data
@@ -337,7 +337,7 @@ impl TCPProcessor {
 
     fn handle_stage_addr(&mut self, event_loop: &mut EventLoop<Relay>, data: &[u8]) {
         debug!("handle stage addr");
-        let data = if self.is_local {
+        let data = if self.is_client {
             match data[1] {
                 CMD_UDP_ASSOCIATE => {
                     self.stage = HandleStage::UDPAssoc;
@@ -362,7 +362,7 @@ impl TCPProcessor {
                 self.server_address = Some((remote_address.clone(), remote_port));
                 info!("connecting {} from {}", address2str(&self.server_address), address2str(&self.client_address));
 
-                if self.is_local {
+                if self.is_client {
                     let response = &[0x05, 0x00, 0x00, 0x01,
                                      0x00, 0x00, 0x00, 0x00,
                                      0x10, 0x10];
@@ -525,7 +525,7 @@ impl Caller for TCPProcessor {
         match hostname_ip {
             Some((_hostname, ip)) => {
                 self.stage = HandleStage::Connecting;
-                let port = if self.is_local {
+                let port = if self.is_client {
                     // TODO: change to select a server
                     config::get_i64(&self.conf, "remote_port") as u16
                 } else {

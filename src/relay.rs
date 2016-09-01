@@ -26,7 +26,7 @@ pub trait Processor {
 
 
 pub struct Relay {
-    is_local: bool,
+    is_client: bool,
     conf: Rc<Table>,
     notifier: Rc<Sender<Token>>,
     waiter: Receiver<Token>,
@@ -37,7 +37,7 @@ pub struct Relay {
 
 
 impl Relay {
-    pub fn new(conf: Table, is_local: bool) -> Relay {
+    pub fn new(conf: Table, is_client: bool) -> Relay {
         let conf = Rc::new(conf);
         let address = format!("{}:{}", config::get_str(&conf, "local_address"),
                                        config::get_i64(&conf, "local_port"));
@@ -53,7 +53,7 @@ impl Relay {
         };
         let tcp_listener = match TcpListener::bind(&SocketAddr::V4(socket_addr)) {
             Ok(listener) => {
-                if is_local {
+                if is_client {
                     info!("ssclient listen on {}", address);
                 } else {
                     info!("ssserver listen on {}", address);
@@ -70,7 +70,7 @@ impl Relay {
         let beginning_token = Token(RELAY_TOKEN.as_usize() + 1);
 
         Relay {
-            is_local: is_local,
+            is_client: is_client,
             conf: conf,
             notifier: notifier,
             waiter: waiter,
@@ -147,7 +147,7 @@ impl Processor for Relay {
                                                                            self.notifier.clone(),
                                                                            conn,
                                                                            self.get_dns_resolver(),
-                                                                           self.is_local)));
+                                                                           self.is_client)));
                 // register local socket of tcp_processor
                 let add_result = match self.add_processor(tcp_processor.clone()) {
                     Some(token) => {
