@@ -10,23 +10,19 @@ use shadowsocks::relay::Relay;
 fn main() {
     let tests = vec![
         "www.baidu.com",
-        "www.qq.com"
+        // "www.qq.com"
     ];
 
     // TODO: change to get args from command line
-    let threads = vec![
+    let _threads = vec![
         start_client("tests/config/local_conf.toml"),
         start_server("tests/config/server_conf.toml"),
     ];
 
     for test in tests {
         let res1 = run_curl(test, None);
-        let res2 = run_curl(test, Some("127.0.0.1:8388"));
+        let res2 = run_curl(test, Some("127.0.0.1:8488"));
         assert_eq!(res1, res2);
-    }
-
-    for t in threads {
-        t.join().unwrap();
     }
 }
 
