@@ -590,18 +590,27 @@ impl Processor for TCPProcessor {
         self.stage = HandleStage::Destroyed;
 
         if self.local_sock.is_some() {
-            let sock = self.local_sock.take();
-            event_loop.deregister(&sock.unwrap()).ok();
-            // TODO: print error
-            self.notifier.send(self.local_token.unwrap()).ok();
+            let sock = &self.local_sock.take().unwrap();
+            event_loop.deregister(sock).ok();
+            let token = self.local_token.unwrap();
+            match self.notifier.send(token) {
+                Err(e) => {
+                    error!("cannot notify relay to remove local token {:?}", token);
+                }
+                _ => {}
+            }
         }
         if self.remote_sock.is_some() {
-            let sock = self.remote_sock.take();
-            event_loop.deregister(&sock.unwrap()).ok();
-            self.notifier.send(self.remote_token.unwrap()).ok();
+            let sock = &self.remote_sock.take().unwrap();
+            event_loop.deregister(sock).ok();
+            let token = self.remote_token.unwrap();
+            match self.notifier.send(token) {
+                Err(e) => {
+                    error!("cannot notify relay to remove remote token {:?}", token);
+                }
+                _ => {}
+            }
         }
-
-        self.dns_resolver.borrow_mut().remove_caller(self.remote_token.unwrap());
     }
 
     fn is_destroyed(&self) -> bool {

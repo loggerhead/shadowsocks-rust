@@ -81,7 +81,7 @@ impl Relay {
     }
 
     pub fn add_processor(&mut self, processor: Rc<RefCell<Processor>>) -> Option<Token> {
-        self.processors.insert_with(move |_token| processor)
+        self.processors.insert(processor).ok()
     }
 
     pub fn get_dns_resolver(&self) -> Rc<RefCell<DNSResolver>> {
@@ -112,14 +112,9 @@ impl Handler for Relay {
     type Message = ();
 
     fn ready(&mut self, event_loop: &mut EventLoop<Relay>, token: Token, events: EventSet) {
-        match self.waiter.try_recv() {
-            Ok(t) => {
-                // TODO: remove from processors
-                debug!("remove processor {:?}", t);
-                println!("processors = {:?}", self.processors);
-                // self.processors.remove(token);
-            },
-            _ => { }
+        while let Ok(t) = self.waiter.try_recv() {
+            self.processors.remove(t);
+            self.dns_resolver.borrow_mut().remove_caller(t);
         }
 
         match token {
@@ -127,6 +122,10 @@ impl Handler for Relay {
                 self.process(event_loop, token, events);
             }
             token @ Token(_) => {
+                if self.processors[token].borrow_mut().is_destroyed() {
+                    return;
+                }
+
                 self.processors[token].borrow_mut().process(event_loop, token, events);
             }
         }
