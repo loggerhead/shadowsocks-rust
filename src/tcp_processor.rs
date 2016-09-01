@@ -10,7 +10,7 @@ use toml::Table;
 use config;
 use encrypt::Encryptor;
 use common::parse_header;
-use util::get_basic_events;
+use util::{address2str, get_basic_events};
 use relay::{Relay, Processor};
 use network::pair2socket_addr;
 use asyncdns::{Caller, DNSResolver};
@@ -342,7 +342,6 @@ impl TCPProcessor {
                 CMD_UDP_ASSOCIATE => {
                     self.stage = HandleStage::UDPAssoc;
                     unimplemented!();
-                    return;
                 }
                 CMD_CONNECT => {
                     &data[3..]
@@ -361,6 +360,7 @@ impl TCPProcessor {
             Some((_addr_type, remote_address, remote_port, header_length)) => {
                 self.stage = HandleStage::DNS;
                 self.server_address = Some((remote_address.clone(), remote_port));
+                info!("connecting {} from {}", address2str(&self.server_address), address2str(&self.client_address));
 
                 if self.is_local {
                     let response = &[0x05, 0x00, 0x00, 0x01,

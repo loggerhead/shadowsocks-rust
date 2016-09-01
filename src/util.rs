@@ -10,6 +10,17 @@ use fnv::FnvHasher;
 use mio::EventSet;
 
 
+pub fn address2str(address: &Option<(String, u16)>) -> String {
+    match address {
+        &Some((ref host, port)) => {
+            format!("{}:{}", host, port)
+        }
+        _ => {
+            format!("None")
+        }
+    }
+}
+
 pub fn get_basic_events() -> EventSet {
     EventSet::readable() | EventSet::error()
 }
