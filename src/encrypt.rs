@@ -1,11 +1,10 @@
 use crypto::md5::Md5;
-use crypto::hmac::Hmac;
-use crypto::mac::{Mac, MacResult};
 use crypto::digest::Digest;
 use crypto::aes::{ctr, KeySize};
 use crypto::symmetriccipher::SynchronousStreamCipher;
 
 use rand::{ Rng, OsRng };
+
 
 type Cipher = Box<SynchronousStreamCipher + 'static>;
 
@@ -49,13 +48,6 @@ fn gen_key_iv(password: &str, key_len: usize, iv_len: usize) -> (Vec<u8>, Vec<u8
     (key, iv)
 }
 
-fn hmac_md5(cipher_iv: &[u8], data: &[u8]) -> MacResult {
-    let mut hmac = Hmac::new(Md5::new(), cipher_iv);
-    hmac.input(data);
-
-    hmac.result()
-}
-
 macro_rules! process {
     ($cipher:expr, $data:expr) => (
         {
@@ -74,7 +66,6 @@ macro_rules! process {
 pub struct Encryptor {
     is_iv_sent: bool,
     key: Vec<u8>,
-    password_iv: Vec<u8>,
     cipher_iv: Vec<u8>,
     decipher_iv: Vec<u8>,
     cipher: Option<Cipher>,
@@ -83,13 +74,13 @@ pub struct Encryptor {
 
 // First packet format:
 //
-// +----------------+-----------+------+
-// | encrypted data | cipher iv | hmac |
-// +----------------+-----------+------+
-//                      16         16
+// +-----------+----------------+
+// | cipher iv | encrypted data |
+// +-----------+----------------+
+//       16
 impl Encryptor {
     pub fn new(password: &str) -> Encryptor {
-        let (key, password_iv) = gen_key_iv(password, 256, 32);
+        let (key, _iv) = gen_key_iv(password, 256, 32);
         let mut cipher_iv = vec![0u8; 16];
         OsRng::new().unwrap().fill_bytes(&mut cipher_iv);
         let cipher = create_cipher(&key, &cipher_iv);
@@ -97,7 +88,6 @@ impl Encryptor {
         Encryptor {
             is_iv_sent: false,
             key: key,
-            password_iv: password_iv,
             cipher_iv: cipher_iv,
             decipher_iv: vec![0u8; 16],
             cipher: Some(cipher),
@@ -115,11 +105,9 @@ impl Encryptor {
 
             match encrypted {
                 Some(ref mut encrypted) => {
-                    let mut result = vec![0u8; 16];
+                    let mut result = vec![];
                     result.extend_from_slice(&self.cipher_iv);
                     result.append(encrypted);
-                    let hmac = hmac_md5(&self.password_iv, &result[16..]);
-                    &mut result[..16].copy_from_slice(hmac.code());
 
                     Some(result)
                 }
@@ -136,18 +124,11 @@ impl Encryptor {
                 return None;
             }
 
-            let hmac1 = MacResult::new(&data[..16]);
-            let hmac2 = hmac_md5(&self.password_iv, &data[16..]);
+            let offset = self.decipher_iv.len();
+            self.decipher_iv.copy_from_slice(&data[..offset]);
+            self.decipher = Some(create_cipher(&self.key, &self.decipher_iv));
 
-            if hmac1 == hmac2 {
-                let offset = 16 + self.decipher_iv.len();
-                self.decipher_iv.copy_from_slice(&data[16..offset]);
-                self.decipher = Some(create_cipher(&self.key, &self.decipher_iv));
-
-                process!(&mut self.decipher, &data[offset..])
-            } else {
-                None
-            }
+            process!(&mut self.decipher, &data[offset..])
         } else {
             process!(&mut self.decipher, data)
         }
@@ -156,61 +137,116 @@ impl Encryptor {
 
 #[cfg(test)]
 mod test {
-    use encrypt::Encryptor;
     use std::str;
+    use std::thread;
+    use std::io::prelude::*;
+    use std::sync::mpsc::channel;
+    use std::net::{TcpListener, TcpStream, Shutdown};
+
+    use encrypt::Encryptor;
+
+    const PASSWORD: &'static str = "foo";
+    const MESSAGES: &'static [&'static str] = &["a", "hi", "foo", "hello", "world"];
+
+    macro_rules! encrypt {
+        ($encryptor:expr, $data:expr) => (
+            {
+                let encrypted = $encryptor.encrypt($data);
+                assert!(encrypted.is_some());
+                encrypted.unwrap()
+            }
+        );
+    }
+
+    macro_rules! decrypt {
+        ($encryptor:expr, $data:expr) => (
+            {
+                let decrypted = $encryptor.decrypt($data);
+                assert!(decrypted.is_some());
+                decrypted.unwrap()
+            }
+        );
+    }
 
     #[test]
-    fn encrypt_and_decrypt_in_order() {
-        let password = "foo";
-        let messages = vec!["a", "hi", "foo", "hello", "world"];
-
-        let mut encryptor = Encryptor::new(password);
-        for msg in messages.iter() {
-            let encrypted = encryptor.encrypt(msg.as_bytes());
-            assert!(encrypted.is_some());
-            let encrypted = encrypted.unwrap();
-
-            let decrypted = encryptor.decrypt(&encrypted);
-            assert!(decrypted.is_some());
-            let decrypted = decrypted.unwrap();
-
+    fn in_order() {
+        let mut encryptor = Encryptor::new(PASSWORD);
+        for msg in MESSAGES.iter() {
+            let encrypted = encrypt!(encryptor, msg.as_bytes());
+            let decrypted = decrypt!(encryptor, &encrypted);
             assert_eq!(msg.as_bytes()[..], decrypted[..]);
         }
     }
 
     #[test]
-    fn encrypt_and_decrypt_without_order() {
-        let password = "foo";
-        let messages = vec!["a", "hi", "foo", "hello", "world"];
-
-        let mut encryptor = Encryptor::new(password);
+    fn chaos() {
+        let mut encryptor = Encryptor::new(PASSWORD);
         let mut buf_msg = vec![];
         let mut buf_encrypted = vec![];
 
         macro_rules! assert_decrypt {
             () => (
-                let decrypted = encryptor.decrypt(&buf_encrypted);
-                assert!(decrypted.is_some());
-                let decrypted = decrypted.unwrap();
+                let decrypted = decrypt!(encryptor, &buf_encrypted);
                 assert_eq!(buf_msg[..], decrypted[..]);
                 buf_msg.clear();
                 buf_encrypted.clear();
             );
         }
 
-        for i in 0..messages.len() {
-            let msg = messages[i].as_bytes();
-            let encrypted = encryptor.encrypt(msg);
-            assert!(encrypted.is_some());
-            let encrypted = encrypted.unwrap();
+        for i in 0..MESSAGES.len() {
+            let msg = MESSAGES[i].as_bytes();
+            let encrypted = encrypt!(encryptor, msg);
 
             buf_msg.extend_from_slice(msg);
             buf_encrypted.extend_from_slice(&encrypted);
-
             if i % 2 == 0 {
                 assert_decrypt!();
             }
         }
         assert_decrypt!();
+    }
+
+    #[test]
+    fn tcp_server() {
+        let (tx, rx) = channel();
+
+        macro_rules! test_encryptor {
+            ($stream:expr, $encryptor:expr) => (
+                for msg in MESSAGES.iter() {
+                    let encrypted = encrypt!($encryptor, msg.as_bytes());
+                    $stream.write(&encrypted).unwrap();
+                }
+                $stream.shutdown(Shutdown::Write).unwrap();
+
+                let mut data = vec![];
+                $stream.read_to_end(&mut data).unwrap();
+                let decrypted = decrypt!($encryptor, &data);
+
+                let mut tmp = vec![];
+                for msg in MESSAGES.iter() {
+                    tmp.extend_from_slice(msg.as_bytes());
+                }
+                let messages_bytes = &tmp;
+                assert_eq!(messages_bytes, &decrypted);
+            );
+        }
+
+        let t1 = thread::spawn(move || {
+            let mut encryptor = Encryptor::new(PASSWORD);
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            tx.send(listener.local_addr().unwrap()).unwrap();
+            let mut stream = listener.incoming().next().unwrap().unwrap();
+            test_encryptor!(stream, encryptor);
+        });
+
+        let t2 = thread::spawn(move || {
+            let mut encryptor = Encryptor::new(PASSWORD);
+            let server_addr = rx.recv().unwrap();
+            let mut stream = TcpStream::connect(server_addr).unwrap();
+            test_encryptor!(stream, encryptor);
+        });
+
+        t1.join().unwrap();
+        t2.join().unwrap();
     }
 }
