@@ -200,7 +200,7 @@ impl TCPProcessor {
                             Ok(len) => {
                                 if (self.is_client && !is_local_sock) || (!self.is_client && is_local_sock) {
                                     match self.encryptor.decrypt(&buf[..len]) {
-                                        Some(data) => Some(data),
+                                        data @ Some(_) => data,
                                         None => {
                                             info!("cannot decrypt data, maybe a error client");
                                             need_destroy = true;
@@ -266,9 +266,7 @@ impl TCPProcessor {
 
         let data = if (self.is_client && !is_local_sock) || (!self.is_client && is_local_sock) {
             match self.encryptor.encrypt(data) {
-                Some(data) => {
-                    data
-                }
+                Some(data) => data,
                 _ => {
                     error!("encrypt data failed");
                     self.destroy(event_loop);

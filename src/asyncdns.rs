@@ -376,6 +376,16 @@ pub struct DNSResolver {
     qtypes: Vec<u16>,
 }
 
+macro_rules! handle_dns_resolved {
+    ($caller:expr, $event_loop:expr, $hostname_ip:expr, $errmsg:expr) => (
+        unsafe {
+            // tcp_processor is already borrowed in relay::ready
+            let caller = &mut *($caller).as_ptr();
+            caller.handle_dns_resolved($event_loop, $hostname_ip, $errmsg);
+        }
+    );
+}
+
 // TODO: add LRU `self.cache` to cache query result, see https://github.com/contain-rs/lru-cache
 impl DNSResolver {
     pub fn new(notifier: Rc<Sender<Token>>, server_list: Option<Vec<String>>, prefer_ipv6: Option<bool>) -> DNSResolver {
@@ -473,33 +483,18 @@ impl DNSResolver {
     pub fn resolve(&mut self, event_loop: &mut EventLoop<Relay>, hostname: String, caller_token: Token) {
         if let Some(caller) = self.callers.get(&caller_token) {
             if hostname.len() == 0 {
-                unsafe {
-                    let caller = &mut *(caller).as_ptr();
-                    caller.handle_dns_resolved(event_loop, None, Some("empty hostname"));
-                }
+                handle_dns_resolved!(caller, event_loop, None, Some("empty hostname"));
             } else if is_ip(&hostname) {
-                unsafe {
-                    let caller = &mut *(caller).as_ptr();
-                    caller.handle_dns_resolved(event_loop, Some((hostname.clone(), hostname)), None);
-                }
+                handle_dns_resolved!(caller, event_loop, Some((hostname.clone(), hostname)), None);
             } else if self.hosts.has(&hostname) {
                 let ip = self.hosts.get(&hostname).unwrap().clone();
-                unsafe {
-                    let caller = &mut *(caller).as_ptr();
-                    caller.handle_dns_resolved(event_loop, Some((hostname, ip)), None);
-                }
+                handle_dns_resolved!(caller, event_loop, Some((hostname, ip)), None);
             } else if self.cache.has(&hostname) {
                 let ip = self.cache.get(&hostname).unwrap().clone();
-                unsafe {
-                    let caller = &mut *(caller).as_ptr();
-                    caller.handle_dns_resolved(event_loop, Some((hostname, ip)), None);
-                }
+                handle_dns_resolved!(caller, event_loop, Some((hostname, ip)), None);
             } else if !is_valid_hostname(&hostname) {
                 let errmsg = format!("invalid hostname: {}", hostname);
-                unsafe {
-                    let caller = &mut *(caller).as_ptr();
-                    caller.handle_dns_resolved(event_loop, None, Some(&errmsg));
-                }
+                handle_dns_resolved!(caller, event_loop, None, Some(&errmsg));
             } else {
                 if self.hostname_to_caller.has(&hostname) {
                     let arr = self.hostname_to_caller.get_mut(&hostname).unwrap();
@@ -527,10 +522,7 @@ impl DNSResolver {
                     Some(errmsg.as_str())
                 };
 
-                unsafe {
-                    let caller = &mut *(caller).as_ptr();
-                    caller.handle_dns_resolved(event_loop, Some((hostname.clone(), ip.clone())), error);
-                }
+                handle_dns_resolved!(caller, event_loop, Some((hostname.clone(), ip.clone())), error);
             }
         }
 

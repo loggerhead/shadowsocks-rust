@@ -112,20 +112,19 @@ impl Handler for Relay {
     type Message = ();
 
     fn ready(&mut self, event_loop: &mut EventLoop<Relay>, token: Token, events: EventSet) {
-        while let Ok(t) = self.waiter.try_recv() {
-            self.processors.remove(t);
-            self.dns_resolver.borrow_mut().remove_caller(t);
-        }
+        // TODO: hold a relay in processor for destroy self
+        // while let Ok(t) = self.waiter.try_recv() {
+        //     self.processors.remove(t);
+        //     self.dns_resolver.borrow_mut().remove_caller(t);
+        //     // TODO: debug used
+        //     info!("1. delete {:?}", t);
+        // }
 
         match token {
             RELAY_TOKEN => {
                 self.process(event_loop, token, events);
             }
             token @ Token(_) => {
-                if self.processors[token].borrow_mut().is_destroyed() {
-                    return;
-                }
-
                 self.processors[token].borrow_mut().process(event_loop, token, events);
             }
         }
