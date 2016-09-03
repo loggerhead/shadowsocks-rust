@@ -4,14 +4,13 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::io::Cursor;
 use std::net::SocketAddr;
-use std::sync::mpsc::Sender;
 
 use rand;
 use regex::Regex;
 use mio::{Token, EventSet, EventLoop, PollOpt};
 use mio::udp::UdpSocket;
 
-use relay::{Relay, Processor};
+use relay::{Relay, Processor, ProcessResult};
 use util::{handle_every_line, Dict, slice2str, slice2string};
 use network::{is_ip, slice2ip4, slice2ip6, str2addr4, NetworkWriteBytes, NetworkReadBytes};
 
@@ -66,7 +65,11 @@ type ResponseHeader = (u16, u16, u16, u16, u16, u16, u16, u16, u16);
 
 
 pub trait Caller {
-    fn handle_dns_resolved(&mut self, event_loop: &mut EventLoop<Relay>, Option<(String, String)>, Option<&str>);
+    fn handle_dns_resolved(&mut self,
+                           event_loop: &mut EventLoop<Relay>,
+                           Option<(String, String)>,
+                           Option<&str>)
+                           -> ProcessResult<Vec<Token>>;
 }
 
 // For detail, see page 7 of RFC 1035
@@ -364,7 +367,6 @@ enum HostnameStatus {
 pub type Callback = FnMut(&mut Caller, Option<(String, String)>, Option<&str>);
 
 pub struct DNSResolver {
-    notifier: Rc<Sender<Token>>,
     token: Option<Token>,
     hosts: Dict<String, String>,
     cache: Dict<String, String>,
@@ -388,9 +390,8 @@ macro_rules! handle_dns_resolved {
 
 // TODO: add LRU `self.cache` to cache query result, see https://github.com/contain-rs/lru-cache
 impl DNSResolver {
-    pub fn new(notifier: Rc<Sender<Token>>, server_list: Option<Vec<String>>, prefer_ipv6: Option<bool>) -> DNSResolver {
+    pub fn new(server_list: Option<Vec<String>>, prefer_ipv6: Option<bool>) -> DNSResolver {
         let mut this = DNSResolver {
-            notifier: notifier,
             token: None,
             servers: Vec::new(),
             hosts: Dict::new(),
@@ -587,7 +588,7 @@ impl DNSResolver {
 }
 
 impl Processor for DNSResolver {
-    fn process(&mut self, event_loop: &mut EventLoop<Relay>, _token: Token, events: EventSet) {
+    fn process(&mut self, event_loop: &mut EventLoop<Relay>, _token: Token, events: EventSet) -> ProcessResult<Vec<Token>> {
         if events.is_error() {
             error!("events error happened on DNS socket");
             let sock = self.sock.take();
@@ -605,9 +606,7 @@ impl Processor for DNSResolver {
             match self.sock {
                 Some(ref sock) => {
                     match sock.recv_from(&mut buf) {
-                        Ok(Some((len, _addr))) => {
-                            recevied = Some(&buf[..len]);
-                        }
+                        Ok(Some((len, _addr))) => recevied = Some(&buf[..len]),
                         _ => warn!("receive error on DNS socket"),
                     }
                 }
@@ -618,23 +617,12 @@ impl Processor for DNSResolver {
                 self.handle_data(event_loop, recevied.unwrap());
             }
         }
+
+        ProcessResult::Success
     }
 
     fn destroy(&mut self, _event_loop: &mut EventLoop<Relay>) {
-        // TODO: consider how to destroy DNS resolver
-        if self.token.is_some() {
-            let token = self.token.unwrap();
-            match self.notifier.send(token) {
-                Err(e) => {
-                    error!("cannot notify relay to remove dns resolver token {:?} because {}", token, e);
-                }
-                _ => {}
-            }
-        }
-    }
-
-    fn is_destroyed(&self) -> bool {
-        self.token == None
+        unreachable!();
     }
 }
 
