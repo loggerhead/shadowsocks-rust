@@ -3,6 +3,7 @@ name = "shadowsocks-rust"
 version = "0.1.0"
 dependencies = [
  "byteorder 0.5.3 (registry+git://crates.mirrors.ustc.edu.cn/index)",
+ "chrono 0.2.25 (registry+git://crates.mirrors.ustc.edu.cn/index)",
  "clap 2.11.0 (registry+git://crates.mirrors.ustc.edu.cn/index)",
  "env_logger 0.3.4 (registry+git://crates.mirrors.ustc.edu.cn/index)",
  "fnv 1.0.4 (registry+git://crates.mirrors.ustc.edu.cn/index)",
@@ -54,6 +55,15 @@ source = "registry+git://crates.mirrors.ustc.edu.cn/index"
 name = "cfg-if"
 version = "0.1.0"
 source = "registry+git://crates.mirrors.ustc.edu.cn/index"
+
+[[package]]
+name = "chrono"
+version = "0.2.25"
+source = "registry+git://crates.mirrors.ustc.edu.cn/index"
+dependencies = [
+ "num 0.1.35 (registry+git://crates.mirrors.ustc.edu.cn/index)",
+ "time 0.1.35 (registry+git://crates.mirrors.ustc.edu.cn/index)",
+]
 
 [[package]]
 name = "clap"
@@ -183,6 +193,38 @@ dependencies = [
  "bitflags 0.4.0 (registry+git://crates.mirrors.ustc.edu.cn/index)",
  "libc 0.2.15 (registry+git://crates.mirrors.ustc.edu.cn/index)",
 ]
+
+[[package]]
+name = "num"
+version = "0.1.35"
+source = "registry+git://crates.mirrors.ustc.edu.cn/index"
+dependencies = [
+ "num-integer 0.1.32 (registry+git://crates.mirrors.ustc.edu.cn/index)",
+ "num-iter 0.1.32 (registry+git://crates.mirrors.ustc.edu.cn/index)",
+ "num-traits 0.1.35 (registry+git://crates.mirrors.ustc.edu.cn/index)",
+]
+
+[[package]]
+name = "num-integer"
+version = "0.1.32"
+source = "registry+git://crates.mirrors.ustc.edu.cn/index"
+dependencies = [
+ "num-traits 0.1.35 (registry+git://crates.mirrors.ustc.edu.cn/index)",
+]
+
+[[package]]
+name = "num-iter"
+version = "0.1.32"
+source = "registry+git://crates.mirrors.ustc.edu.cn/index"
+dependencies = [
+ "num-integer 0.1.32 (registry+git://crates.mirrors.ustc.edu.cn/index)",
+ "num-traits 0.1.35 (registry+git://crates.mirrors.ustc.edu.cn/index)",
+]
+
+[[package]]
+name = "num-traits"
+version = "0.1.35"
+source = "registry+git://crates.mirrors.ustc.edu.cn/index"
 
 [[package]]
 name = "rand"
@@ -331,6 +373,7 @@ dependencies = [
 "checksum byteorder 0.5.3 (registry+git://crates.mirrors.ustc.edu.cn/index)" = "0fc10e8cc6b2580fda3f36eb6dc5316657f812a3df879a44a66fc9f0fdbc4855"
 "checksum bytes 0.3.0 (registry+git://crates.mirrors.ustc.edu.cn/index)" = "c129aff112dcc562970abb69e2508b40850dd24c274761bb50fb8a0067ba6c27"
 "checksum cfg-if 0.1.0 (registry+git://crates.mirrors.ustc.edu.cn/index)" = "de1e760d7b6535af4241fca8bd8adf68e2e7edacc6b29f5d399050c5e48cf88c"
+"checksum chrono 0.2.25 (registry+git://crates.mirrors.ustc.edu.cn/index)" = "9213f7cd7c27e95c2b57c49f0e69b1ea65b27138da84a170133fd21b07659c00"
 "checksum clap 2.11.0 (registry+git://crates.mirrors.ustc.edu.cn/index)" = "62db8e9e3ab6792670f99338be3dbc416f8728ba5d874c33e27aa9933e534512"
 "checksum env_logger 0.3.4 (registry+git://crates.mirrors.ustc.edu.cn/index)" = "82dcb9ceed3868a03b335657b85a159736c961900f7e7747d3b0b97b9ccb5ccb"
 "checksum fnv 1.0.4 (registry+git://crates.mirrors.ustc.edu.cn/index)" = "8e8af7b5408ab0c4910cad114c8f9eb454bf75df7afe8964307eeafb68a13a5e"
@@ -346,6 +389,10 @@ dependencies = [
 "checksum miow 0.1.3 (registry+git://crates.mirrors.ustc.edu.cn/index)" = "d5bfc6782530ac8ace97af10a540054a37126b63b0702ddaaa243b73b5745b9a"
 "checksum net2 0.2.26 (registry+git://crates.mirrors.ustc.edu.cn/index)" = "5edf9cb6be97212423aed9413dd4729d62b370b5e1c571750e882cebbbc1e3e2"
 "checksum nix 0.5.1 (registry+git://crates.mirrors.ustc.edu.cn/index)" = "bfb3ddedaa14746434a02041940495bf11325c22f6d36125d3bdd56090d50a79"
+"checksum num 0.1.35 (registry+git://crates.mirrors.ustc.edu.cn/index)" = "5a9699207fab8b02bd0e56f8f06fee3f26d640303130de548898b4c9704f6d01"
+"checksum num-integer 0.1.32 (registry+git://crates.mirrors.ustc.edu.cn/index)" = "fb24d9bfb3f222010df27995441ded1e954f8f69cd35021f6bef02ca9552fb92"
+"checksum num-iter 0.1.32 (registry+git://crates.mirrors.ustc.edu.cn/index)" = "287a1c9969a847055e1122ec0ea7a5c5d6f72aad97934e131c83d5c08ab4e45c"
+"checksum num-traits 0.1.35 (registry+git://crates.mirrors.ustc.edu.cn/index)" = "8359ea48994f253fa958b5b90b013728b06f54872e5a58bce39540fcdd0f2527"
 "checksum rand 0.3.14 (registry+git://crates.mirrors.ustc.edu.cn/index)" = "2791d88c6defac799c3f20d74f094ca33b9332612d9aef9078519c82e4fe04a5"
 "checksum regex 0.1.73 (registry+git://crates.mirrors.ustc.edu.cn/index)" = "56b7ee9f764ecf412c6e2fff779bca4b22980517ae335a21aeaf4e32625a5df2"
 "checksum regex-syntax 0.3.4 (registry+git://crates.mirrors.ustc.edu.cn/index)" = "31040aad7470ad9d8c46302dcffba337bb4289ca5da2e3cd6e37b64109a85199"

@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use std::io::{Read, Write, Result, Error, ErrorKind};
 
 use mio::{EventLoop, Token, EventSet, PollOpt};
-use mio::tcp::TcpStream;
+use mio::tcp::{TcpStream, Shutdown};
 use toml::Table;
 
 use config;
@@ -140,7 +140,7 @@ impl TCPProcessor {
                        event_loop: &mut EventLoop<Relay>,
                        events: EventSet,
                        is_local_sock: bool)
-                       -> Option<()> {
+                       -> bool {
         let mut sock = if is_local_sock {
             self.local_token = Some(token);
             &mut self.local_sock
@@ -149,40 +149,35 @@ impl TCPProcessor {
             &mut self.remote_sock
         };
 
-        let result = match sock {
+        match sock {
             &mut Some(ref mut sock) => {
                 match event_loop.register(sock, token, events, PollOpt::level()) {
-                    Ok(_) => Some(()),
+                    Ok(_) => {
+                        if is_local_sock {
+                            debug!("local socket {:?} has registred events {:?} to event loop", events, token);
+                        } else {
+                            debug!("remote socket {:?} has registred events {:?} to event loop", events, token);
+                        }
+
+                        true
+                    }
                     Err(e) => {
-                        error!("register failed because {}", e);
-                        None
+                        if is_local_sock {
+                            info!("local socket {:?} register events {:?} failed because {}", events, token, e);
+                        } else {
+                            info!("remote socket {:?} register events {:?} failed because {}", events, token, e);
+                        }
+
+                        false
                     }
                 }
             }
             _ => {
                 error!("register failed because sock not init");
-                None
-            }
-        };
 
-        match result {
-            Some(_) => {
-                if is_local_sock {
-                    debug!("local socket {:?} has registred events {:?} to event loop", events, token);
-                } else {
-                    debug!("remote socket {:?} has registred events {:?} to event loop", events, token);
-                }
-            }
-            None => {
-                if is_local_sock {
-                    error!("failed to register events {:?} for local socket {:?}", events, token);
-                } else {
-                    error!("failed to register events {:?} for remote socket {:?}", events, token);
-                }
+                false
             }
         }
-
-        result
     }
 
     fn change_status(&mut self, event_loop: &mut EventLoop<Relay>, events: EventSet, is_local_sock: bool) {
@@ -625,24 +620,38 @@ impl Processor for TCPProcessor {
     }
 
     fn destroy(&mut self, event_loop: &mut EventLoop<Relay>) {
-        if self.stage == HandleStage::Destroyed {
-            return;
-        }
-
         debug!("destroy processor: {:?}, {:?}", self.local_token, self.remote_token);
         self.stage = HandleStage::Destroyed;
 
         let sock = &self.local_sock.take().unwrap();
-        event_loop.deregister(sock).ok();
+        match event_loop.deregister(sock) {
+            Err(e) => info!("deregister local socket failed: {}", e),
+            _ => {}
+        }
+        // match sock.shutdown(Shutdown::Both) {
+        //     Err(e) => info!("shutdown local socket failed: {}", e),
+        //     _ => {}
+        // }
 
         if self.remote_sock.is_some() {
             let sock = &self.remote_sock.take().unwrap();
-            event_loop.deregister(sock).ok();
+            match event_loop.deregister(sock) {
+                Err(e) => info!("deregister remote socket failed: {}", e),
+                _ => {}
+            }
+            // match sock.shutdown(Shutdown::Both) {
+            //     Err(e) => info!("shutdown remote socket failed: {}", e),
+            //     _ => {}
+            // }
         }
 
         if self.remote_token.is_some() {
             let token = self.remote_token.unwrap();
             self.dns_resolver.borrow_mut().remove_caller(token);
         }
+    }
+
+    fn is_destroyed(&self) -> bool {
+        self.stage == HandleStage::Destroyed
     }
 }

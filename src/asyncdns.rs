@@ -11,7 +11,7 @@ use mio::{Token, EventSet, EventLoop, PollOpt};
 use mio::udp::UdpSocket;
 
 use relay::{Relay, Processor, ProcessResult};
-use util::{handle_every_line, Dict, slice2str, slice2string};
+use util::{get_basic_events, handle_every_line, Dict, slice2str, slice2string};
 use network::{is_ip, slice2ip4, slice2ip6, str2addr4, NetworkWriteBytes, NetworkReadBytes};
 
 // All communications inside of the domain protocol are carried in a single
@@ -571,18 +571,25 @@ impl DNSResolver {
         }
     }
 
-    pub fn add_to_loop(&mut self, token: Token, event_loop: &mut EventLoop<Relay>, events: EventSet) {
+    pub fn add_to_loop(&mut self, token: Token, event_loop: &mut EventLoop<Relay>, events: EventSet) -> bool {
         if self.sock.is_none() {
             self.sock = UdpSocket::v4().ok();
         }
         self.token = Some(token);
 
         if let Some(ref socket) = self.sock {
-            if event_loop.register(socket, token, events, PollOpt::level()).is_err() {
-                error!("add DNSResolver to event_loop failed.");
+            match event_loop.register(socket, token, events, PollOpt::level()) {
+                Err(e) => {
+                    error!("add DNSResolver to event_loop failed because {}", e);
+
+                    false
+                }
+                _ => true
             }
         } else {
-            error!("create UDP socket for DNSResolver failed.");
+            error!("create UDP socket for DNSResolver failed");
+
+            false
         }
     }
 }
@@ -594,11 +601,14 @@ impl Processor for DNSResolver {
             let sock = self.sock.take();
             if sock.is_some() {
                 let sock = sock.unwrap();
-                event_loop.deregister(&sock).ok();
+                match event_loop.deregister(&sock) {
+                    Err(e) => info!("deregister DNS socket failed: {}", e),
+                    _ => {}
+                }
             }
 
             let token = self.token.unwrap();
-            self.add_to_loop(token, event_loop, EventSet::readable());
+            self.add_to_loop(token, event_loop, get_basic_events());
         } else {
             let mut buf = [0u8; 1024];
             let mut recevied = None;
@@ -623,6 +633,10 @@ impl Processor for DNSResolver {
 
     fn destroy(&mut self, _event_loop: &mut EventLoop<Relay>) {
         unreachable!();
+    }
+
+    fn is_destroyed(&self) -> bool {
+        false
     }
 }
 

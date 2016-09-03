@@ -11,6 +11,7 @@ extern crate rand;
 extern crate toml;
 extern crate regex;
 extern crate crypto;
+extern crate chrono;
 extern crate byteorder;
 extern crate env_logger;
 
