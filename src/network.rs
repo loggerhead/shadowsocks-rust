@@ -1,53 +1,9 @@
 use std::io::Cursor;
 use std::str::FromStr;
-use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, AddrParseError};
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 
-
-pub trait NetworkWriteBytes: WriteBytesExt {
-    fn put_u8(&mut self, num: u8) -> Option<()> {
-        self.write_u8(num).ok()
-    }
-
-    fn put_u16(&mut self, num: u16) -> Option<()> {
-        self.write_u16::<NetworkEndian>(num).ok()
-    }
-}
-
-impl NetworkWriteBytes for Vec<u8> { }
-
-
-pub trait NetworkReadBytes: ReadBytesExt {
-    fn get_u8(&mut self) -> Option<u8> {
-        self.read_u8().ok()
-    }
-
-    fn get_u16(&mut self) -> Option<u16> {
-        self.read_u16::<NetworkEndian>().ok()
-    }
-
-    fn get_u32(&mut self) -> Option<u32> {
-        self.read_u32::<NetworkEndian>().ok()
-    }
-}
-
-impl<'a> NetworkReadBytes for Cursor<&'a [u8]> { }
-impl<'a> NetworkReadBytes for Cursor<&'a Vec<u8>> { }
-
-impl<'a> NetworkReadBytes for &'a [u8] {
-    fn get_u8(&mut self) -> Option<u8> {
-        Cursor::new(self).read_u8().ok()
-    }
-
-    fn get_u16(&mut self) -> Option<u16> {
-        Cursor::new(self).read_u16::<NetworkEndian>().ok()
-    }
-
-    fn get_u32(&mut self) -> Option<u32> {
-        Cursor::new(self).read_u32::<NetworkEndian>().ok()
-    }
-}
+use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt};
 
 #[allow(non_camel_case_types)]
 pub enum AddressFamily {
@@ -83,6 +39,7 @@ macro_rules! slice2sized {
     )
 }
 
+// TODO: consider change to return Result
 pub fn slice2ip4(data: &[u8]) -> String {
     assert!(data.len() >= 4);
     format!("{}", Ipv4Addr::from(slice2sized!(data, 4)))
@@ -105,4 +62,48 @@ pub fn pair2socket_addr(ip: &str, port: u16) -> Result<SocketAddr, AddrParseErro
     Ipv4Addr::from_str(ip).map(|ip| {
         SocketAddr::new(IpAddr::V4(ip), port)
     })
+}
+
+
+pub trait NetworkWriteBytes: WriteBytesExt {
+    fn put_u8(&mut self, num: u8) -> Option<()> {
+        self.write_u8(num).ok()
+    }
+
+    fn put_u16(&mut self, num: u16) -> Option<()> {
+        self.write_u16::<NetworkEndian>(num).ok()
+    }
+}
+
+impl NetworkWriteBytes for Vec<u8> { }
+
+pub trait NetworkReadBytes: ReadBytesExt {
+    fn get_u8(&mut self) -> Option<u8> {
+        self.read_u8().ok()
+    }
+
+    fn get_u16(&mut self) -> Option<u16> {
+        self.read_u16::<NetworkEndian>().ok()
+    }
+
+    fn get_u32(&mut self) -> Option<u32> {
+        self.read_u32::<NetworkEndian>().ok()
+    }
+}
+
+impl<'a> NetworkReadBytes for Cursor<&'a [u8]> { }
+impl<'a> NetworkReadBytes for Cursor<&'a Vec<u8>> { }
+
+impl<'a> NetworkReadBytes for &'a [u8] {
+    fn get_u8(&mut self) -> Option<u8> {
+        Cursor::new(self).read_u8().ok()
+    }
+
+    fn get_u16(&mut self) -> Option<u16> {
+        Cursor::new(self).read_u16::<NetworkEndian>().ok()
+    }
+
+    fn get_u32(&mut self) -> Option<u32> {
+        Cursor::new(self).read_u32::<NetworkEndian>().ok()
+    }
 }

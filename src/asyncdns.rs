@@ -62,14 +62,272 @@ const _QTYPE_ANY  : u16 = 255;
 
 type ResponseRecord = (String, String, u16, u16);
 type ResponseHeader = (u16, u16, u16, u16, u16, u16, u16, u16, u16);
+pub type Callback = FnMut(&mut Caller, Option<(String, String)>, Option<&str>);
 
+macro_rules! handle_dns_resolved {
+    ($caller:expr, $event_loop:expr, $hostname_ip:expr, $errmsg:expr) => (
+        // we need this unsafe block because the caller (tcp_processor) is already borrowed in relay::ready
+        unsafe {
+            let caller = &mut *($caller).as_ptr();
+            caller.handle_dns_resolved($event_loop, $hostname_ip, $errmsg);
+        }
+    );
+}
 
 pub trait Caller {
-    fn handle_dns_resolved(&mut self,
-                           event_loop: &mut EventLoop<Relay>,
-                           Option<(String, String)>,
-                           Option<&str>)
-                           -> ProcessResult<Vec<Token>>;
+    fn handle_dns_resolved(&mut self, event_loop: &mut EventLoop<Relay>, Option<(String, String)>, Option<&str>) -> ProcessResult<Vec<Token>>;
+}
+
+
+struct DNSResponse {
+    hostname: String,
+    questions: Vec<(String, u16, u16)>,
+    answers: Vec<(String, u16, u16)>,
+}
+
+impl fmt::Debug for DNSResponse {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}: {:?}", self.hostname, self.answers)
+    }
+}
+
+impl DNSResponse {
+    fn new() -> DNSResponse {
+        DNSResponse {
+            hostname: String::new(),
+            questions: Vec::new(),
+            answers: Vec::new()
+        }
+    }
+}
+
+
+#[derive(Debug, Clone, Copy)]
+enum HostnameStatus {
+    First,
+    Second,
+}
+
+pub struct DNSResolver {
+    token: Option<Token>,
+    hosts: Dict<String, String>,
+    cache: Dict<String, String>,
+    callers: Dict<Token, Rc<RefCell<Caller>>>,
+    hostname_status: Dict<String, HostnameStatus>,
+    hostname_to_caller: Dict<String, Vec<Rc<RefCell<Caller>>>>,
+    sock: Option<UdpSocket>,
+    servers: Vec<String>,
+    qtypes: Vec<u16>,
+}
+
+// TODO: add LRU `self.cache` to cache query result, see https://github.com/contain-rs/lru-cache
+impl DNSResolver {
+    pub fn new(server_list: Option<Vec<String>>, prefer_ipv6: Option<bool>) -> DNSResolver {
+        let servers = match server_list {
+            Some(servers) => servers,
+            None => parse_resolv(),
+        };
+        let qtypes = match prefer_ipv6 {
+            Some(true) => vec![QTYPE_AAAA, QTYPE_A],
+            _ => vec![QTYPE_A, QTYPE_AAAA],
+        };
+        let hosts = parse_hosts();
+
+        DNSResolver {
+            token: None,
+            servers: servers,
+            hosts: hosts,
+            cache: Dict::new(),
+            callers: Dict::new(),
+            hostname_status: Dict::new(),
+            hostname_to_caller: Dict::new(),
+            sock: UdpSocket::v4().ok(),
+            qtypes: qtypes,
+        }
+    }
+
+    pub fn add_caller(&mut self, token: Token, caller: Rc<RefCell<Caller>>) {
+        self.callers.put(token, caller);
+    }
+
+    pub fn remove_caller(&mut self, token: Token) -> Option<Rc<RefCell<Caller>>> {
+        self.callers.del(&token)
+    }
+
+    fn send_request(&self, hostname: String, qtype: u16) {
+        match self.sock {
+            Some(ref sock) => {
+                debug!("send query request of {} to servers", &hostname);
+                for server in self.servers.iter() {
+                    let server = format!("{}:53", server);
+                    let addr = SocketAddr::V4(str2addr4(&server).unwrap());
+                    let req = build_request(&hostname, qtype).unwrap();
+                    sock.send_to(&req, &addr).unwrap_or_else(|e| {
+                        error!("send query request failed: {}", e);
+                        None
+                    });
+                }
+            }
+            None => error!("DNS socket not init"),
+        }
+    }
+
+    pub fn resolve(&mut self, event_loop: &mut EventLoop<Relay>, hostname: String, token: Token) {
+        if let Some(caller) = self.callers.get(&token) {
+            if hostname.len() == 0 {
+                handle_dns_resolved!(caller, event_loop, None, Some("empty hostname"));
+            } else if is_ip(&hostname) {
+                handle_dns_resolved!(caller, event_loop, Some((hostname.clone(), hostname)), None);
+            } else if self.hosts.has(&hostname) {
+                let ip = self.hosts.get(&hostname).unwrap().clone();
+                handle_dns_resolved!(caller, event_loop, Some((hostname, ip)), None);
+            } else if self.cache.has(&hostname) {
+                let ip = self.cache.get(&hostname).unwrap().clone();
+                handle_dns_resolved!(caller, event_loop, Some((hostname, ip)), None);
+            } else if !is_valid_hostname(&hostname) {
+                let errmsg = format!("invalid hostname: {}", hostname);
+                handle_dns_resolved!(caller, event_loop, None, Some(&errmsg));
+            } else {
+                if self.hostname_to_caller.has(&hostname) {
+                    let callers = self.hostname_to_caller.get_mut(&hostname).unwrap();
+                    callers.push(caller.clone());
+                } else {
+                    self.hostname_status.put(hostname.clone(), HostnameStatus::First);
+                    self.hostname_to_caller.put(hostname.clone(), vec![caller.clone()]);
+                }
+
+                self.send_request(hostname, self.qtypes[0]);
+            }
+        } else {
+            error!("{:?} not in DNS callers", token);
+        }
+    }
+
+    fn call_callback(&mut self, event_loop: &mut EventLoop<Relay>, hostname: String, ip: String) {
+        if let Some(callers) = self.hostname_to_caller.get_mut(&hostname) {
+            for caller in callers.iter_mut() {
+                let hostname_ip = Some((hostname.clone(), ip.clone()));
+                if ip.len() > 0 {
+                    handle_dns_resolved!(caller, event_loop, hostname_ip, None);
+                } else {
+                    let errmsg = format!("unknown hostname {}", hostname.clone());
+                    handle_dns_resolved!(caller, event_loop, hostname_ip, Some(errmsg.as_str()));
+                }
+            }
+        }
+
+        if self.hostname_to_caller.has(&hostname) {
+            self.hostname_to_caller.del(&hostname);
+        }
+        if self.hostname_status.has(&hostname) {
+            self.hostname_status.del(&hostname);
+        }
+    }
+
+    fn handle_data(&mut self, event_loop: &mut EventLoop<Relay>, data: &[u8]) {
+        match parse_response(data) {
+            Some(response) => {
+                let mut ip = String::new();
+                for answer in response.answers.iter() {
+                    if (answer.1 == QTYPE_A || answer.1 == QTYPE_AAAA) && answer.2 == QCLASS_IN {
+                        ip = answer.0.clone();
+                        break;
+                    }
+                }
+
+                let hostname = response.hostname;
+                let hostname_status = match self.hostname_status.get(&hostname) {
+                    Some(&HostnameStatus::First) => 1,
+                    Some(&HostnameStatus::Second) => 2,
+                    _ => 0
+                };
+
+                if ip.len() == 0 && hostname_status == 1 {
+                    self.hostname_status[hostname.clone()] = HostnameStatus::Second;
+                    self.send_request(hostname, self.qtypes[1]);
+                } else if ip.len() > 0 {
+                    self.call_callback(event_loop, hostname, ip);
+                } else if hostname_status == 2 {
+                    for question in response.questions {
+                        if question.1 == self.qtypes[1] {
+                            self.call_callback(event_loop, hostname, String::new());
+                            break;
+                        }
+                    }
+                }
+            }
+            None => error!("invalid DNS response"),
+        }
+    }
+
+    pub fn add_to_loop(&mut self, token: Token, event_loop: &mut EventLoop<Relay>, events: EventSet) -> bool {
+        self.token = Some(token);
+        if self.sock.is_none() {
+            self.sock = UdpSocket::v4().ok();
+        }
+
+        if let Some(ref socket) = self.sock {
+            match event_loop.register(socket, token, events, PollOpt::level()) {
+                Err(e) => {
+                    error!("add DNSResolver to event_loop failed because {}", e);
+                    false
+                }
+                _ => true,
+            }
+        } else {
+            error!("create UDP socket for DNSResolver failed");
+            false
+        }
+    }
+}
+
+impl Processor for DNSResolver {
+    fn process(&mut self, event_loop: &mut EventLoop<Relay>, token: Token, events: EventSet) -> ProcessResult<Vec<Token>> {
+        if events.is_error() {
+            error!("events error on DNS socket");
+            let sock = self.sock.take().unwrap();
+            match event_loop.deregister(&sock) {
+                Ok(_) => {
+                    self.add_to_loop(token, event_loop, get_basic_events());
+                }
+                Err(e) => {
+                    error!("deregister DNS socket failed: {}", e);
+                }
+            }
+        } else {
+            let mut buf = [0u8; 1024];
+            let received = match self.sock {
+                Some(ref sock) => {
+                    match sock.recv_from(&mut buf) {
+                        Ok(Some((len, _addr))) => Some(&buf[..len]),
+                        Ok(None) => None,
+                        Err(e) => {
+                            error!("receive data failed on DNS socket: {}", e);
+                            None
+                        }
+                    }
+                }
+                None => {
+                    error!("DNS socket not init");
+                    None
+                }
+            };
+
+            if let Some(data) = received {
+                self.handle_data(event_loop, data);
+            }
+        }
+
+        ProcessResult::Success
+    }
+
+    fn destroy(&mut self, _event_loop: &mut EventLoop<Relay>) {
+        unreachable!();
+    }
+
+    fn is_destroyed(&self) -> bool {
+        false
+    }
 }
 
 // For detail, see page 7 of RFC 1035
@@ -78,12 +336,8 @@ fn build_address(address: &str) -> Option<Vec<u8>> {
     let bytes = address.as_bytes();
     for label in bytes.split(|b| *b == '.' as u8) {
         match label.len() {
-            0 => {
-                continue;
-            }
-            n if n > 63 => {
-                return None;
-            }
+            0 => continue,
+            n if n > 63 => return None,
             n => {
                 v.push(n as u8);
                 v.extend(label);
@@ -114,27 +368,28 @@ fn build_request(address: &str, qtype: u16) -> Option<Vec<u8>> {
     //     |                       0                       |
     //     +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
     let request_id = rand::random::<u16>();
-    try_opt!(r.put_u16(request_id));
-    try_opt!(r.put_u8(1));
-    try_opt!(r.put_u8(0));
-    try_opt!(r.put_u16(1));
-    try_opt!(r.put_u16(0));
-    try_opt!(r.put_u16(0));
-    try_opt!(r.put_u16(0));
-    // address
-    match build_address(address) {
-        Some(addr) => r.extend(addr),
-        None => {
-            return None;
-        }
+
+    macro_rules! pack {
+        (u16, $r:expr, $v:expr) => ( try_opt!($r.put_u16($v)); );
+        (u8, $r:expr, $v:expr) => ( try_opt!($r.put_u8($v)); );
     }
+
+    pack!(u16, r, request_id);
+    pack!(u8, r, 1);
+    pack!(u8, r, 0);
+    pack!(u16, r, 1);
+    pack!(u16, r, 0);
+    pack!(u16, r, 0);
+    pack!(u16, r, 0);
+    // address
+    let addr = try_opt!(build_address(address));
+    r.extend(addr);
     // qtype and qclass
-    try_opt!(r.put_u16(qtype));
-    try_opt!(r.put_u16(QCLASS_IN));
+    pack!(u16, r, qtype);
+    pack!(u16, r, QCLASS_IN);
 
     Some(r)
 }
-
 
 // RDATA: a variable length string of octets that describes the resource.
 //        The format of this information varies according to the TYPE and CLASS
@@ -255,13 +510,18 @@ fn parse_header(data: &[u8]) -> Option<ResponseHeader> {
 
     let mut header = Cursor::new(data);
 
-    let id      = try_opt!(header.get_u16());
-    let byte3   = try_opt!(header.get_u8());
-    let byte4   = try_opt!(header.get_u8());
-    let qdcount = try_opt!(header.get_u16());
-    let ancount = try_opt!(header.get_u16());
-    let nscount = try_opt!(header.get_u16());
-    let arcount = try_opt!(header.get_u16());
+    macro_rules! unpack {
+        (u16, $r:expr) => ( try_opt!($r.get_u16()); );
+        (u8, $r:expr) => ( try_opt!($r.get_u8()); );
+    }
+
+    let id      = unpack!(u16, header);
+    let byte3   = unpack!(u8, header);
+    let byte4   = unpack!(u8, header);
+    let qdcount = unpack!(u16, header);
+    let ancount = unpack!(u16, header);
+    let nscount = unpack!(u16, header);
+    let arcount = unpack!(u16, header);
     let qr      = (byte3 & 0b10000000) as u16;
     let tc      = (byte3 & 0b00000010) as u16;
     let ra      = (byte4 & 0b00000010) as u16;
@@ -288,32 +548,73 @@ fn parse_response(data: &[u8]) -> Option<DNSResponse> {
         return None;
     }
 
-    match parse_header(data) {
-        Some(header) => {
-            let (_id, _qr, _tc, _ra, _rcode, qdcount, ancount, _nscount, _arcount) = header;
+    parse_header(data).and_then(|header| {
+        let (_id, _qr, _tc, _ra, _rcode, qdcount, ancount, _nscount, _arcount) = header;
 
-            let offset = 12u16;
-            let (offset, qds) = try_opt!(parse_records(data, offset, qdcount, true));
-            let (_offset, ans) = try_opt!(parse_records(data, offset, ancount, false));
-            // We don't need to parse the authority records and the additional records
-            let (_offset, _nss) = try_opt!(parse_records(data, _offset, _nscount, false));
-            let (_offset, _ars) = try_opt!(parse_records(data, _offset, _arcount, false));
+        let offset = 12u16;
+        let (offset, qds) = try_opt!(parse_records(data, offset, qdcount, true));
+        let (_offset, ans) = try_opt!(parse_records(data, offset, ancount, false));
+        // We don't need to parse the authority records and the additional records
+        let (_offset, _nss) = try_opt!(parse_records(data, _offset, _nscount, false));
+        let (_offset, _ars) = try_opt!(parse_records(data, _offset, _arcount, false));
 
-            let mut response = DNSResponse::new();
-            if qds.len() > 0 {
-                response.hostname = qds[0].0.clone();
-            }
-            for an in qds {
-                response.questions.push((an.1, an.2, an.3))
-            }
-            for an in ans {
-                response.answers.push((an.1, an.2, an.3))
-            }
-
-            Some(response)
+        let mut response = DNSResponse::new();
+        if qds.len() > 0 {
+            response.hostname = qds[0].0.clone();
         }
-        None => None
+        for an in qds {
+            response.questions.push((an.1, an.2, an.3))
+        }
+        for an in ans {
+            response.answers.push((an.1, an.2, an.3))
+        }
+
+        Some(response)
+    })
+}
+
+fn parse_resolv() -> Vec<String> {
+    let mut servers = vec![];
+
+    handle_every_line("/etc/resolv.conf", &mut |line| {
+        if line.starts_with("nameserver") {
+            if let Some(server) = line.split_whitespace().nth(1) {
+                if is_ip(server) {
+                    servers.push(server.to_string());
+                }
+            }
+        }
+    });
+
+    if servers.len() == 0 {
+        servers = vec!["8.8.4.4".to_string(),
+                       "8.8.8.8".to_string()];
     }
+
+    servers
+}
+
+fn parse_hosts() -> Dict<String, String> {
+    let mut hosts = Dict::new();
+
+    handle_every_line("/etc/hosts", &mut |line| {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() > 0 {
+            let ip = parts[0];
+            if is_ip(ip) {
+                for hostname in parts[1..].iter() {
+                    if hostname.len() > 0 {
+                        hosts.put(hostname.to_string(), ip.to_string());
+                    }
+                }
+            }
+        }
+    });
+
+    hosts.put("localhost".to_string(),
+              "127.0.0.1".to_string());
+
+    hosts
 }
 
 // For detail, see page 7 of RFC 1035
@@ -333,311 +634,6 @@ fn is_valid_hostname(hostname: &str) -> bool {
             let s = slice2str(s).unwrap_or("");
             s.len() > 0 && !s.starts_with("-") && !s.ends_with("-") && RE.is_match(s)
         })
-}
-
-struct DNSResponse {
-    hostname: String,
-    questions: Vec<(String, u16, u16)>,
-    answers: Vec<(String, u16, u16)>
-}
-
-impl DNSResponse {
-    fn new() -> DNSResponse {
-        DNSResponse {
-            hostname: String::new(),
-            questions: Vec::new(),
-            answers: Vec::new()
-        }
-    }
-}
-
-impl fmt::Debug for DNSResponse {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}: {:?}", self.hostname, self.answers)
-    }
-}
-
-
-#[derive(Clone, Copy)]
-enum HostnameStatus {
-    First,
-    Second,
-}
-
-pub type Callback = FnMut(&mut Caller, Option<(String, String)>, Option<&str>);
-
-pub struct DNSResolver {
-    token: Option<Token>,
-    hosts: Dict<String, String>,
-    cache: Dict<String, String>,
-    callers: Dict<Token, Rc<RefCell<Caller>>>,
-    hostname_status: Dict<String, HostnameStatus>,
-    hostname_to_caller: Dict<String, Vec<Rc<RefCell<Caller>>>>,
-    sock: Option<UdpSocket>,
-    servers: Vec<String>,
-    qtypes: Vec<u16>,
-}
-
-macro_rules! handle_dns_resolved {
-    ($caller:expr, $event_loop:expr, $hostname_ip:expr, $errmsg:expr) => (
-        unsafe {
-            // tcp_processor is already borrowed in relay::ready
-            let caller = &mut *($caller).as_ptr();
-            caller.handle_dns_resolved($event_loop, $hostname_ip, $errmsg);
-        }
-    );
-}
-
-// TODO: add LRU `self.cache` to cache query result, see https://github.com/contain-rs/lru-cache
-impl DNSResolver {
-    pub fn new(server_list: Option<Vec<String>>, prefer_ipv6: Option<bool>) -> DNSResolver {
-        let mut this = DNSResolver {
-            token: None,
-            servers: Vec::new(),
-            hosts: Dict::new(),
-            cache: Dict::new(),
-            callers: Dict::new(),
-            hostname_status: Dict::new(),
-            hostname_to_caller: Dict::new(),
-            sock: UdpSocket::v4().ok(),
-            qtypes: Vec::new(),
-        };
-
-        match server_list {
-            Some(servers) => this.servers = servers,
-            None => this.parse_resolv(),
-        }
-
-        if prefer_ipv6.is_some() && prefer_ipv6.unwrap() {
-            this.qtypes = vec![QTYPE_AAAA, QTYPE_A];
-        } else {
-            this.qtypes = vec![QTYPE_A, QTYPE_AAAA];
-        }
-        this.parse_hosts();
-
-        this
-    }
-
-    pub fn add_caller(&mut self, token: Token, caller: Rc<RefCell<Caller>>) {
-        self.callers.put(token, caller);
-    }
-
-    pub fn remove_caller(&mut self, token: Token) -> Option<Rc<RefCell<Caller>>> {
-        self.callers.del(&token)
-    }
-
-    fn parse_resolv(&mut self) {
-        handle_every_line("/etc/resolv.conf", &mut |line| {
-            if line.starts_with("nameserver") {
-                if let Some(server) = line.split_whitespace().nth(1) {
-                    if is_ip(server) {
-                        self.servers.push(server.to_string());
-                    }
-                }
-            }
-        });
-
-        if self.servers.len() == 0 {
-            self.servers = vec!["8.8.4.4", "8.8.8.8"]
-                .iter()
-                .map(|s| s.to_string())
-                .collect();
-        }
-    }
-
-    fn parse_hosts(&mut self) {
-        handle_every_line("/etc/hosts", &mut |line| {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() > 0 {
-                let ip = parts[0];
-                if is_ip(ip) {
-                    for hostname in parts[1..].iter() {
-                        if hostname.len() > 0 {
-                            self.hosts.put(hostname.to_string(), ip.to_string());
-                        }
-                    }
-                }
-            }
-        });
-
-        self.hosts.put("localhost".to_string(), "127.0.0.1".to_string());
-    }
-
-    fn send_request(&self, hostname: String, qtype: u16) {
-        let req = build_request(&hostname, qtype).unwrap();
-        match self.sock {
-            Some(ref sock) => {
-                trace!("send query request of {} to servers", &hostname);
-                for server in self.servers.iter() {
-                    let server = format!("{}:53", server);
-                    let addr = SocketAddr::V4(str2addr4(&server).unwrap());
-                    if let Err(e) = sock.send_to(&req, &addr) {
-                        error!("{}", e);
-                        return;
-                    }
-                }
-            }
-            None => error!("DNS socket closed"),
-        }
-    }
-
-    pub fn resolve(&mut self, event_loop: &mut EventLoop<Relay>, hostname: String, caller_token: Token) {
-        if let Some(caller) = self.callers.get(&caller_token) {
-            if hostname.len() == 0 {
-                handle_dns_resolved!(caller, event_loop, None, Some("empty hostname"));
-            } else if is_ip(&hostname) {
-                handle_dns_resolved!(caller, event_loop, Some((hostname.clone(), hostname)), None);
-            } else if self.hosts.has(&hostname) {
-                let ip = self.hosts.get(&hostname).unwrap().clone();
-                handle_dns_resolved!(caller, event_loop, Some((hostname, ip)), None);
-            } else if self.cache.has(&hostname) {
-                let ip = self.cache.get(&hostname).unwrap().clone();
-                handle_dns_resolved!(caller, event_loop, Some((hostname, ip)), None);
-            } else if !is_valid_hostname(&hostname) {
-                let errmsg = format!("invalid hostname: {}", hostname);
-                handle_dns_resolved!(caller, event_loop, None, Some(&errmsg));
-            } else {
-                if self.hostname_to_caller.has(&hostname) {
-                    let arr = self.hostname_to_caller.get_mut(&hostname).unwrap();
-                    arr.push(caller.clone());
-                } else {
-                    self.hostname_status.put(hostname.clone(), HostnameStatus::First);
-                    self.hostname_to_caller.put(hostname.clone(), vec![caller.clone()]);
-                }
-
-                self.send_request(hostname, self.qtypes[0]);
-            }
-        } else {
-            info!("caller {:?} does not exists", caller_token);
-        }
-    }
-
-    fn call_callback(&mut self, event_loop: &mut EventLoop<Relay>, hostname: String, ip: String) {
-        if let Some(callers) = self.hostname_to_caller.get_mut(&hostname) {
-            for caller in callers.iter_mut() {
-                let errmsg = format!("unknown hostname {}", hostname.clone());
-
-                let error = if ip.len() > 0 {
-                    None
-                } else {
-                    Some(errmsg.as_str())
-                };
-
-                handle_dns_resolved!(caller, event_loop, Some((hostname.clone(), ip.clone())), error);
-            }
-        }
-
-        if self.hostname_to_caller.has(&hostname) {
-            self.hostname_to_caller.del(&hostname);
-        }
-        if self.hostname_status.has(&hostname) {
-            self.hostname_status.del(&hostname);
-        }
-    }
-
-    fn handle_data(&mut self, event_loop: &mut EventLoop<Relay>, data: &[u8]) {
-        match parse_response(data) {
-            Some(response) => {
-                let mut ip = String::new();
-                for answer in response.answers.iter() {
-                    if (answer.1 == QTYPE_A || answer.1 == QTYPE_AAAA) && answer.2 == QCLASS_IN {
-                        ip = answer.0.clone();
-                        break;
-                    }
-                }
-
-                let hostname = response.hostname;
-                let hostname_status = match self.hostname_status.get(&hostname) {
-                    Some(&HostnameStatus::First) => 1,
-                    Some(&HostnameStatus::Second) => 2,
-                    _ => 0
-                };
-
-                if ip.len() == 0 && hostname_status == 1 {
-                    self.hostname_status[hostname.clone()] = HostnameStatus::Second;
-                    self.send_request(hostname, self.qtypes[1]);
-                } else if ip.len() > 0 {
-                    self.call_callback(event_loop, hostname, ip);
-                } else if hostname_status == 2 {
-                    for question in response.questions {
-                        if question.1 == self.qtypes[1] {
-                            self.call_callback(event_loop, hostname, String::new());
-                            break;
-                        }
-                    }
-                }
-            }
-            None => info!("invalid DNS response"),
-        }
-    }
-
-    pub fn add_to_loop(&mut self, token: Token, event_loop: &mut EventLoop<Relay>, events: EventSet) -> bool {
-        if self.sock.is_none() {
-            self.sock = UdpSocket::v4().ok();
-        }
-        self.token = Some(token);
-
-        if let Some(ref socket) = self.sock {
-            match event_loop.register(socket, token, events, PollOpt::level()) {
-                Err(e) => {
-                    error!("add DNSResolver to event_loop failed because {}", e);
-
-                    false
-                }
-                _ => true
-            }
-        } else {
-            error!("create UDP socket for DNSResolver failed");
-
-            false
-        }
-    }
-}
-
-impl Processor for DNSResolver {
-    fn process(&mut self, event_loop: &mut EventLoop<Relay>, _token: Token, events: EventSet) -> ProcessResult<Vec<Token>> {
-        if events.is_error() {
-            error!("events error happened on DNS socket");
-            let sock = self.sock.take();
-            if sock.is_some() {
-                let sock = sock.unwrap();
-                match event_loop.deregister(&sock) {
-                    Err(e) => info!("deregister DNS socket failed: {}", e),
-                    _ => {}
-                }
-            }
-
-            let token = self.token.unwrap();
-            self.add_to_loop(token, event_loop, get_basic_events());
-        } else {
-            let mut buf = [0u8; 1024];
-            let mut recevied = None;
-
-            match self.sock {
-                Some(ref sock) => {
-                    match sock.recv_from(&mut buf) {
-                        Ok(Some((len, _addr))) => recevied = Some(&buf[..len]),
-                        _ => warn!("receive error on DNS socket"),
-                    }
-                }
-                None => error!("DNS socket closed"),
-            }
-
-            if recevied.is_some() {
-                self.handle_data(event_loop, recevied.unwrap());
-            }
-        }
-
-        ProcessResult::Success
-    }
-
-    fn destroy(&mut self, _event_loop: &mut EventLoop<Relay>) {
-        unreachable!();
-    }
-
-    fn is_destroyed(&self) -> bool {
-        false
-    }
 }
 
 #[cfg(test)]

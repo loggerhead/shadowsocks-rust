@@ -1,10 +1,8 @@
+use rand::{Rng, OsRng};
 use crypto::md5::Md5;
 use crypto::digest::Digest;
 use crypto::aes::{ctr, KeySize};
 use crypto::symmetriccipher::SynchronousStreamCipher;
-
-use rand::{ Rng, OsRng };
-
 
 type Cipher = Box<SynchronousStreamCipher + 'static>;
 
@@ -111,9 +109,7 @@ impl Encryptor {
 
                     Some(result)
                 }
-                _ => {
-                    return None;
-                }
+                _ => return None,
             }
         }
     }

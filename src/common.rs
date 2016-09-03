@@ -45,12 +45,10 @@ pub fn parse_header(data: &[u8]) -> Option<(u8, String, u16, usize)> {
                 warn!("header is too short");
             }
         }
-        _ => warn!("unsupported addrtype {}, maybe wrong password or encryption method",
-                   addr_type),
+        _ => warn!("unsupported addrtype {}, maybe wrong password or encryption method", addr_type),
     }
 
-    match dest_addr {
-        Some(dest_addr) => Some((addr_type, dest_addr, dest_port, header_len)),
-        None => None,
-    }
+    dest_addr.and_then(|dest_addr| {
+        Some((addr_type, dest_addr, dest_port, header_len))
+    })
 }

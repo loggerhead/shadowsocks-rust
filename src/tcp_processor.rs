@@ -2,18 +2,17 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::io::{Read, Write, Result, Error, ErrorKind};
 
-use mio::{EventLoop, Token, EventSet, PollOpt};
-use mio::tcp::{TcpStream, Shutdown};
 use toml::Table;
+use mio::tcp::{TcpStream};
+use mio::{EventLoop, Token, EventSet, PollOpt};
 
 use config;
 use encrypt::Encryptor;
 use common::parse_header;
+use network::pair2socket_addr;
 use util::{address2str, get_basic_events};
 use relay::{Relay, Processor, ProcessResult};
-use network::pair2socket_addr;
 use asyncdns::{Caller, DNSResolver};
-
 
 const BUF_SIZE: usize = 32 * 1024;
 // SOCKS method definition
@@ -22,7 +21,6 @@ const METHOD_NOAUTH: u8 = 0;
 const CMD_CONNECT: u8 = 1;
 const _CMD_BIND: u8 = 2;
 const CMD_UDP_ASSOCIATE: u8 = 3;
-
 
 #[derive(Debug, PartialEq)]
 enum CheckAuthResult {
@@ -92,14 +90,8 @@ macro_rules! try_process {
     );
 }
 
-
 impl TCPProcessor {
-    pub fn new(conf: Rc<Table>,
-               local_sock: TcpStream,
-               dns_resolver: Rc<RefCell<DNSResolver>>,
-               is_client: bool)
-               -> TCPProcessor {
-
+    pub fn new(conf: Rc<Table>, local_sock: TcpStream, dns_resolver: Rc<RefCell<DNSResolver>>, is_client: bool) -> TCPProcessor {
         let encryptor = Encryptor::new(config::get_str(&conf, "password"));
         let stage = if is_client {
             HandleStage::Init
@@ -135,12 +127,7 @@ impl TCPProcessor {
         self.remote_token = Some(token);
     }
 
-    pub fn add_to_loop(&mut self,
-                       token: Token,
-                       event_loop: &mut EventLoop<Relay>,
-                       events: EventSet,
-                       is_local_sock: bool)
-                       -> bool {
+    pub fn add_to_loop(&mut self, token: Token, event_loop: &mut EventLoop<Relay>, events: EventSet, is_local_sock: bool) -> bool {
         let mut sock = if is_local_sock {
             self.local_token = Some(token);
             &mut self.local_sock
@@ -154,29 +141,23 @@ impl TCPProcessor {
                 match event_loop.register(sock, token, events, PollOpt::level()) {
                     Ok(_) => {
                         if is_local_sock {
-                            debug!("local socket {:?} has registred events {:?} to event loop", events, token);
+                            debug!("local socket {:?} has registred events {:?}", token, events);
                         } else {
-                            debug!("remote socket {:?} has registred events {:?} to event loop", events, token);
+                            debug!("remote socket {:?} has registred events {:?}", token, events);
                         }
-
                         true
                     }
                     Err(e) => {
                         if is_local_sock {
-                            info!("local socket {:?} register events {:?} failed because {}", events, token, e);
+                            error!("local socket {:?} register events {:?} failed: {}", token, events, e);
                         } else {
-                            info!("remote socket {:?} register events {:?} failed because {}", events, token, e);
+                            error!("remote socket {:?} register events {:?} failed: {}", token, events, e);
                         }
-
                         false
                     }
                 }
             }
-            _ => {
-                error!("register failed because sock not init");
-
-                false
-            }
+            _ => unreachable!(),
         }
     }
 
@@ -187,18 +168,18 @@ impl TCPProcessor {
             self.remote_token
         };
 
-        debug!("change listened events to {:?}", events);
+        debug!("listening events changed to {:?}", events);
         self.add_to_loop(token.unwrap(), event_loop, events, is_local_sock);
     }
 
     fn change_to_writable(&mut self, event_loop: &mut EventLoop<Relay>, is_local_sock: bool) {
-        self.change_status(event_loop,
-                           get_basic_events() | EventSet::writable() | EventSet::hup(),
-                           is_local_sock);
+        let events = get_basic_events() | EventSet::writable() | EventSet::hup();
+        self.change_status(event_loop, events, is_local_sock);
     }
 
     fn change_to_readable(&mut self, event_loop: &mut EventLoop<Relay>, is_local_sock: bool) {
-        self.change_status(event_loop, get_basic_events() | EventSet::hup(), is_local_sock);
+        let events = get_basic_events() | EventSet::hup();
+        self.change_status(event_loop, events, is_local_sock);
     }
 
     fn receive_data(&mut self, event_loop: &mut EventLoop<Relay>, is_local_sock: bool) -> Option<Vec<u8>> {
@@ -212,14 +193,11 @@ impl TCPProcessor {
                         match sock.read(&mut buf) {
                             Ok(len) => {
                                 if (self.is_client && !is_local_sock) || (!self.is_client && is_local_sock) {
-                                    match self.encryptor.decrypt(&buf[..len]) {
-                                        data @ Some(_) => data,
-                                        None => {
-                                            info!("cannot decrypt data, maybe a error client");
-                                            need_destroy = true;
-                                            None
-                                        }
-                                    }
+                                    self.encryptor.decrypt(&buf[..len]).or_else(|| {
+                                        warn!("cannot decrypt data, maybe a error client");
+                                        need_destroy = true;
+                                        None
+                                    })
                                 } else {
                                     Some(buf[..len].to_vec())
                                 }
@@ -235,10 +213,7 @@ impl TCPProcessor {
                             }
                         }
                     }
-                    _ => {
-                        error!("socket is not initialize");
-                        None
-                    }
+                    _ => unreachable!(),
                 }
             );
         }
@@ -248,7 +223,6 @@ impl TCPProcessor {
         } else {
             read_data!(&mut self.remote_sock)
         };
-
         if need_destroy {
             self.destroy(event_loop);
         }
@@ -269,11 +243,7 @@ impl TCPProcessor {
         self.write_to_sock(event_loop, &data, is_local_sock)
     }
 
-    fn write_to_sock(&mut self,
-                     event_loop: &mut EventLoop<Relay>,
-                     data: &[u8],
-                     is_local_sock: bool)
-                     -> ProcessResult<Vec<Token>> {
+    fn write_to_sock(&mut self, event_loop: &mut EventLoop<Relay>, data: &[u8], is_local_sock: bool) -> ProcessResult<Vec<Token>> {
         if data.len() == 0 {
             return ProcessResult::Success;
         }
@@ -318,7 +288,7 @@ impl TCPProcessor {
                         }
                     }
                 }
-                _ => (false, data.len())
+                _ => unreachable!(),
             }
         };
 
@@ -339,19 +309,18 @@ impl TCPProcessor {
     }
 
     fn handle_stage_stream(&mut self, event_loop: &mut EventLoop<Relay>, data: &[u8]) -> ProcessResult<Vec<Token>> {
-        debug!("handle stage stream");
+        trace!("handle stage stream");
         self.write_to_sock(event_loop, data, false)
     }
 
     fn handle_stage_connecting(&mut self, _event_loop: &mut EventLoop<Relay>, data: &[u8]) -> ProcessResult<Vec<Token>> {
-        debug!("handle stage connecting");
+        trace!("handle stage connecting");
         self.data_to_write_to_remote.extend_from_slice(data);
-
         ProcessResult::Success
     }
 
     fn handle_stage_addr(&mut self, event_loop: &mut EventLoop<Relay>, data: &[u8]) -> ProcessResult<Vec<Token>> {
-        debug!("handle stage addr");
+        trace!("handle stage addr");
         let data = if self.is_client {
             match data[1] {
                 CMD_UDP_ASSOCIATE => {
@@ -376,45 +345,48 @@ impl TCPProcessor {
                 self.server_address = Some((remote_address.clone(), remote_port));
                 info!("connecting {} from {}", address2str(&self.server_address), address2str(&self.client_address));
 
-                if self.is_client {
+                let server_address = if self.is_client {
                     let response = &[0x05, 0x00, 0x00, 0x01,
                                      0x00, 0x00, 0x00, 0x00,
                                      0x10, 0x10];
                     try_process!(self.write_to_sock(event_loop, response, true));
                     self.data_to_write_to_remote.extend_from_slice(data);
                     // TODO: change to configuable
-                    self.dns_resolver.borrow_mut().resolve(event_loop, "127.0.0.1".to_string(), self.remote_token.unwrap());
+                    "127.0.0.1".to_string()
                 } else {
                     if data.len() > header_length {
                         self.data_to_write_to_remote.extend_from_slice(&data[header_length..]);
                     }
-                    self.dns_resolver.borrow_mut().resolve(event_loop, remote_address, self.remote_token.unwrap());
-                }
+                    remote_address
+                };
+
+                self.dns_resolver.borrow_mut().resolve(event_loop, server_address, self.remote_token.unwrap());
+
+                ProcessResult::Success
             }
             None => {
                 error!("can not parse socks header");
-                return need_destroy!(self);
+                need_destroy!(self)
             }
         }
-
-        ProcessResult::Success
     }
 
     fn handle_stage_init(&mut self, event_loop: &mut EventLoop<Relay>, data: &[u8]) -> ProcessResult<Vec<Token>> {
-        debug!("handle stage init");
+        trace!("handle stage init");
         match self.check_auth_method(data) {
             CheckAuthResult::Success => {
                 try_process!(self.write_to_sock(event_loop, &[0x05, 0x00], true));
                 self.stage = HandleStage::Addr;
-                return ProcessResult::Success;
+                ProcessResult::Success
             }
-            CheckAuthResult::BadSocksHeader => { }
+            CheckAuthResult::BadSocksHeader => {
+                need_destroy!(self)
+            }
             CheckAuthResult::NoAcceptableMethods => {
                 self.write_to_sock(event_loop, &[0x05, 0xff], true);
+                need_destroy!(self)
             }
         }
-
-        need_destroy!(self)
     }
 
     fn check_auth_method(&self, data: &[u8]) -> CheckAuthResult {
@@ -444,11 +416,11 @@ impl TCPProcessor {
         }
 
         if !noauto_exist {
-            warn!("none of SOCKS METHOD's requested by client is supported");
+            warn!("none of socks method's requested by client is supported");
             return CheckAuthResult::NoAcceptableMethods;
         }
 
-        return CheckAuthResult::Success;
+        CheckAuthResult::Success
     }
 
     fn on_local_read(&mut self, event_loop: &mut EventLoop<Relay>) -> ProcessResult<Vec<Token>> {
@@ -471,6 +443,7 @@ impl TCPProcessor {
                         _ => ProcessResult::Success
                     }
                 } else {
+                    // TODO: consider what if no data read
                     need_destroy!(self)
                 }
             }
@@ -491,34 +464,37 @@ impl TCPProcessor {
         }
     }
 
-    fn on_local_write(&mut self, event_loop: &mut EventLoop<Relay>) -> ProcessResult<Vec<Token>> {
-        let result = if self.data_to_write_to_local.len() > 0 {
-            self.send_buf_data(event_loop, true)
+    fn on_write(&mut self, event_loop: &mut EventLoop<Relay>, is_local_sock: bool) -> ProcessResult<Vec<Token>> {
+        macro_rules! get_buf_len {
+            () => (
+                if is_local_sock {
+                    self.data_to_write_to_local.len()
+                } else {
+                    self.data_to_write_to_remote.len()
+                }
+            );
+        }
+
+        let result = if get_buf_len!() > 0 {
+            self.send_buf_data(event_loop, is_local_sock)
         } else {
             ProcessResult::Success
         };
 
-        if self.data_to_write_to_local.len() == 0 {
-            self.change_to_readable(event_loop, true);
+        if get_buf_len!() == 0 {
+            self.change_to_readable(event_loop, is_local_sock);
         }
 
         result
     }
 
+    fn on_local_write(&mut self, event_loop: &mut EventLoop<Relay>) -> ProcessResult<Vec<Token>> {
+        self.on_write(event_loop, true)
+    }
+
     fn on_remote_write(&mut self, event_loop: &mut EventLoop<Relay>) -> ProcessResult<Vec<Token>> {
         self.stage = HandleStage::Stream;
-
-        let result = if self.data_to_write_to_remote.len() > 0 {
-            self.send_buf_data(event_loop, false)
-        } else {
-            ProcessResult::Success
-        };
-
-        if self.data_to_write_to_remote.len() == 0 {
-            self.change_to_readable(event_loop, false);
-        }
-
-        result
+        self.on_write(event_loop, false)
     }
 
     fn create_connection(&mut self, ip: &str, port: u16) -> Result<TcpStream> {
@@ -529,18 +505,16 @@ impl TCPProcessor {
                     sock
                 })
             }
-            Err(e) => {
-                Err(Error::new(ErrorKind::InvalidData, e))
-            }
+            Err(e) => Err(Error::new(ErrorKind::InvalidData, e)),
         }
     }
 }
 
 impl Caller for TCPProcessor {
     fn handle_dns_resolved(&mut self, event_loop: &mut EventLoop<Relay>, hostname_ip: Option<(String, String)>, errmsg: Option<&str>) -> ProcessResult<Vec<Token>> {
-        debug!("handle_dns_resolved: {:?}", hostname_ip);
-        if errmsg.is_some() {
-            info!("resolve DNS error: {}", errmsg.unwrap());
+        trace!("handle_dns_resolved: {:?}", hostname_ip);
+        if let Some(errmsg) = errmsg {
+            error!("resolve DNS error: {}", errmsg);
             return need_destroy!(self);
         }
 
@@ -559,37 +533,35 @@ impl Caller for TCPProcessor {
 
                 self.remote_sock = match self.create_connection(&ip, port) {
                     Ok(sock) => {
-                        debug!("created remote socket to {}:{}", ip, port);
+                        info!("connected {} to {}:{}", address2str(&self.client_address), ip, port);
                         Some(sock)
                     }
                     Err(e) => {
-                        error!("create remote socket for connecting to {} failed: {}", ip, e);
+                        error!("connected {} to {}:{} failed: {}", address2str(&self.client_address), ip, port, e);
                         return need_destroy!(self);
                     }
                 };
 
                 let token = self.remote_token;
-                self.add_to_loop(token.unwrap(),
-                                 event_loop,
-                                 get_basic_events() | EventSet::writable() | EventSet::hup(),
-                                 false);
-            }
-            _ => {
-                return need_destroy!(self);
-            }
-        }
+                let events = get_basic_events() | EventSet::writable() | EventSet::hup();
+                self.add_to_loop(token.unwrap(), event_loop, events, false);
 
-        ProcessResult::Success
+                ProcessResult::Success
+            }
+            _ => need_destroy!(self),
+        }
     }
 }
 
 impl Processor for TCPProcessor {
     fn process(&mut self, event_loop: &mut EventLoop<Relay>, token: Token, events: EventSet) -> ProcessResult<Vec<Token>> {
-        debug!("current handle stage is {:?}", self.stage);
+        trace!("current handle stage is {:?}", self.stage);
         if Some(token) == self.local_token {
             debug!("got events for local socket {:?}: {:?}", token, events);
             if events.is_error() {
-                error!("got events error from local socket on TCPProcessor");
+                if let Some(ref sock) = self.local_sock {
+                    error!("events error on local socket: {:?}", sock.take_socket_error().err());
+                }
                 return need_destroy!(self);
             }
 
@@ -603,7 +575,9 @@ impl Processor for TCPProcessor {
         } else if Some(token) == self.remote_token {
             debug!("got events for remote socket {:?}: {:?}", token, events);
             if events.is_error() {
-                error!("got events error from remote socket on TCPProcessor");
+                if let Some(ref sock) = self.remote_sock {
+                    error!("events error on remote socket: {:?}", sock.take_socket_error().err());
+                }
                 return need_destroy!(self);
             }
 
@@ -620,33 +594,22 @@ impl Processor for TCPProcessor {
     }
 
     fn destroy(&mut self, event_loop: &mut EventLoop<Relay>) {
-        debug!("destroy processor: {:?}, {:?}", self.local_token, self.remote_token);
+        trace!("destroy processor ({:?}, {:?})", self.local_token, self.remote_token);
         self.stage = HandleStage::Destroyed;
 
-        let sock = &self.local_sock.take().unwrap();
-        match event_loop.deregister(sock) {
-            Err(e) => info!("deregister local socket failed: {}", e),
-            _ => {}
-        }
-        // match sock.shutdown(Shutdown::Both) {
-        //     Err(e) => info!("shutdown local socket failed: {}", e),
-        //     _ => {}
-        // }
-
-        if self.remote_sock.is_some() {
-            let sock = &self.remote_sock.take().unwrap();
-            match event_loop.deregister(sock) {
-                Err(e) => info!("deregister remote socket failed: {}", e),
-                _ => {}
+        if let Some(ref sock) = self.local_sock {
+            if let Err(e) = event_loop.deregister(sock) {
+                error!("deregister local socket failed: {}", e);
             }
-            // match sock.shutdown(Shutdown::Both) {
-            //     Err(e) => info!("shutdown remote socket failed: {}", e),
-            //     _ => {}
-            // }
         }
 
-        if self.remote_token.is_some() {
-            let token = self.remote_token.unwrap();
+        if let Some(ref sock) = self.remote_sock {
+            if let Err(e) = event_loop.deregister(sock) {
+                error!("deregister remote socket failed: {}", e);
+            }
+        }
+
+        if let Some(token) = self.remote_token {
             self.dns_resolver.borrow_mut().remove_caller(token);
         }
     }

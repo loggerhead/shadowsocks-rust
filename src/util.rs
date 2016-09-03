@@ -15,7 +15,6 @@ use mio::{Token, EventSet};
 use env_logger::LogBuilder;
 use log::{LogRecord, LogLevelFilter};
 
-
 pub fn init_env_logger() {
     let format = |record: &LogRecord| {
         let dt = Local::now().format("%Y-%m-%d %H:%M:%S%.3f").to_string();
@@ -34,12 +33,8 @@ pub fn init_env_logger() {
 
 pub fn address2str(address: &Option<(String, u16)>) -> String {
     match address {
-        &Some((ref host, port)) => {
-            format!("{}:{}", host, port)
-        }
-        _ => {
-            format!("None")
-        }
+        &Some((ref host, port)) => format!("{}:{}", host, port),
+        _ => format!("None"),
     }
 }
 
@@ -74,9 +69,7 @@ pub struct Dict<K, V> {
     map: HashMap<K, V, BuildHasherDefault<FnvHasher>>
 }
 
-impl<K, V> Dict<K, V>
-    where K: Hash + Eq
-{
+impl<K, V> Dict<K, V> where K: Hash + Eq {
     pub fn new() -> Self {
         Dict {
             map: HashMap::default()
@@ -104,9 +97,7 @@ impl<K, V> Dict<K, V>
     }
 }
 
-impl<K, V> Index<K> for Dict<K, V>
-    where K: Hash + Eq
-{
+impl<K, V> Index<K> for Dict<K, V> where K: Hash + Eq {
     type Output = V;
 
     fn index(&self, index: K) -> &V {
@@ -121,6 +112,7 @@ impl<K, V> IndexMut<K> for Dict<K, V>
         self.get_mut(&index).expect("invalid index")
     }
 }
+
 
 const MAX_RAND_RETRY_TIMES: usize = 1000;
 

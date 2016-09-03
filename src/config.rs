@@ -6,7 +6,6 @@ use std::io::prelude::*;
 
 use toml::{Parser, Value, Table};
 
-
 #[derive(Debug)]
 pub struct ConfigError {
     desc: String,
@@ -32,6 +31,7 @@ impl Error for ConfigError {
     }
 }
 
+
 macro_rules! set_default {
     ($conf:expr, $key:expr, $value:expr, str) => (
         let v = Value::String($value.to_string());
@@ -53,12 +53,9 @@ pub fn get_config(config_path: &str) -> Result<Table, ConfigError> {
     };
 
     let mut input = String::new();
-    match f.read_to_string(&mut input) {
-        Ok(_) => {},
-        Err(_) => {
-            let errmsg = format!("config file {} is not valid UTF-8 file", config_path);
-            return Err(ConfigError::new(errmsg));
-        }
+    if let Err(_) = f.read_to_string(&mut input) {
+        let errmsg = format!("config file {} is not valid UTF-8 file", config_path);
+        return Err(ConfigError::new(errmsg));
     }
 
     let mut parser = Parser::new(&input);
@@ -68,7 +65,6 @@ pub fn get_config(config_path: &str) -> Result<Table, ConfigError> {
             set_default!(config, "local_port", 8088, i64);
             set_default!(config, "timeout", 300, i64);
             set_default!(config, "method", "aes-256-cfb", str);
-
             Ok(config)
         }
         None => {
