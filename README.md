@@ -1,6 +1,7 @@
-* invalid index 问题可能是因为 deregister 后仍然会收到 events
+* review `tcp_processor`, events
 * 检查时不时高 CPU 占用率的原因（可能是改成 writable 的原因）
 * review `unwrap`、`TODO`、`.ok()`、`unimplemented`、`unreachable`
+* invalid index 问题可能是因为 deregister 后仍然会收到 events
 
 
 * 分析日志

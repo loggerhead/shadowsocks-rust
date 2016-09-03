@@ -560,7 +560,7 @@ impl Processor for TCPProcessor {
             debug!("got events for local socket {:?}: {:?}", token, events);
             if events.is_error() {
                 if let Some(ref sock) = self.local_sock {
-                    error!("events error on local socket: {:?}", sock.take_socket_error().err());
+                    error!("events error on local socket: {:?}", sock.take_socket_error().unwrap_err());
                 }
                 return need_destroy!(self);
             }
@@ -576,7 +576,7 @@ impl Processor for TCPProcessor {
             debug!("got events for remote socket {:?}: {:?}", token, events);
             if events.is_error() {
                 if let Some(ref sock) = self.remote_sock {
-                    error!("events error on remote socket: {:?}", sock.take_socket_error().err());
+                    error!("events error on remote socket: {:?}", sock.take_socket_error().unwrap_err());
                 }
                 return need_destroy!(self);
             }
