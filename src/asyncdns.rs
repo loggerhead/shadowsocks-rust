@@ -1,8 +1,8 @@
 use std::fmt;
 use std::str;
 use std::rc::Rc;
-use std::cell::RefCell;
 use std::io::Cursor;
+use std::cell::RefCell;
 use std::net::SocketAddr;
 
 use rand;
@@ -11,7 +11,7 @@ use mio::udp::UdpSocket;
 use mio::{Token, EventSet, EventLoop, PollOpt};
 
 use relay::{Relay, Processor, ProcessResult};
-use util::{handle_every_line, Dict, slice2str, slice2string};
+use util::{Set, handle_every_line, Dict, slice2str, slice2string};
 use network::{is_ip, slice2ip4, slice2ip6, str2addr4, NetworkWriteBytes, NetworkReadBytes};
 
 // All communications inside of the domain protocol are carried in a single
@@ -64,20 +64,10 @@ type ResponseRecord = (String, String, u16, u16);
 type ResponseHeader = (u16, u16, u16, u16, u16, u16, u16, u16, u16);
 pub type Callback = FnMut(&mut Caller, Option<(String, String)>, Option<&str>);
 
-macro_rules! handle_dns_resolved {
-    ($caller:expr, $event_loop:expr, $hostname_ip:expr, $errmsg:expr) => (
-        // we need this unsafe block because the caller (tcp_processor) is already borrowed in relay::ready
-        unsafe {
-            let caller = &mut *($caller).as_ptr();
-            caller.handle_dns_resolved($event_loop, $hostname_ip, $errmsg);
-        }
-    );
-}
-
 pub trait Caller {
-    fn handle_dns_resolved(&mut self, event_loop: &mut EventLoop<Relay>, Option<(String, String)>, Option<&str>) -> ProcessResult<Vec<Token>>;
+    fn get_id(&self) -> Token;
+    fn handle_dns_resolved(&mut self, event_loop: &mut EventLoop<Relay>, Option<(String, String)>, Option<String>) -> ProcessResult<Vec<Token>>;
 }
-
 
 struct DNSResponse {
     hostname: String,
@@ -114,10 +104,11 @@ pub struct DNSResolver {
     cache: Dict<String, String>,
     callers: Dict<Token, Rc<RefCell<Caller>>>,
     hostname_status: Dict<String, HostnameStatus>,
-    hostname_to_caller: Dict<String, Vec<Rc<RefCell<Caller>>>>,
+    token_to_hostname: Dict<Token, String>,
+    hostname_to_tokens: Dict<String, Set<Token>>,
     sock: Option<UdpSocket>,
     servers: Vec<String>,
-    qtypes: Vec<u16>,
+        qtypes: Vec<u16>,
 }
 
 // TODO: add LRU `self.cache` to cache query result, see https://github.com/contain-rs/lru-cache
@@ -140,18 +131,28 @@ impl DNSResolver {
             cache: Dict::new(),
             callers: Dict::new(),
             hostname_status: Dict::new(),
-            hostname_to_caller: Dict::new(),
+            token_to_hostname: Dict::new(),
+            hostname_to_tokens: Dict::new(),
             sock: UdpSocket::v4().ok(),
             qtypes: qtypes,
         }
     }
 
-    pub fn add_caller(&mut self, token: Token, caller: Rc<RefCell<Caller>>) {
+    pub fn add_caller(&mut self, caller: Rc<RefCell<Caller>>) {
+        let token = caller.borrow().get_id();
         self.callers.put(token, caller);
     }
 
-    pub fn remove_caller(&mut self, token: Token) -> Option<Rc<RefCell<Caller>>> {
-        self.callers.del(&token)
+    pub fn remove_caller(&mut self, token: Token) -> bool {
+        if let Some(hostname) = self.token_to_hostname.del(&token) {
+            self.hostname_to_tokens.get_mut(&hostname).map(|tokens| tokens.del(&token));
+            if self.hostname_to_tokens.get(&hostname).unwrap().is_empty() {
+                self.hostname_to_tokens.del(&hostname);
+                self.hostname_status.del(&hostname);
+            }
+        }
+
+        self.callers.del(&token).is_some()
     }
 
     fn send_request(&self, hostname: String, qtype: u16) {
@@ -172,56 +173,52 @@ impl DNSResolver {
         }
     }
 
-    pub fn resolve(&mut self, event_loop: &mut EventLoop<Relay>, hostname: String, token: Token) {
-        if let Some(caller) = self.callers.get(&token) {
-            if hostname.len() == 0 {
-                handle_dns_resolved!(caller, event_loop, None, Some("empty hostname"));
-            } else if is_ip(&hostname) {
-                handle_dns_resolved!(caller, event_loop, Some((hostname.clone(), hostname)), None);
-            } else if self.hosts.has(&hostname) {
-                let ip = self.hosts.get(&hostname).unwrap().clone();
-                handle_dns_resolved!(caller, event_loop, Some((hostname, ip)), None);
-            } else if self.cache.has(&hostname) {
-                let ip = self.cache.get(&hostname).unwrap().clone();
-                handle_dns_resolved!(caller, event_loop, Some((hostname, ip)), None);
-            } else if !is_valid_hostname(&hostname) {
-                let errmsg = format!("invalid hostname: {}", hostname);
-                handle_dns_resolved!(caller, event_loop, None, Some(&errmsg));
-            } else {
-                if self.hostname_to_caller.has(&hostname) {
-                    let callers = self.hostname_to_caller.get_mut(&hostname).unwrap();
-                    callers.push(caller.clone());
-                } else {
-                    self.hostname_status.put(hostname.clone(), HostnameStatus::First);
-                    self.hostname_to_caller.put(hostname.clone(), vec![caller.clone()]);
-                }
-
-                self.send_request(hostname, self.qtypes[0]);
-            }
+    pub fn resolve(&mut self, token: Token, hostname: String) -> (Option<(String, String)>, Option<String>) {
+        if hostname.len() == 0 {
+            (None, Some("empty hostname".to_string()))
+        } else if is_ip(&hostname) {
+            (Some((hostname.clone(), hostname.clone())), None)
+        } else if self.hosts.has(&hostname) {
+            let ip = self.hosts.get(&hostname).unwrap().clone();
+            (Some((hostname.clone(), ip)), None)
+        // TODO: finish cache
+        } else if self.cache.has(&hostname) {
+            let ip = self.cache.get(&hostname).unwrap().clone();
+            (Some((hostname.clone(), ip)), None)
+        } else if !is_valid_hostname(&hostname) {
+            let errmsg = format!("invalid hostname: {}", hostname);
+            (None, Some(errmsg))
         } else {
-            error!("{:?} not in DNS callers", token);
+            // if this is the first time that any caller query the hostname
+            if !self.hostname_to_tokens.has(&hostname) {
+                self.hostname_status.put(hostname.clone(), HostnameStatus::First);
+                self.hostname_to_tokens.put(hostname.clone(), Set::new());
+            }
+            self.hostname_to_tokens[hostname.clone()].add(token);
+            self.token_to_hostname.put(token, hostname.clone());
+
+            self.send_request(hostname, self.qtypes[0]);
+            (None, None)
         }
     }
 
     fn call_callback(&mut self, event_loop: &mut EventLoop<Relay>, hostname: String, ip: String) {
-        if let Some(callers) = self.hostname_to_caller.get_mut(&hostname) {
-            for caller in callers.iter_mut() {
+        if let Some(tokens) = self.hostname_to_tokens.del(&hostname) {
+            for token in tokens.iter() {
+                self.token_to_hostname.del(&token);
+
                 let hostname_ip = Some((hostname.clone(), ip.clone()));
+                let caller = self.callers.get_mut(token).unwrap();
                 if ip.len() > 0 {
-                    handle_dns_resolved!(caller, event_loop, hostname_ip, None);
+                    caller.borrow_mut().handle_dns_resolved(event_loop, hostname_ip, None);
                 } else {
                     let errmsg = format!("unknown hostname {}", hostname.clone());
-                    handle_dns_resolved!(caller, event_loop, hostname_ip, Some(errmsg.as_str()));
+                    caller.borrow_mut().handle_dns_resolved(event_loop, hostname_ip, Some(errmsg));
                 }
             }
         }
 
-        if self.hostname_to_caller.has(&hostname) {
-            self.hostname_to_caller.del(&hostname);
-        }
-        if self.hostname_status.has(&hostname) {
-            self.hostname_status.del(&hostname);
-        }
+        self.hostname_status.del(&hostname);
     }
 
     fn handle_data(&mut self, event_loop: &mut EventLoop<Relay>, data: &[u8]) {
@@ -243,7 +240,7 @@ impl DNSResolver {
                 };
 
                 if ip.len() == 0 && hostname_status == 1 {
-                    self.hostname_status[hostname.clone()] = HostnameStatus::Second;
+                    self.hostname_status.put(hostname.clone(), HostnameStatus::Second);
                     self.send_request(hostname, self.qtypes[1]);
                 } else if ip.len() > 0 {
                     self.call_callback(event_loop, hostname, ip);
@@ -330,14 +327,6 @@ impl Processor for DNSResolver {
         }
 
         ProcessResult::Success
-    }
-
-    fn destroy(&mut self, _event_loop: &mut EventLoop<Relay>) {
-        unreachable!();
-    }
-
-    fn is_destroyed(&self) -> bool {
-        false
     }
 }
 

@@ -22,10 +22,17 @@ pub enum ProcessResult<T> {
     Failed(T),
 }
 
+#[allow(unused_variables)]
 pub trait Processor {
     fn process(&mut self, event_loop: &mut EventLoop<Relay>, token: Token, events: EventSet) -> ProcessResult<Vec<Token>>;
-    fn destroy(&mut self, event_loop: &mut EventLoop<Relay>);
-    fn is_destroyed(&self) -> bool;
+
+    fn destroy(&mut self, event_loop: &mut EventLoop<Relay>) {
+        unimplemented!();
+    }
+
+    fn is_destroyed(&self) -> bool {
+        unimplemented!();
+    }
 }
 
 pub struct Relay {
@@ -105,13 +112,17 @@ impl Handler for Relay {
                 self.dns_resolver.borrow_mut().process(event_loop, token, events)
             }
             token @ Token(_) => {
-                match self.processors.get(token) {
-                    Some(processor) => processor.borrow_mut().process(event_loop, token, events),
+                let processor = self.processors.get(token);
+                match processor {
+                    Some(processor) => {
+                        processor.borrow_mut().process(event_loop, token, events)
+                    }
                     _ => {
-                        warn!("got events {:?} after processor {:?} destroyed", events, token);
+                        debug!("got events {:?} for destroyed processor {:?}", events, token);
                         return;
                     }
                 }
+
             }
         };
 
@@ -154,9 +165,8 @@ impl Processor for Relay {
                         (Some(local_token), Some(remote_token)) => {
                             tcp_processor.borrow_mut().set_local_token(local_token);
                             tcp_processor.borrow_mut().set_remote_token(remote_token);
-                            if tcp_processor.borrow_mut().register(event_loop, true) {
-                                self.dns_resolver.borrow_mut().add_caller(remote_token, tcp_processor);
-                            } else {
+                            self.dns_resolver.borrow_mut().add_caller(tcp_processor.clone());
+                            if !tcp_processor.borrow_mut().register(event_loop, true) {
                                 result = ProcessResult::Failed(vec![local_token, remote_token]);
                             }
                         }
@@ -187,13 +197,5 @@ impl Processor for Relay {
         }
 
         result
-    }
-
-    fn destroy(&mut self, _event_loop: &mut EventLoop<Relay>) {
-        unreachable!();
-    }
-
-    fn is_destroyed(&self) -> bool {
-        false
     }
 }

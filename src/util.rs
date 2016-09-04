@@ -5,6 +5,7 @@ use std::io::BufReader;
 use std::io::prelude::*;
 use std::iter::FromIterator;
 use std::ops::{Index, IndexMut};
+use std::collections::hash_set::Iter;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, BuildHasherDefault};
 
@@ -85,7 +86,7 @@ impl<K, V> Dict<K, V> where K: Hash + Eq {
     }
 
     pub fn has(&self, k: &K) -> bool {
-        self.get(k).is_some()
+        self.map.contains_key(k)
     }
 
     pub fn del(&mut self, k: &K) -> Option<V> {
@@ -101,11 +102,52 @@ impl<K, V> Index<K> for Dict<K, V> where K: Hash + Eq {
     }
 }
 
-impl<K, V> IndexMut<K> for Dict<K, V>
-    where K: Hash + Eq
-{
+impl<K, V> IndexMut<K> for Dict<K, V> where K: Hash + Eq {
     fn index_mut(&mut self, index: K) -> &mut V {
         self.get_mut(&index).expect("invalid index")
+    }
+}
+
+
+pub struct Set<T> {
+    items: HashSet<T, BuildHasherDefault<FnvHasher>>,
+}
+
+impl<T> Set<T> where T: Hash + Eq {
+    pub fn new() -> Self {
+        Set {
+            items: HashSet::default(),
+        }
+    }
+
+    pub fn from_vec(items: Vec<T>) -> Self {
+        Set {
+            items: HashSet::from_iter(items),
+        }
+    }
+
+    pub fn has(&self, t: &T) -> bool {
+        self.items.contains(t)
+    }
+
+    pub fn add(&mut self, t: T) {
+        self.items.insert(t);
+    }
+
+    pub fn del(&mut self, t: &T) -> bool {
+        self.items.remove(t)
+    }
+
+    pub fn iter(&self) -> Iter<T> {
+        self.items.iter()
+    }
+
+    pub fn to_vec(self) -> Vec<T> {
+        self.items.into_iter().collect()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
     }
 }
 
@@ -114,22 +156,26 @@ const MAX_RAND_RETRY_TIMES: usize = 1000;
 
 pub struct Holder<T> {
     items: Dict<Token, T>,
-    exclusions: HashSet<Token, BuildHasherDefault<FnvHasher>>,
+    exclusions: Set<Token>,
 }
 
 impl<T> Holder<T> {
     pub fn new() -> Holder<T> {
         Holder {
             items: Dict::new(),
-            exclusions: HashSet::default(),
+            exclusions: Set::new(),
         }
     }
 
     pub fn new_exclude_from(exclusions: Vec<Token>) -> Holder<T> {
         Holder {
             items: Dict::new(),
-            exclusions: HashSet::from_iter(exclusions),
+            exclusions: Set::from_vec(exclusions),
         }
+    }
+
+    pub fn has(&self, token: Token) -> bool {
+        self.items.has(&token)
     }
 
     pub fn get(&self, token: Token) -> Option<&T> {
@@ -143,7 +189,7 @@ impl<T> Holder<T> {
     pub fn add(&mut self, v: T) -> Option<Token> {
         let mut i = 0;
         let mut token = Token(random::<usize>());
-        while self.exclusions.contains(&token) {
+        while self.exclusions.has(&token) {
             token = Token(random::<usize>());
 
             i += 1;
@@ -153,12 +199,12 @@ impl<T> Holder<T> {
         }
 
         self.items.put(token, v);
-        self.exclusions.insert(token);
+        self.exclusions.add(token);
         Some(token)
     }
 
     pub fn del(&mut self, token: Token) -> Option<T> {
-        self.exclusions.remove(&token);
+        self.exclusions.del(&token);
         self.items.del(&token)
     }
 }
