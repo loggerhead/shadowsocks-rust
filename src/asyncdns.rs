@@ -7,11 +7,11 @@ use std::net::SocketAddr;
 
 use rand;
 use regex::Regex;
-use mio::{Token, EventSet, EventLoop, PollOpt};
 use mio::udp::UdpSocket;
+use mio::{Token, EventSet, EventLoop, PollOpt};
 
 use relay::{Relay, Processor, ProcessResult};
-use util::{get_basic_events, handle_every_line, Dict, slice2str, slice2string};
+use util::{handle_every_line, Dict, slice2str, slice2string};
 use network::{is_ip, slice2ip4, slice2ip6, str2addr4, NetworkWriteBytes, NetworkReadBytes};
 
 // All communications inside of the domain protocol are carried in a single
@@ -260,16 +260,21 @@ impl DNSResolver {
         }
     }
 
-    pub fn add_to_loop(&mut self, token: Token, event_loop: &mut EventLoop<Relay>, events: EventSet) -> bool {
-        self.token = Some(token);
-        if self.sock.is_none() {
-            self.sock = UdpSocket::v4().ok();
-        }
+    fn do_register(&mut self, event_loop: &mut EventLoop<Relay>, is_reregister: bool) -> bool {
+        if let Some(ref sock) = self.sock {
+            let token = self.token.unwrap();
+            let events = EventSet::readable();
+            let pollopts = PollOpt::edge() | PollOpt::oneshot();
 
-        if let Some(ref socket) = self.sock {
-            match event_loop.register(socket, token, events, PollOpt::level()) {
+            let register_result = if is_reregister {
+                event_loop.reregister(sock, token, events, pollopts)
+            } else {
+                event_loop.register(sock, token, events, pollopts)
+            };
+
+            match register_result {
                 Err(e) => {
-                    error!("add DNSResolver to event_loop failed because {}", e);
+                    error!("register DNS resolver to event_loop failed: {}", e);
                     false
                 }
                 _ => true,
@@ -279,21 +284,25 @@ impl DNSResolver {
             false
         }
     }
+
+    pub fn register(&mut self, event_loop: &mut EventLoop<Relay>, token: Token) -> bool {
+        self.token = Some(token);
+        self.sock = UdpSocket::v4().ok();
+        self.do_register(event_loop, false)
+    }
+
+    pub fn reregister(&mut self, event_loop: &mut EventLoop<Relay>) -> bool {
+        self.do_register(event_loop, true)
+    }
 }
 
 impl Processor for DNSResolver {
     fn process(&mut self, event_loop: &mut EventLoop<Relay>, token: Token, events: EventSet) -> ProcessResult<Vec<Token>> {
         if events.is_error() {
             error!("events error on DNS socket");
-            let sock = self.sock.take().unwrap();
-            match event_loop.deregister(&sock) {
-                Ok(_) => {
-                    self.add_to_loop(token, event_loop, get_basic_events());
-                }
-                Err(e) => {
-                    error!("deregister DNS socket failed: {}", e);
-                }
-            }
+            self.sock.take();
+            // TODO: maybe should change to reregister
+            self.register(event_loop, token);
         } else {
             let mut buf = [0u8; 1024];
             let received = match self.sock {
@@ -316,6 +325,8 @@ impl Processor for DNSResolver {
             if let Some(data) = received {
                 self.handle_data(event_loop, data);
             }
+
+            self.reregister(event_loop);
         }
 
         ProcessResult::Success

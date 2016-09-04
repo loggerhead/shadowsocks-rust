@@ -8,9 +8,9 @@ use mio::tcp::{TcpListener};
 use toml::Table;
 
 use config;
+use util::Holder;
 use network::str2addr4;
 use asyncdns::DNSResolver;
-use util::{get_basic_events, Holder};
 use tcp_processor::TCPProcessor;
 
 const RELAY_TOKEN: Token = Token(0);
@@ -73,22 +73,18 @@ impl Relay {
         self.processors.del(token)
     }
 
-    fn add_to_loop(&mut self, token: Token, event_loop: &mut EventLoop<Relay>, events: EventSet) -> bool {
-        match event_loop.register(&self.tcp_listener, token, events, PollOpt::edge()) {
-            Ok(_) => true,
-            _ => false
-        }
-    }
-
     pub fn run(&mut self) {
         let mut event_loop = EventLoop::new().unwrap();
 
-        if !self.add_to_loop(RELAY_TOKEN, &mut event_loop, get_basic_events()) {
-            error!("failed to add relay to event loop");
+        if let Err(e) = event_loop.register(&self.tcp_listener,
+                                            RELAY_TOKEN,
+                                            EventSet::readable(),
+                                            PollOpt::edge() | PollOpt::oneshot()) {
+            error!("failed to register relay: {}", e);
             exit(1);
         }
-        if !self.dns_resolver.borrow_mut().add_to_loop(DNS_RESOLVER_TOKEN, &mut event_loop, get_basic_events()) {
-            error!("failed to add DNS resolver to event loop");
+        if !self.dns_resolver.borrow_mut().register(&mut event_loop, DNS_RESOLVER_TOKEN) {
+            error!("failed to register DNS resolver");
             exit(1);
         }
 
@@ -97,7 +93,7 @@ impl Relay {
 }
 
 impl Handler for Relay {
-    type Timeout = i32;
+    type Timeout = ();
     type Message = ();
 
     fn ready(&mut self, event_loop: &mut EventLoop<Relay>, token: Token, events: EventSet) {
@@ -141,43 +137,56 @@ impl Handler for Relay {
 
 impl Processor for Relay {
     fn process(&mut self, event_loop: &mut EventLoop<Relay>, _token: Token, events: EventSet) -> ProcessResult<Vec<Token>> {
+        let mut result = ProcessResult::Success;
+
         if events.is_error() {
             error!("events error on relay: {:?}", self.tcp_listener.take_socket_error().unwrap_err());
-            return ProcessResult::Success;
-        }
+        } else {
+            match self.tcp_listener.accept() {
+                Ok(Some((conn, _addr))) => {
+                    info!("create processor for {}", _addr);
+                    let tcp_processor = TCPProcessor::new(self.conf.clone(), conn, self.dns_resolver.clone(), self.is_client);
+                    let tcp_processor = Rc::new(RefCell::new(tcp_processor));
+                    let tokens = (self.add_processor(tcp_processor.clone()), self.add_processor(tcp_processor.clone()));
 
-        match self.tcp_listener.accept() {
-            Ok(Some((conn, _addr))) => {
-                info!("create processor for {}", _addr);
-                let tcp_processor = TCPProcessor::new(self.conf.clone(), conn, self.dns_resolver.clone(), self.is_client);
-                let tcp_processor = Rc::new(RefCell::new(tcp_processor));
-                let mut tokens = vec![];
-
-                // register local socket to event loop
-                if let Some(token) = self.add_processor(tcp_processor.clone()) {
-                    tokens.push(token);
-                    if !tcp_processor.borrow_mut().add_to_loop(token, event_loop, get_basic_events() | EventSet::hup(), true) {
-                       return ProcessResult::Failed(tokens);
+                    // register local socket to event loop
+                    match tokens {
+                        (Some(local_token), Some(remote_token)) => {
+                            tcp_processor.borrow_mut().set_local_token(local_token);
+                            tcp_processor.borrow_mut().set_remote_token(remote_token);
+                            if tcp_processor.borrow_mut().register(event_loop, true) {
+                                self.dns_resolver.borrow_mut().add_caller(remote_token, tcp_processor);
+                            } else {
+                                result = ProcessResult::Failed(vec![local_token, remote_token]);
+                            }
+                        }
+                        _ => {
+                            error!("cannot generate tokens for TCP processor");
+                            let mut tmp = vec![];
+                            if let Some(token) = tokens.0 {
+                                tmp.push(token);
+                            }
+                            if let Some(token) = tokens.1 {
+                                tmp.push(token);
+                            }
+                            result = ProcessResult::Failed(tmp);
+                        }
                     }
                 }
-
-                // register remote socket to event loop
-                if let Some(token) = self.add_processor(tcp_processor.clone()) {
-                    tokens.push(token);
-                    tcp_processor.borrow_mut().set_remote_token(token);
-                    self.dns_resolver.borrow_mut().add_caller(token, tcp_processor);
-                }
-
-                if tokens.len() < 2 {
-                    error!("cannot generate tokens for TCP processor");
-                    return ProcessResult::Failed(tokens);
-                }
+                Ok(None) => { }
+                Err(e) => error!("accept TCP connection failed: {}", e),
             }
-            Ok(None) => { }
-            Err(e) => error!("accept TCP connection failed: {}", e),
         }
 
-        ProcessResult::Success
+        if let Err(e) = event_loop.reregister(&self.tcp_listener,
+                                              RELAY_TOKEN,
+                                              EventSet::readable(),
+                                              PollOpt::edge() | PollOpt::oneshot()) {
+            error!("failed to reregister relay: {}", e);
+            exit(1);
+        }
+
+        result
     }
 
     fn destroy(&mut self, _event_loop: &mut EventLoop<Relay>) {

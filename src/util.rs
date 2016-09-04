@@ -8,10 +8,10 @@ use std::ops::{Index, IndexMut};
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, BuildHasherDefault};
 
+use mio::Token;
 use rand::random;
 use fnv::FnvHasher;
 use chrono::{Local};
-use mio::{Token, EventSet};
 use env_logger::LogBuilder;
 use log::{LogRecord, LogLevelFilter};
 
@@ -36,10 +36,6 @@ pub fn address2str(address: &Option<(String, u16)>) -> String {
         &Some((ref host, port)) => format!("{}:{}", host, port),
         _ => format!("None"),
     }
-}
-
-pub fn get_basic_events() -> EventSet {
-    EventSet::readable() | EventSet::error()
 }
 
 pub fn slice2str(data: &[u8]) -> Option<&str> {
@@ -158,13 +154,11 @@ impl<T> Holder<T> {
 
         self.items.put(token, v);
         self.exclusions.insert(token);
-
         Some(token)
     }
 
     pub fn del(&mut self, token: Token) -> Option<T> {
         self.exclusions.remove(&token);
-
         self.items.del(&token)
     }
 }
