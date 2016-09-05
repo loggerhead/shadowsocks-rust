@@ -381,22 +381,23 @@ impl TCPProcessor {
             Some((_addr_type, remote_address, remote_port, header_length)) => {
                 self.stage = HandleStage::DNS;
                 self.server_address = Some((remote_address.clone(), remote_port));
-                info!("connecting {} from {}-{}", address2str(&self.server_address),
-                                                  address2str(&self.client_address),
-                                                  processor2str!(self));
 
-                let server_address = if self.is_client {
+                if self.is_client {
                     let response = &[0x05, 0x00, 0x00, 0x01,
                                      0x00, 0x00, 0x00, 0x00,
                                      0x10, 0x10];
                     try_process!(self.write_to_sock(response, true));
                     self.data_to_write_to_remote.extend_from_slice(data);
-                    // TODO: change to configuable
-                    "127.0.0.1".to_string()
                 } else {
                     if data.len() > header_length {
                         self.data_to_write_to_remote.extend_from_slice(&data[header_length..]);
                     }
+                };
+
+                // TODO: change to configuable
+                let server_address = if self.is_client {
+                    "127.0.0.1".to_string()
+                } else {
                     remote_address
                 };
 
