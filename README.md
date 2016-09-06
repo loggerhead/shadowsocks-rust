@@ -1,6 +1,6 @@
 #TODO
 
-- [ ] add cache for DNS
+- [x] add cache for DNS
 - [ ] review `tcp_processor`
 - [ ] review `unwrap`, `.ok()`、`unimplemented`, `unreachable` and remove unnecessary `clone`
 - [ ] handle the situation that client timeout
