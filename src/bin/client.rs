@@ -13,7 +13,7 @@ fn main() {
     init_env_logger();
     // TODO: parse config from command line
     // https://crates.io/crates/clap
-    let conf = config::get_config("tests/config/local_conf.toml").unwrap_or_else(|e| {
+    let conf = config::get_config("tests/config/client_conf.toml").unwrap_or_else(|e| {
         error!("config error: {}", e);
         exit(1);
     });
