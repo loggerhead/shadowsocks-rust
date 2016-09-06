@@ -7,6 +7,7 @@ use std::net::SocketAddr;
 
 use rand;
 use regex::Regex;
+use lru_cache::LruCache;
 use mio::udp::UdpSocket;
 use mio::{Token, EventSet, EventLoop, PollOpt};
 
@@ -66,7 +67,9 @@ pub type Callback = FnMut(&mut Caller, Option<(String, String)>, Option<&str>);
 
 pub trait Caller {
     fn get_id(&self) -> Token;
-    fn handle_dns_resolved(&mut self, event_loop: &mut EventLoop<Relay>, Option<(String, String)>, Option<String>) -> ProcessResult<Vec<Token>>;
+    fn handle_dns_resolved(&mut self, event_loop: &mut EventLoop<Relay>,
+                           Option<(String, String)>, Option<String>)
+                           -> ProcessResult<Vec<Token>>;
 }
 
 struct DNSResponse {
@@ -101,17 +104,16 @@ enum HostnameStatus {
 pub struct DNSResolver {
     token: Option<Token>,
     hosts: Dict<String, String>,
-    cache: Dict<String, String>,
+    cache: LruCache<String, String>,
     callers: Dict<Token, Rc<RefCell<Caller>>>,
     hostname_status: Dict<String, HostnameStatus>,
     token_to_hostname: Dict<Token, String>,
     hostname_to_tokens: Dict<String, Set<Token>>,
     sock: Option<UdpSocket>,
     servers: Vec<String>,
-        qtypes: Vec<u16>,
+    qtypes: Vec<u16>,
 }
 
-// TODO: add LRU `self.cache` to cache query result, see https://github.com/contain-rs/lru-cache
 impl DNSResolver {
     pub fn new(server_list: Option<Vec<String>>, prefer_ipv6: Option<bool>) -> DNSResolver {
         let servers = match server_list {
@@ -128,7 +130,7 @@ impl DNSResolver {
             token: None,
             servers: servers,
             hosts: hosts,
-            cache: Dict::new(),
+            cache: LruCache::new(4096),
             callers: Dict::new(),
             hostname_status: Dict::new(),
             token_to_hostname: Dict::new(),
@@ -181,10 +183,9 @@ impl DNSResolver {
         } else if self.hosts.has(&hostname) {
             let ip = self.hosts.get(&hostname).unwrap().clone();
             (Some((hostname.clone(), ip)), None)
-        // TODO: finish cache
-        } else if self.cache.has(&hostname) {
-            let ip = self.cache.get(&hostname).unwrap().clone();
-            (Some((hostname.clone(), ip)), None)
+        } else if self.cache.contains_key(&hostname) {
+            let ip = self.cache.get_mut(&hostname).unwrap();
+            (Some((hostname.clone(), ip.clone())), None)
         } else if !is_valid_hostname(&hostname) {
             let errmsg = format!("invalid hostname: {}", hostname);
             (None, Some(errmsg))
@@ -243,6 +244,7 @@ impl DNSResolver {
                     self.hostname_status.put(hostname.clone(), HostnameStatus::Second);
                     self.send_request(hostname, self.qtypes[1]);
                 } else if ip.len() > 0 {
+                    self.cache.insert(hostname.clone(), ip.clone());
                     self.call_callback(event_loop, hostname, ip);
                 } else if hostname_status == 2 {
                     for question in response.questions {
@@ -294,7 +296,10 @@ impl DNSResolver {
 }
 
 impl Processor for DNSResolver {
-    fn process(&mut self, event_loop: &mut EventLoop<Relay>, token: Token, events: EventSet) -> ProcessResult<Vec<Token>> {
+    fn process(&mut self, event_loop: &mut EventLoop<Relay>,
+               token: Token,
+               events: EventSet)
+               -> ProcessResult<Vec<Token>> {
         if events.is_error() {
             error!("events error on DNS socket");
             self.sock.take();

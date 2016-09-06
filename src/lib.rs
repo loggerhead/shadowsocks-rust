@@ -12,6 +12,7 @@ extern crate toml;
 extern crate regex;
 extern crate crypto;
 extern crate chrono;
+extern crate lru_cache;
 extern crate byteorder;
 extern crate env_logger;
 

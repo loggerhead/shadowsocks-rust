@@ -94,15 +94,19 @@ macro_rules! try_process {
 macro_rules! processor2str {
     ($this:expr) => (
         {
-            let local_token = $this.local_token.clone().map(|t| t.as_usize()).unwrap_or(0);
-            let remote_token = $this.remote_token.clone().map(|t| t.as_usize()).unwrap_or(0);
+            let local_token = $this.local_token.clone().unwrap().as_usize();
+            let remote_token = $this.remote_token.clone().unwrap().as_usize();
             format!("({}, {})", local_token, remote_token)
         }
     );
 }
 
 impl TCPProcessor {
-    pub fn new(conf: Rc<Table>, local_sock: TcpStream, dns_resolver: Rc<RefCell<DNSResolver>>, is_client: bool) -> TCPProcessor {
+    pub fn new(conf: Rc<Table>,
+               local_sock: TcpStream,
+               dns_resolver: Rc<RefCell<DNSResolver>>,
+               is_client: bool)
+               -> TCPProcessor {
         let encryptor = Encryptor::new(config::get_str(&conf, "password"));
         let stage = if is_client {
             HandleStage::Init
@@ -394,8 +398,8 @@ impl TCPProcessor {
                     }
                 };
 
-                // TODO: change to configuable
                 let server_address = if self.is_client {
+                    // TODO: change to configuable
                     "127.0.0.1".to_string()
                 } else {
                     remote_address
@@ -561,7 +565,10 @@ impl Caller for TCPProcessor {
         self.remote_token.unwrap()
     }
 
-    fn handle_dns_resolved(&mut self, event_loop: &mut EventLoop<Relay>, hostname_ip: Option<(String, String)>, errmsg: Option<String>) -> ProcessResult<Vec<Token>> {
+    fn handle_dns_resolved(&mut self, event_loop: &mut EventLoop<Relay>,
+                           hostname_ip: Option<(String, String)>,
+                           errmsg: Option<String>)
+                           -> ProcessResult<Vec<Token>> {
         trace!("{} handle_dns_resolved: {:?}", processor2str!(self), hostname_ip);
         if let Some(errmsg) = errmsg {
             error!("{} resolve DNS error: {}", processor2str!(self), errmsg);
@@ -604,7 +611,10 @@ impl Caller for TCPProcessor {
 }
 
 impl Processor for TCPProcessor {
-    fn process(&mut self, event_loop: &mut EventLoop<Relay>, token: Token, events: EventSet) -> ProcessResult<Vec<Token>> {
+    fn process(&mut self, event_loop: &mut EventLoop<Relay>,
+               token: Token,
+               events: EventSet)
+               -> ProcessResult<Vec<Token>> {
         trace!("current handle stage of {} is {:?}", processor2str!(self), self.stage);
         if Some(token) == self.local_token {
             if events.is_error() {

@@ -208,22 +208,24 @@ mod test {
 
         macro_rules! test_encryptor {
             ($stream:expr, $encryptor:expr) => (
-                for msg in MESSAGES.iter() {
-                    let encrypted = encrypt!($encryptor, msg.as_bytes());
-                    $stream.write(&encrypted).unwrap();
-                }
-                $stream.shutdown(Shutdown::Write).unwrap();
+                {
+                    for msg in MESSAGES.iter() {
+                        let encrypted = encrypt!($encryptor, msg.as_bytes());
+                        $stream.write(&encrypted).unwrap();
+                    }
+                    $stream.shutdown(Shutdown::Write).unwrap();
 
-                let mut data = vec![];
-                $stream.read_to_end(&mut data).unwrap();
-                let decrypted = decrypt!($encryptor, &data);
+                    let mut data = vec![];
+                    $stream.read_to_end(&mut data).unwrap();
+                    let decrypted = decrypt!($encryptor, &data);
 
-                let mut tmp = vec![];
-                for msg in MESSAGES.iter() {
-                    tmp.extend_from_slice(msg.as_bytes());
+                    let mut tmp = vec![];
+                    for msg in MESSAGES.iter() {
+                        tmp.extend_from_slice(msg.as_bytes());
+                    }
+                    let messages_bytes = &tmp;
+                    assert_eq!(messages_bytes, &decrypted);
                 }
-                let messages_bytes = &tmp;
-                assert_eq!(messages_bytes, &decrypted);
             );
         }
 

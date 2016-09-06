@@ -20,6 +20,10 @@ fn main() {
     start_client("tests/config/local_conf.toml");
     start_server("tests/config/server_conf.toml");
 
+    for _ in 0..10000 {
+
+    }
+
     let threads = URLS.iter().map(|url| {
         thread::spawn(move || {
             let res1 = run_curl(url, None);
@@ -69,11 +73,11 @@ fn start_server(config_path: &str) -> thread::JoinHandle<()> {
 fn run_curl(url: &str, proxy: Option<&str>) -> Output {
     let mut cmd = Command::new("curl");
     cmd.arg(url).arg("-v").arg("-L")
-       .arg("-m").arg("30")
-       .arg("--connect-timeout").arg("20");
+       .arg("-m").arg("15")
+       .arg("--connect-timeout").arg("10");
 
-    if proxy.is_some() {
-        cmd.arg("--socks5-hostname").arg(proxy.unwrap());
+    if let Some(proxy_address) = proxy {
+        cmd.arg("--socks5-hostname").arg(proxy_address);
     }
 
     cmd.output().expect("failed to execute cmd")
