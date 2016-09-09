@@ -6,7 +6,7 @@
 - [ ] handle the situation that client timeout
 - [ ] find the reason of high CPU (5% ~ 20%)
 - [ ] handle DNS error properly (e.g. remove caller or call `resolve` again)
-- [ ] check if there exists `cannot decrypt` log
+- [x] check if there exists `cannot decrypt` log
 - [ ] finish all TODO list
 
 #Test

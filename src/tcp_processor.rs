@@ -1,8 +1,9 @@
 use std::rc::Rc;
 use std::cell::RefCell;
-use std::io::{Read, Write, Result, Error, ErrorKind};
+use std::io::{Result, Error, ErrorKind};
 
 use toml::Table;
+use mio::prelude::{TryRead, TryWrite};
 use mio::tcp::{TcpStream, Shutdown};
 use mio::{EventLoop, Token, EventSet, PollOpt};
 
@@ -218,15 +219,16 @@ impl TCPProcessor {
     }
 
     fn receive_data(&mut self, is_local_sock: bool) -> (Option<Vec<u8>>, ProcessResult<Vec<Token>>) {
-        let mut buf = [0u8; BUF_SIZE];
+        let buf = &mut [0u8; BUF_SIZE];
 
         macro_rules! read_data {
             ($sock:expr) => (
                 match $sock {
                     Some(ref mut sock) => {
-                        match sock.read(&mut buf) {
-                            Ok(0) => (true, None),
-                            Ok(len) => {
+                        match sock.try_read(buf) {
+                            Ok(None) => (false, None),
+                            Ok(Some(0)) => (true, None),
+                            Ok(Some(len)) => {
                                 if (self.is_client && !is_local_sock) || (!self.is_client && is_local_sock) {
                                     match self.encryptor.decrypt(&buf[..len]) {
                                         data @ Some(_) => (false, data),
@@ -302,8 +304,9 @@ impl TCPProcessor {
                 ($sock:expr) => (
                     match $sock {
                         Some(ref mut sock) => {
-                            match sock.write(&data) {
-                                Ok(size) => {
+                            match sock.try_write(&data) {
+                                Ok(None) => (false, data.len()),
+                                Ok(Some(size)) => {
                                     if is_local_sock {
                                         debug!("writed {} bytes to local socket of {}", size, processor2str!(self));
                                     } else {
@@ -474,25 +477,20 @@ impl TCPProcessor {
     fn on_local_read(&mut self, event_loop: &mut EventLoop<Relay>) -> ProcessResult<Vec<Token>> {
         match self.receive_data(true) {
             (Some(data), ProcessResult::Success) => {
-                if data.len() > 0 {
-                    match self.stage {
-                        HandleStage::Init => {
-                            self.handle_stage_init(event_loop, &data)
-                        }
-                        HandleStage::Addr => {
-                            self.handle_stage_addr(event_loop, &data)
-                        }
-                        HandleStage::Connecting => {
-                            self.handle_stage_connecting(event_loop, &data)
-                        }
-                        HandleStage::Stream => {
-                            self.handle_stage_stream(event_loop, &data)
-                        }
-                        _ => ProcessResult::Success
+                match self.stage {
+                    HandleStage::Init => {
+                        self.handle_stage_init(event_loop, &data)
                     }
-                } else {
-                    // TODO: consider what if no data read
-                    need_destroy!(self)
+                    HandleStage::Addr => {
+                        self.handle_stage_addr(event_loop, &data)
+                    }
+                    HandleStage::Connecting => {
+                        self.handle_stage_connecting(event_loop, &data)
+                    }
+                    HandleStage::Stream => {
+                        self.handle_stage_stream(event_loop, &data)
+                    }
+                    _ => ProcessResult::Success
                 }
             }
             (_, result @ ProcessResult::Failed(_)) => result,
@@ -503,11 +501,7 @@ impl TCPProcessor {
     fn on_remote_read(&mut self, _event_loop: &mut EventLoop<Relay>) -> ProcessResult<Vec<Token>> {
         match self.receive_data(false) {
             (Some(data), ProcessResult::Success) => {
-                if data.len() > 0 {
-                    self.write_to_sock(&data, true)
-                } else {
-                    need_destroy!(self)
-                }
+                self.write_to_sock(&data, true)
             }
             (_, result @ ProcessResult::Failed(_)) => result,
             _ => ProcessResult::Success
