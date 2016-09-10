@@ -61,6 +61,12 @@ pub fn get_config(config_path: &str) -> Result<Table, ConfigError> {
     let mut parser = Parser::new(&input);
     match parser.parse() {
         Some(mut config) => {
+            // if cfg!(feature = "is_client") {
+
+            // } else {
+
+            // }
+
             set_default!(config, "local_address", "127.0.0.1", str);
             set_default!(config, "local_port", 8088, i64);
             set_default!(config, "timeout", 300, i64);
