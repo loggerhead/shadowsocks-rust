@@ -19,7 +19,7 @@ fn main() {
         "tests/config/server_conf.toml"
     };
 
-    let conf = config::get_config(default_config_path).unwrap_or_else(|e| {
+    let conf = config::read_config(default_config_path).unwrap_or_else(|e| {
         error!("config error: {}", e);
         exit(1);
     });

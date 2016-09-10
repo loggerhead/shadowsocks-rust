@@ -1,4 +1,4 @@
-local_port = 8388
+listen_port = 8111
 password = "fuckGFW4times!"
 timeout = 300
-method = "aes-256-cfb"
+encrypt_method = "aes-256-cfb"

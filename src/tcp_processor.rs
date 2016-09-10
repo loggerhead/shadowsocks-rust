@@ -1,13 +1,14 @@
 use std::rc::Rc;
+use std::str::FromStr;
 use std::cell::RefCell;
 use std::io::{Result, Error, ErrorKind};
 
-use toml::Table;
-use mio::prelude::{TryRead, TryWrite};
+use rand::{thread_rng, Rng};
 use mio::tcp::{TcpStream, Shutdown};
+use mio::prelude::{TryRead, TryWrite};
 use mio::{EventLoop, Token, EventSet, PollOpt};
 
-use config;
+use config::Config;
 use util::address2str;
 use encrypt::Encryptor;
 use common::parse_header;
@@ -55,7 +56,7 @@ enum HandleStage {
 }
 
 pub struct TCPProcessor {
-    conf: Rc<Table>,
+    conf: Config,
     stage: HandleStage,
     dns_resolver: Rc<RefCell<DNSResolver>>,
     local_token: Option<Token>,
@@ -102,8 +103,8 @@ macro_rules! processor2str {
 }
 
 impl TCPProcessor {
-    pub fn new(conf: Rc<Table>, local_sock: TcpStream, dns_resolver: Rc<RefCell<DNSResolver>>) -> TCPProcessor {
-        let encryptor = Encryptor::new(config::get_str(&conf, "password"));
+    pub fn new(conf: Config, local_sock: TcpStream, dns_resolver: Rc<RefCell<DNSResolver>>) -> TCPProcessor {
+        let encryptor = Encryptor::new(conf["password"].as_str().unwrap());
         let stage = if cfg!(feature = "is_client") {
             HandleStage::Init
         } else {
@@ -140,6 +141,17 @@ impl TCPProcessor {
 
     pub fn set_remote_token(&mut self, token: Token) {
         self.remote_token = Some(token);
+    }
+
+    fn choose_a_server(&self) -> Option<(String, u16)> {
+        let servers = self.conf["servers"].as_slice().unwrap();
+        let mut rng = thread_rng();
+        let server = rng.choose(servers).unwrap().as_str().unwrap();
+        let parts: Vec<&str> = server.splitn(2, ':').collect();
+        let addr = parts[0].to_string();
+        let port = u16::from_str(parts[1]).unwrap();
+
+        Some((addr, port))
     }
 
     fn do_register(&mut self, event_loop: &mut EventLoop<Relay>, is_local_sock: bool, is_reregister: bool) -> bool {
@@ -388,7 +400,6 @@ impl TCPProcessor {
         match parse_header(data) {
             Some((_addr_type, remote_address, remote_port, header_length)) => {
                 self.stage = HandleStage::DNS;
-                self.server_address = Some((remote_address.clone(), remote_port));
 
                 if cfg!(feature = "is_client") {
                     let response = &[0x05, 0x00, 0x00, 0x01,
@@ -396,21 +407,22 @@ impl TCPProcessor {
                                      0x10, 0x10];
                     try_process!(self.write_to_sock(response, true));
                     self.data_to_write_to_remote.extend_from_slice(data);
+                    self.server_address = self.choose_a_server();
                 } else {
                     if data.len() > header_length {
                         self.data_to_write_to_remote.extend_from_slice(&data[header_length..]);
                     }
-                };
-
-                let server_address = if cfg!(feature = "is_client") {
-                    // TODO: change to configuable
-                    "127.0.0.1".to_string()
-                } else {
-                    remote_address
+                    self.server_address = Some((remote_address, remote_port));
                 };
 
                 let token = self.get_id();
-                let resolved = self.dns_resolver.borrow_mut().resolve(token, server_address);
+                let remote_hostname = if let Some(ref server) = self.server_address {
+                    server.0.clone()
+                } else {
+                    unreachable!();
+                };
+
+                let resolved = self.dns_resolver.borrow_mut().resolve(token, remote_hostname);
                 match resolved {
                     (None, None) => ProcessResult::Success,
                     (hostname_ip, errmsg) => self.handle_dns_resolved(event_loop, hostname_ip, errmsg),
@@ -573,14 +585,10 @@ impl Caller for TCPProcessor {
         match hostname_ip {
             Some((_hostname, ip)) => {
                 self.stage = HandleStage::Connecting;
-                let port = if cfg!(feature = "is_client") {
-                    // TODO: change to select a server
-                    config::get_i64(&self.conf, "remote_port") as u16
+                let port = if let Some(ref server) = self.server_address {
+                    server.1
                 } else {
-                    match self.server_address {
-                        Some((_, port)) => port,
-                        _ => return need_destroy!(self),
-                    }
+                    unreachable!();
                 };
 
                 match self.create_connection(&ip, port) {

@@ -1,14 +1,13 @@
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::process::exit;
-use std::net::{SocketAddr};
+use std::net::SocketAddr;
 
+use mio::tcp::TcpListener;
 use mio::{Token, Handler, EventSet, EventLoop, PollOpt};
-use mio::tcp::{TcpListener};
-use toml::Table;
 
-use config;
 use util::Holder;
+use config::Config;
 use network::str2addr4;
 use asyncdns::DNSResolver;
 use tcp_processor::TCPProcessor;
@@ -36,17 +35,16 @@ pub trait Processor {
 }
 
 pub struct Relay {
-    conf: Rc<Table>,
+    conf: Config,
     tcp_listener: TcpListener,
     dns_resolver: Rc<RefCell<DNSResolver>>,
     processors: Holder<Rc<RefCell<Processor>>>,
 }
 
 impl Relay {
-    pub fn new(conf: Table) -> Relay {
-        let conf = Rc::new(conf);
-        let address = format!("{}:{}", config::get_str(&conf, "local_address"),
-                                       config::get_i64(&conf, "local_port"));
+    pub fn new(conf: Config) -> Relay {
+        let address = format!("{}:{}", conf["listen_address"].as_str().unwrap(),
+                                       conf["listen_port"].as_integer().unwrap());
         let dns_resolver = Rc::new(RefCell::new(DNSResolver::new(None, None)));
         let socket_addr = str2addr4(&address).unwrap_or_else(|| {
             error!("invalid socket address: {}", address);

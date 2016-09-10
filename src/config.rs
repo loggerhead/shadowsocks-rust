@@ -1,10 +1,49 @@
 use std::fmt;
 use std::rc::Rc;
 use std::fs::File;
+use std::ops::Index;
 use std::error::Error;
+use std::clone::Clone;
 use std::io::prelude::*;
 
 use toml::{Parser, Value, Table};
+
+pub struct Config {
+    values: Rc<Table>,
+}
+
+impl Config {
+    fn new(conf: Table) -> Self {
+        Config {
+            values: Rc::new(conf),
+        }
+    }
+
+    fn get(&self, key: &'static str) -> Option<&Value> {
+        self.values.get(key)
+    }
+}
+
+impl Index<&'static str> for Config {
+    type Output = Value;
+
+    fn index<'a>(&'a self, index: &'static str) -> &'a Self::Output {
+        self.get(index).unwrap()
+    }
+}
+
+impl Clone for Config {
+    fn clone(&self) -> Self {
+        Config {
+            values: self.values.clone(),
+        }
+    }
+
+    fn clone_from(&mut self, source: &Self) {
+        self.values = source.values.clone();
+    }
+}
+
 
 #[derive(Debug)]
 pub struct ConfigError {
@@ -32,6 +71,15 @@ impl Error for ConfigError {
 }
 
 
+macro_rules! check_config {
+    ($conf:expr, $key:expr) => (
+        if !$conf.contains_key($key) {
+            let errmsg = format!("parse errors: no {}", $key);
+            return Err(ConfigError::new(errmsg));
+        }
+    );
+}
+
 macro_rules! set_default {
     ($conf:expr, $key:expr, $value:expr, str) => (
         let v = Value::String($value.to_string());
@@ -43,7 +91,7 @@ macro_rules! set_default {
     );
 }
 
-pub fn get_config(config_path: &str) -> Result<Table, ConfigError> {
+pub fn read_config(config_path: &str) -> Result<Config, ConfigError> {
     let mut f = match File::open(config_path) {
         Ok(f) => f,
         Err(_) => {
@@ -61,29 +109,23 @@ pub fn get_config(config_path: &str) -> Result<Table, ConfigError> {
     let mut parser = Parser::new(&input);
     match parser.parse() {
         Some(mut config) => {
-            // if cfg!(feature = "is_client") {
+            if cfg!(feature = "is_client") {
+                check_config!(config, "servers");
+                set_default!(config, "listen_address", "127.0.0.1", str);
+            } else {
+                set_default!(config, "listen_address", "0.0.0.0", str);
+            }
 
-            // } else {
+            check_config!(config, "password");
 
-            // }
-
-            set_default!(config, "local_address", "127.0.0.1", str);
-            set_default!(config, "local_port", 8088, i64);
+            set_default!(config, "listen_port", 8010, i64);
             set_default!(config, "timeout", 300, i64);
-            set_default!(config, "method", "aes-256-cfb", str);
-            Ok(config)
+            set_default!(config, "encrypt_method", "aes-256-cfb", str);
+            Ok(Config::new(config))
         }
         None => {
             let errmsg = format!("parse errors: {:?}", parser.errors);
             Err(ConfigError::new(errmsg))
         }
     }
-}
-
-pub fn get_str<'a>(conf: &'a Rc<Table>, key: &str) -> &'a str {
-    conf.get(key).unwrap().as_str().unwrap()
-}
-
-pub fn get_i64(conf: &Rc<Table>, key: &str) -> i64 {
-    conf.get(key).unwrap().as_integer().unwrap()
 }
