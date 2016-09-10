@@ -58,7 +58,6 @@ pub struct TCPProcessor {
     conf: Rc<Table>,
     stage: HandleStage,
     dns_resolver: Rc<RefCell<DNSResolver>>,
-    is_client: bool,
     local_token: Option<Token>,
     local_sock: Option<TcpStream>,
     remote_token: Option<Token>,
@@ -103,13 +102,9 @@ macro_rules! processor2str {
 }
 
 impl TCPProcessor {
-    pub fn new(conf: Rc<Table>,
-               local_sock: TcpStream,
-               dns_resolver: Rc<RefCell<DNSResolver>>,
-               is_client: bool)
-               -> TCPProcessor {
+    pub fn new(conf: Rc<Table>, local_sock: TcpStream, dns_resolver: Rc<RefCell<DNSResolver>>) -> TCPProcessor {
         let encryptor = Encryptor::new(config::get_str(&conf, "password"));
-        let stage = if is_client {
+        let stage = if cfg!(feature = "is_client") {
             HandleStage::Init
         } else {
             HandleStage::Addr
@@ -126,7 +121,6 @@ impl TCPProcessor {
             conf: conf,
             stage: stage,
             dns_resolver: dns_resolver,
-            is_client: is_client,
             local_token: None,
             local_sock: Some(local_sock),
             remote_token: None,
@@ -230,7 +224,9 @@ impl TCPProcessor {
                         Ok(None) => (false, None),
                         Ok(Some(0)) => (true, None),
                         Ok(Some(len)) => {
-                            if (self.is_client && !is_local_sock) || (!self.is_client && is_local_sock) {
+                            let need_decrypt = (cfg!(feature = "is_client") && !is_local_sock)
+                                            || (!cfg!(feature = "is_client") && is_local_sock);
+                            if need_decrypt {
                                 match self.encryptor.decrypt(&buf[..len]) {
                                     data @ Some(_) => (false, data),
                                     _ => {
@@ -289,7 +285,9 @@ impl TCPProcessor {
             return ProcessResult::Success;
         }
 
-        let data = if (self.is_client && !is_local_sock) || (!self.is_client && is_local_sock) {
+        let need_encrypt = (cfg!(feature = "is_client") && !is_local_sock)
+                        || (!cfg!(feature = "is_client") && is_local_sock);
+        let data = if need_encrypt {
             match self.encryptor.encrypt(data) {
                 Some(data) => data,
                 _ => {
@@ -369,7 +367,7 @@ impl TCPProcessor {
 
     fn handle_stage_addr(&mut self, event_loop: &mut EventLoop<Relay>, data: &[u8]) -> ProcessResult<Vec<Token>> {
         trace!("handle stage addr: {}", processor2str!(self));
-        let data = if self.is_client {
+        let data = if cfg!(feature = "is_client") {
             match data[1] {
                 CMD_UDP_ASSOCIATE => {
                     self.stage = HandleStage::UDPAssoc;
@@ -392,7 +390,7 @@ impl TCPProcessor {
                 self.stage = HandleStage::DNS;
                 self.server_address = Some((remote_address.clone(), remote_port));
 
-                if self.is_client {
+                if cfg!(feature = "is_client") {
                     let response = &[0x05, 0x00, 0x00, 0x01,
                                      0x00, 0x00, 0x00, 0x00,
                                      0x10, 0x10];
@@ -404,7 +402,7 @@ impl TCPProcessor {
                     }
                 };
 
-                let server_address = if self.is_client {
+                let server_address = if cfg!(feature = "is_client") {
                     // TODO: change to configuable
                     "127.0.0.1".to_string()
                 } else {
@@ -575,7 +573,7 @@ impl Caller for TCPProcessor {
         match hostname_ip {
             Some((_hostname, ip)) => {
                 self.stage = HandleStage::Connecting;
-                let port = if self.is_client {
+                let port = if cfg!(feature = "is_client") {
                     // TODO: change to select a server
                     config::get_i64(&self.conf, "remote_port") as u16
                 } else {

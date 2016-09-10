@@ -53,12 +53,12 @@ fn main() {
     }
 }
 
-fn start_ss(config_path: &str, is_client: bool) -> thread::JoinHandle<()> {
+fn start_ss(config_path: &str) -> thread::JoinHandle<()> {
     let conf = config::get_config(config_path);
     assert!(conf.is_ok());
 
     thread::spawn(move || {
-        Relay::new(conf.unwrap(), is_client).run();
+        Relay::new(conf.unwrap()).run();
     })
 }
 

@@ -36,7 +36,6 @@ pub trait Processor {
 }
 
 pub struct Relay {
-    is_client: bool,
     conf: Rc<Table>,
     tcp_listener: TcpListener,
     dns_resolver: Rc<RefCell<DNSResolver>>,
@@ -44,7 +43,7 @@ pub struct Relay {
 }
 
 impl Relay {
-    pub fn new(conf: Table, is_client: bool) -> Relay {
+    pub fn new(conf: Table) -> Relay {
         let conf = Rc::new(conf);
         let address = format!("{}:{}", config::get_str(&conf, "local_address"),
                                        config::get_i64(&conf, "local_port"));
@@ -57,14 +56,13 @@ impl Relay {
             error!("cannot bind address {} because {}", address, e);
             exit(1);
         });
-        if is_client {
+        if cfg!(feature = "is_client") {
             info!("ssclient listen on {}", address);
         } else {
             info!("ssserver listen on {}", address);
         }
 
         Relay {
-            is_client: is_client,
             conf: conf,
             tcp_listener: tcp_listener,
             dns_resolver: dns_resolver,
@@ -156,7 +154,7 @@ impl Processor for Relay {
             match self.tcp_listener.accept() {
                 Ok(Some((conn, _addr))) => {
                     info!("create processor for {}", _addr);
-                    let tcp_processor = TCPProcessor::new(self.conf.clone(), conn, self.dns_resolver.clone(), self.is_client);
+                    let tcp_processor = TCPProcessor::new(self.conf.clone(), conn, self.dns_resolver.clone());
                     let tcp_processor = Rc::new(RefCell::new(tcp_processor));
                     let tokens = (self.add_processor(tcp_processor.clone()), self.add_processor(tcp_processor.clone()));
 
