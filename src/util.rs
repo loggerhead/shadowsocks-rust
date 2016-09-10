@@ -26,7 +26,9 @@ pub fn init_env_logger() {
     builder.format(format).filter(None, LogLevelFilter::Info);
 
     if env::var("RUST_LOG").is_ok() {
-       builder.parse(&env::var("RUST_LOG").unwrap());
+        let _ = env::var("RUST_LOG").map(|val| {
+            builder.parse(&val);
+        });
     }
 
     builder.init().unwrap();

@@ -3,12 +3,23 @@ use std::str::FromStr;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, AddrParseError};
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 
+use mio::udp::UdpSocket;
 use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt};
 
 #[allow(non_camel_case_types)]
 pub enum AddressFamily {
     AF_INET,
     AF_INET6
+}
+
+pub fn alloc_udp_socket() -> Option<UdpSocket> {
+    match UdpSocket::v4() {
+        Ok(sock) => Some(sock),
+        Err(e) => {
+            error!("cannot alloc a UDP socket: {}", e);
+            None
+        }
+    }
 }
 
 pub fn get_address_family(address: &str) -> Option<AddressFamily> {

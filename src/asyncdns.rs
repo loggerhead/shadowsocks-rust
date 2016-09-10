@@ -13,7 +13,8 @@ use mio::{Token, EventSet, EventLoop, PollOpt};
 
 use relay::{Relay, Processor, ProcessResult};
 use util::{Set, handle_every_line, Dict, slice2str, slice2string};
-use network::{is_ip, slice2ip4, slice2ip6, str2addr4, NetworkWriteBytes, NetworkReadBytes};
+use network::{is_ip, slice2ip4, slice2ip6, str2addr4, alloc_udp_socket};
+use network::{NetworkWriteBytes, NetworkReadBytes};
 
 // All communications inside of the domain protocol are carried in a single
 // format called a message.  The top level format of message is divided
@@ -135,7 +136,7 @@ impl DNSResolver {
             hostname_status: Dict::new(),
             token_to_hostname: Dict::new(),
             hostname_to_tokens: Dict::new(),
-            sock: UdpSocket::v4().ok(),
+            sock: alloc_udp_socket(),
             qtypes: qtypes,
         }
     }
@@ -286,7 +287,7 @@ impl DNSResolver {
 
     pub fn register(&mut self, event_loop: &mut EventLoop<Relay>, token: Token) -> bool {
         self.token = Some(token);
-        self.sock = UdpSocket::v4().ok();
+        self.sock = alloc_udp_socket();
         self.do_register(event_loop, false)
     }
 

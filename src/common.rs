@@ -35,7 +35,13 @@ pub fn parse_header(data: &[u8]) -> Option<(u8, String, u16, usize)> {
             if data.len() >= 2 {
                 let addr_len = data[1] as usize;
                 if data.len() >= 4 + addr_len {
-                    dest_addr = String::from_utf8(Vec::from(&data[2..2 + addr_len])).ok();
+                    dest_addr = match String::from_utf8(Vec::from(&data[2..2 + addr_len])) {
+                        Ok(s) => Some(s),
+                        Err(e) => {
+                            warn!("not a valid UTF-8 string: {}", e);
+                            None
+                        }
+                    };
                     dest_port = (&data[2 + addr_len..4 + addr_len]).get_u16().unwrap();
                     header_len = 4 + addr_len;
                 } else {

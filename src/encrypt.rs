@@ -80,7 +80,7 @@ impl Encryptor {
     pub fn new(password: &str) -> Encryptor {
         let (key, _iv) = gen_key_iv(password, 256, 32);
         let mut cipher_iv = vec![0u8; 16];
-        OsRng::new().unwrap().fill_bytes(&mut cipher_iv);
+        let _ = OsRng::new().map(|mut rng| rng.fill_bytes(&mut cipher_iv));
         let cipher = create_cipher(&key, &cipher_iv);
 
         Encryptor {

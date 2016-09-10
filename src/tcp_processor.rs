@@ -120,7 +120,7 @@ impl TCPProcessor {
             client_address = Some((format!("{}", addr.ip()), addr.port()));
         };
 
-        local_sock.set_nodelay(true).ok();
+        let _ = local_sock.set_nodelay(true);
 
         TCPProcessor {
             conf: conf,
@@ -151,15 +151,18 @@ impl TCPProcessor {
     fn do_register(&mut self, event_loop: &mut EventLoop<Relay>, is_local_sock: bool, is_reregister: bool) -> bool {
         macro_rules! register_sock {
             ($sock:expr, $token:expr) => (
-                if let Some(ref mut sock) = $sock {
+                {
+                    let sock = $sock.take().unwrap();
                     let events = self.interest;
                     let pollopts = PollOpt::edge() | PollOpt::oneshot();
 
                     let register_result = if is_reregister {
-                        event_loop.reregister(sock, $token, events, pollopts)
+                        event_loop.reregister(&sock, $token, events, pollopts)
                     } else {
-                        event_loop.register(sock, $token, events, pollopts)
+                        event_loop.register(&sock, $token, events, pollopts)
                     };
+
+                    $sock = Some(sock);
 
                     match register_result {
                         Ok(_) => {
@@ -179,8 +182,6 @@ impl TCPProcessor {
                             false
                         }
                     }
-                } else {
-                    unreachable!();
                 }
             );
         }
@@ -223,35 +224,36 @@ impl TCPProcessor {
 
         macro_rules! read_data {
             ($sock:expr) => (
-                match $sock {
-                    Some(ref mut sock) => {
-                        match sock.try_read(buf) {
-                            Ok(None) => (false, None),
-                            Ok(Some(0)) => (true, None),
-                            Ok(Some(len)) => {
-                                if (self.is_client && !is_local_sock) || (!self.is_client && is_local_sock) {
-                                    match self.encryptor.decrypt(&buf[..len]) {
-                                        data @ Some(_) => (false, data),
-                                        _ => {
-                                            warn!("{} cannot decrypt data, maybe a error client", processor2str!(self));
-                                            (true, None)
-                                        }
+                {
+                    let mut sock = $sock.take().unwrap();
+                    let result = match sock.try_read(buf) {
+                        Ok(None) => (false, None),
+                        Ok(Some(0)) => (true, None),
+                        Ok(Some(len)) => {
+                            if (self.is_client && !is_local_sock) || (!self.is_client && is_local_sock) {
+                                match self.encryptor.decrypt(&buf[..len]) {
+                                    data @ Some(_) => (false, data),
+                                    _ => {
+                                        warn!("{} cannot decrypt data, maybe a error client", processor2str!(self));
+                                        (true, None)
                                     }
-                                } else {
-                                    (false, Some(buf[..len].to_vec()))
                                 }
-                            }
-                            Err(e) => {
-                                if is_local_sock {
-                                    error!("{} read data from local socket failed: {}", processor2str!(self), e);
-                                } else {
-                                    error!("{} read data from remote socket failed: {}", processor2str!(self), e);
-                                }
-                                (true, None)
+                            } else {
+                                (false, Some(buf[..len].to_vec()))
                             }
                         }
-                    }
-                    _ => unreachable!(),
+                        Err(e) => {
+                            if is_local_sock {
+                                error!("{} read data from local socket failed: {}", processor2str!(self), e);
+                            } else {
+                                error!("{} read data from remote socket failed: {}", processor2str!(self), e);
+                            }
+                            (true, None)
+                        }
+                    };
+
+                    $sock = Some(sock);
+                    result
                 }
             );
         }
@@ -302,29 +304,30 @@ impl TCPProcessor {
         let (any_error, uncomplete_len) = {
             macro_rules! write {
                 ($sock:expr) => (
-                    match $sock {
-                        Some(ref mut sock) => {
-                            match sock.try_write(&data) {
-                                Ok(None) => (false, data.len()),
-                                Ok(Some(size)) => {
-                                    if is_local_sock {
-                                        debug!("writed {} bytes to local socket of {}", size, processor2str!(self));
-                                    } else {
-                                        debug!("writed {} bytes to remote socket of {}", size, processor2str!(self));
-                                    }
-                                    (false, data.len() - size)
+                    {
+                        let mut sock = $sock.take().unwrap();
+                        let result = match sock.try_write(&data) {
+                            Ok(None) => (false, data.len()),
+                            Ok(Some(size)) => {
+                                if is_local_sock {
+                                    debug!("writed {} bytes to local socket of {}", size, processor2str!(self));
+                                } else {
+                                    debug!("writed {} bytes to remote socket of {}", size, processor2str!(self));
                                 }
-                                Err(e) => {
-                                    if is_local_sock {
-                                        error!("{} write to local socket error: {}", processor2str!(self), e);
-                                    } else {
-                                        error!("{} write to remote socket error: {}", processor2str!(self), e);
-                                    }
-                                    (true, data.len())
-                                }
+                                (false, data.len() - size)
                             }
-                        }
-                        _ => unreachable!(),
+                            Err(e) => {
+                                if is_local_sock {
+                                    error!("{} write to local socket error: {}", processor2str!(self), e);
+                                } else {
+                                    error!("{} write to remote socket error: {}", processor2str!(self), e);
+                                }
+                                (true, data.len())
+                            }
+                        };
+
+                        $sock = Some(sock);
+                        result
                     }
                 );
             }
@@ -545,7 +548,7 @@ impl TCPProcessor {
         match pair2socket_addr(ip, port) {
             Ok(addr) => {
                 TcpStream::connect(&addr).map(|sock| {
-                    sock.set_nodelay(true).ok();
+                    let _ = sock.set_nodelay(true);
                     sock
                 })
             }
