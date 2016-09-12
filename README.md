@@ -3,6 +3,7 @@
 - [x] add cache for DNS
 - [x] review `unwrap`, `.ok()`、`unimplemented`, `unreachable`
 - [x] check if there exists `cannot decrypt` log
+- [ ] test with shadowsocks
 - [ ] review `tcp_processor`
 - [ ] refactor error handle
 - [ ] remove unnecessary `clone`
