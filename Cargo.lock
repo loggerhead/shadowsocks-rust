@@ -9,7 +9,7 @@ dependencies = [
  "fnv 1.0.4 (registry+git://crates.mirrors.ustc.edu.cn/index)",
  "lazy_static 0.2.1 (registry+git://crates.mirrors.ustc.edu.cn/index)",
  "log 0.3.6 (registry+git://crates.mirrors.ustc.edu.cn/index)",
- "lru-cache 0.0.7 (registry+git://crates.mirrors.ustc.edu.cn/index)",
+ "lru_time_cache 0.5.0 (registry+git://crates.mirrors.ustc.edu.cn/index)",
  "mio 0.5.1 (registry+git://crates.mirrors.ustc.edu.cn/index)",
  "rand 0.3.14 (registry+git://crates.mirrors.ustc.edu.cn/index)",
  "regex 0.1.74 (registry+git://crates.mirrors.ustc.edu.cn/index)",
@@ -121,22 +121,14 @@ version = "0.2.15"
 source = "registry+git://crates.mirrors.ustc.edu.cn/index"
 
 [[package]]
-name = "linked-hash-map"
-version = "0.0.9"
-source = "registry+git://crates.mirrors.ustc.edu.cn/index"
-
-[[package]]
 name = "log"
 version = "0.3.6"
 source = "registry+git://crates.mirrors.ustc.edu.cn/index"
 
 [[package]]
-name = "lru-cache"
-version = "0.0.7"
+name = "lru_time_cache"
+version = "0.5.0"
 source = "registry+git://crates.mirrors.ustc.edu.cn/index"
-dependencies = [
- "linked-hash-map 0.0.9 (registry+git://crates.mirrors.ustc.edu.cn/index)",
-]
 
 [[package]]
 name = "memchr"

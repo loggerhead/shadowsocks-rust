@@ -3,11 +3,12 @@ use std::str;
 use std::rc::Rc;
 use std::io::Cursor;
 use std::cell::RefCell;
+use std::time::Duration;
 use std::net::SocketAddr;
 
 use rand;
 use regex::Regex;
-use lru_cache::LruCache;
+use lru_time_cache::LruCache;
 use mio::udp::UdpSocket;
 use mio::{Token, EventSet, EventLoop, PollOpt};
 
@@ -126,12 +127,13 @@ impl DNSResolver {
             _ => vec![QTYPE_A, QTYPE_AAAA],
         };
         let hosts = parse_hosts();
+        let cache_timeout = Duration::new(600, 0);
 
         DNSResolver {
             token: None,
             servers: servers,
             hosts: hosts,
-            cache: LruCache::new(4096),
+            cache: LruCache::with_expiry_duration(cache_timeout),
             callers: Dict::new(),
             hostname_status: Dict::new(),
             token_to_hostname: Dict::new(),
