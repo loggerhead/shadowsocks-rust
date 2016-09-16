@@ -4,4 +4,4 @@ servers = [
 listen_port = 8010
 password = "fuckGFW4times!"
 timeout = 300
-encrypt_method = "aes-256-cfb"
+encrypt_method = "aes-256-ctr"
