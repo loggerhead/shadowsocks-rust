@@ -1,6 +1,7 @@
 #!/bin/bash
+PROXY_PORT=8010
 if [[ "$1" == "r" ]]; then
-    nc -X 5 -x 127.0.0.1:8488 localhost 8001
+    nc -X 5 -x 127.0.0.1:$PROXY_PORT localhost 8001
 elif [[ "$1" == "rs" ]]; then
     python -m SimpleHTTPServer 8001
 elif [[ "$1" == "c" ]]; then
