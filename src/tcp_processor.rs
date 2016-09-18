@@ -1,3 +1,4 @@
+use std::slice;
 use std::rc::Rc;
 use std::str::FromStr;
 use std::cell::RefCell;
@@ -226,50 +227,57 @@ impl TCPProcessor {
     }
 
     fn receive_data(&mut self, is_local_sock: bool) -> (Option<Vec<u8>>, ProcessResult<Vec<Token>>) {
-        let buf = &mut [0u8; BUF_SIZE];
+        let mut sock = if is_local_sock {
+            self.local_sock.take().unwrap()
+        } else {
+            self.remote_sock.take().unwrap()
+        };
 
-        macro_rules! read_data {
-            ($sock:expr) => (
-                {
-                    let mut sock = $sock.take().unwrap();
-                    let result = match sock.try_read(buf) {
-                        Ok(None) => (false, None),
-                        Ok(Some(0)) => (true, None),
-                        Ok(Some(len)) => {
-                            let need_decrypt = (cfg!(feature = "is_client") && !is_local_sock)
-                                            || (!cfg!(feature = "is_client") && is_local_sock);
-                            if need_decrypt {
-                                match self.encryptor.decrypt(&buf[..len]) {
-                                    data @ Some(_) => (false, data),
-                                    _ => {
-                                        warn!("{} cannot decrypt data, maybe a error client", processor2str!(self));
-                                        (true, None)
-                                    }
-                                }
-                            } else {
-                                (false, Some(buf[..len].to_vec()))
-                            }
-                        }
-                        Err(e) => {
-                            if is_local_sock {
-                                error!("{} read data from local socket failed: {}", processor2str!(self), e);
-                            } else {
-                                error!("{} read data from remote socket failed: {}", processor2str!(self), e);
-                            }
-                            (true, None)
-                        }
-                    };
+        let mut buf = Vec::with_capacity(BUF_SIZE);
+        let ptr = buf.as_mut_ptr();
+        let cap = buf.capacity();
+        let buf_slice = unsafe {
+            &mut slice::from_raw_parts_mut(ptr, cap)
+        };
 
-                    $sock = Some(sock);
-                    result
+        let need_destroy = match sock.try_read(buf_slice) {
+            Ok(None) => false,
+            Ok(Some(0)) => true,
+            Ok(Some(n)) => {
+                unsafe { buf.set_len(n); }
+                false
+            }
+            Err(e) => {
+                if is_local_sock {
+                    error!("{} read data from local socket failed: {}", processor2str!(self), e);
+                } else {
+                    error!("{} read data from remote socket failed: {}", processor2str!(self), e);
                 }
-            );
+                true
+            }
+        };
+
+        if is_local_sock {
+            self.local_sock = Some(sock);
+        } else {
+            self.remote_sock = Some(sock);
         }
 
-        let (need_destroy, data) = if is_local_sock {
-            read_data!(self.local_sock)
+        let need_decrypt = (cfg!(feature = "is_client") && !is_local_sock)
+                        || (!cfg!(feature = "is_client") && is_local_sock);
+
+        let (data, need_destroy) = if need_decrypt && buf.len() > 0 {
+            match self.encryptor.decrypt(&buf) {
+                decrypted @ Some(_) => {
+                    (decrypted, need_destroy || false)
+                }
+                _ => {
+                    warn!("{} cannot decrypt data, maybe a error client", processor2str!(self));
+                    (None, true)
+                }
+            }
         } else {
-            read_data!(self.remote_sock)
+            (Some(buf), need_destroy || false)
         };
 
         if need_destroy {
