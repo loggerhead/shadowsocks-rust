@@ -55,8 +55,8 @@ pub struct TCPProcessor {
     local_sock: Option<TcpStream>,
     remote_token: Option<Token>,
     remote_sock: Option<TcpStream>,
-    data_to_write_to_local: Vec<u8>,
-    data_to_write_to_remote: Vec<u8>,
+    data_to_write_to_local: Option<Vec<u8>>,
+    data_to_write_to_remote: Option<Vec<u8>>,
     client_address: Option<(String, u16)>,
     server_address: Option<(String, u16)>,
     encryptor: Encryptor,
@@ -118,8 +118,8 @@ impl TCPProcessor {
             local_sock: Some(local_sock),
             remote_token: None,
             remote_sock: None,
-            data_to_write_to_local: Vec::new(),
-            data_to_write_to_remote: Vec::new(),
+            data_to_write_to_local: None,
+            data_to_write_to_remote: None,
             client_address: client_address,
             server_address: None,
             encryptor: encryptor,
@@ -276,101 +276,144 @@ impl TCPProcessor {
         }
     }
 
-    fn send_buf_data(&mut self, is_local_sock: bool) -> ProcessResult<Vec<Token>> {
-        let data;
+    fn get_buf(&mut self, is_local_sock: bool) -> Vec<u8> {
         if is_local_sock {
-            data = self.data_to_write_to_local.clone();
-            self.data_to_write_to_local.clear();
+            if self.data_to_write_to_local.is_none() {
+                self.data_to_write_to_local = Some(Vec::with_capacity(BUF_SIZE));
+            }
+            self.data_to_write_to_local.take().unwrap()
         } else {
-            data = self.data_to_write_to_remote.clone();
-            self.data_to_write_to_remote.clear();
-        };
-
-        self.write_to_sock(&data, is_local_sock)
+            if self.data_to_write_to_remote.is_none() {
+                self.data_to_write_to_remote = Some(Vec::with_capacity(BUF_SIZE));
+            }
+            self.data_to_write_to_remote.take().unwrap()
+        }
     }
 
-    fn write_to_sock(&mut self, data: &[u8], is_local_sock: bool) -> ProcessResult<Vec<Token>> {
-        if data.len() == 0 {
-            return ProcessResult::Success;
+    fn set_buf(&mut self, buf: Vec<u8>, is_local_sock: bool) {
+        if is_local_sock {
+            self.data_to_write_to_local = Some(buf);
+        } else {
+            self.data_to_write_to_remote = Some(buf);
+        }
+    }
+
+    fn get_buf_len(&mut self, is_local_sock: bool) -> usize {
+        let buf = self.get_buf(is_local_sock);
+        let len = buf.len();
+        self.set_buf(buf, is_local_sock);
+        len
+    }
+
+    fn extend_buf(&mut self, data: &[u8], is_local_sock: bool) {
+        let mut buf = self.get_buf(is_local_sock);
+        buf.extend_from_slice(data);
+        self.set_buf(buf, is_local_sock);
+    }
+
+    fn send_buf_data(&mut self, is_local_sock: bool) -> ProcessResult<Vec<Token>> {
+        let mut buf = self.get_buf(is_local_sock);
+        let result = if buf.len() == 0 {
+            ProcessResult::Success
+        } else {
+            match self.write_to_sock(&buf, is_local_sock) {
+                (nwrite, ProcessResult::Success) => {
+                    let uncompleted = buf.len() - nwrite;
+                    for i in 0..uncompleted {
+                        buf[i] = buf[i + nwrite];
+                    }
+                    unsafe { buf.set_len(uncompleted); }
+                    self.change_interest_to_rw();
+                    ProcessResult::Success
+                }
+                (_, result) => result,
+            }
+        };
+
+        self.set_buf(buf, is_local_sock);
+        result
+    }
+
+    fn write_to_sock(&mut self, data: &[u8], is_local_sock: bool) -> (usize, ProcessResult<Vec<Token>>) {
+        macro_rules! write {
+            ($sock:expr, $data:expr) => (
+                {
+                    let mut sock = $sock.take().unwrap();
+                    let s = if is_local_sock { "local" } else { "remote" };
+                    let result = match sock.write($data) {
+                        Ok(n) => {
+                            debug!("writed {} bytes to {} socket of {}", n, s, processor2str!(self));
+                            (n, ProcessResult::Success)
+                        }
+                        Err(e) => {
+                            error!("{} write to {} socket error: {}", processor2str!(self), s, e);
+                            (0, need_destroy!(self))
+                        }
+                    };
+
+                    $sock = Some(sock);
+                    result
+                }
+            );
         }
 
-        let need_encrypt = (cfg!(feature = "is_client") && !is_local_sock)
-                        || (!cfg!(feature = "is_client") && is_local_sock);
-        let data = if need_encrypt {
+        if is_local_sock {
+            write!(self.local_sock, data)
+        } else {
+            write!(self.remote_sock, data)
+        }
+    }
+
+    // data => remote_sock => ssserver/server
+    fn handle_stage_stream(&mut self, _event_loop: &mut EventLoop<Relay>, data: &[u8]) -> ProcessResult<Vec<Token>> {
+        trace!("handle stage stream: {}", processor2str!(self));
+
+        macro_rules! try_write {
+            ($data:expr) => (
+                {
+                    match self.write_to_sock($data, false) {
+                        (nwrite, ProcessResult::Success) => {
+                            if nwrite < $data.len() {
+                                self.extend_buf(&$data[nwrite..], false);
+                            }
+                            ProcessResult::Success
+                        }
+                        (_, result) => result,
+                    }
+                }
+            )
+        }
+
+        if cfg!(feature = "is_client") {
             match self.encryptor.encrypt(data) {
-                Some(data) => data,
+                Some(ref data) => try_write!(data),
                 _ => {
                     error!("{} encrypt data failed", processor2str!(self));
-                    return need_destroy!(self);
+                    need_destroy!(self)
                 }
             }
         } else {
-            data.to_vec()
-        };
-
-        let (any_error, uncomplete_len) = {
-            macro_rules! write {
-                ($sock:expr) => (
-                    {
-                        let mut sock = $sock.take().unwrap();
-                        let result = match sock.write(&data) {
-                            Ok(n) => {
-                                if is_local_sock {
-                                    debug!("writed {} bytes to local socket of {}", n, processor2str!(self));
-                                } else {
-                                    debug!("writed {} bytes to remote socket of {}", n, processor2str!(self));
-                                }
-                                (false, data.len() - n)
-                            }
-                            Err(e) => {
-                                if is_local_sock {
-                                    error!("{} write to local socket error: {}", processor2str!(self), e);
-                                } else {
-                                    error!("{} write to remote socket error: {}", processor2str!(self), e);
-                                }
-                                (true, data.len())
-                            }
-                        };
-
-                        $sock = Some(sock);
-                        result
-                    }
-                );
-            }
-
-            if is_local_sock {
-                write!(self.local_sock)
-            } else {
-                write!(self.remote_sock)
-            }
-        };
-
-        if any_error {
-            need_destroy!(self)
-        } else if uncomplete_len > 0 {
-            let offset = data.len() - uncomplete_len;
-            let remain = &data[offset..];
-            if is_local_sock {
-                self.data_to_write_to_local.extend_from_slice(remain);
-            } else {
-                self.data_to_write_to_remote.extend_from_slice(remain);
-            }
-            self.change_interest_to_rw();
-            ProcessResult::Success
-        } else {
-            ProcessResult::Success
+            try_write!(data)
         }
-    }
-
-    fn handle_stage_stream(&mut self, _event_loop: &mut EventLoop<Relay>, data: &[u8]) -> ProcessResult<Vec<Token>> {
-        trace!("handle stage stream: {}", processor2str!(self));
-        self.write_to_sock(data, false)
     }
 
     fn handle_stage_connecting(&mut self, _event_loop: &mut EventLoop<Relay>, data: &[u8]) -> ProcessResult<Vec<Token>> {
         trace!("handle stage connecting: {}", processor2str!(self));
-        self.data_to_write_to_remote.extend_from_slice(data);
-        ProcessResult::Success
+        if cfg!(feature = "is_client") {
+            match self.encryptor.encrypt(data) {
+                Some(ref data) => {
+                    self.extend_buf(data, false);
+                    ProcessResult::Success
+                }
+                _ => {
+                    error!("{} encrypt data failed", processor2str!(self));
+                    need_destroy!(self)
+                }
+            }
+        } else {
+            self.extend_buf(data, false);
+            ProcessResult::Success
+        }
     }
 
     fn handle_stage_addr(&mut self, event_loop: &mut EventLoop<Relay>, data: &[u8]) -> ProcessResult<Vec<Token>> {
@@ -393,23 +436,36 @@ impl TCPProcessor {
             data
         };
 
+        // parse socks5 header
         match parse_header(data) {
             Some((_addr_type, remote_address, remote_port, header_length)) => {
                 self.stage = HandleStage::DNS;
 
+                // => ssserver
                 if cfg!(feature = "is_client") {
                     let response = &[0x05, 0x00, 0x00, 0x01,
                                      0x00, 0x00, 0x00, 0x00,
                                      0x10, 0x10];
-                    try_process!(self.write_to_sock(response, true));
-                    self.data_to_write_to_remote.extend_from_slice(data);
+                    match self.write_to_sock(response, true) {
+                        (_, ProcessResult::Success) => {},
+                        (_, result) => return result,
+                    }
+
+                    match self.encryptor.encrypt(data) {
+                        Some(ref data) => self.extend_buf(data, false),
+                        _ => {
+                            error!("{} encrypt data failed", processor2str!(self));
+                            return need_destroy!(self);
+                        }
+                    }
                     self.server_address = self.choose_a_server();
+                // => server
                 } else {
                     if data.len() > header_length {
-                        self.data_to_write_to_remote.extend_from_slice(&data[header_length..]);
+                        self.extend_buf(&data[header_length..], false);
                     }
                     self.server_address = Some((remote_address, remote_port));
-                };
+                }
 
                 let token = self.get_id();
                 let remote_hostname = if let Some(ref server) = self.server_address {
@@ -435,9 +491,13 @@ impl TCPProcessor {
         trace!("handle stage init: {}", processor2str!(self));
         match check_auth_method(data) {
             CheckAuthResult::Success => {
-                try_process!(self.write_to_sock(&[0x05, 0x00], true));
-                self.stage = HandleStage::Addr;
-                ProcessResult::Success
+                match self.write_to_sock(&[0x05, 0x00], true) {
+                    (_, ProcessResult::Success) => {
+                        self.stage = HandleStage::Addr;
+                        ProcessResult::Success
+                    }
+                    (_, result) => result,
+                }
             }
             CheckAuthResult::BadSocksHeader => {
                 need_destroy!(self)
@@ -473,10 +533,37 @@ impl TCPProcessor {
         }
     }
 
+    // remote_sock <= data
     fn on_remote_read(&mut self, _event_loop: &mut EventLoop<Relay>) -> ProcessResult<Vec<Token>> {
+        macro_rules! try_write {
+            ($data:expr) => (
+                {
+                    match self.write_to_sock($data, true) {
+                        (nwrite, ProcessResult::Success) => {
+                            if nwrite < $data.len() {
+                                self.extend_buf(&$data[nwrite..], true);
+                            }
+                            ProcessResult::Success
+                        }
+                        (_, result) => result,
+                    }
+                }
+            )
+        }
+
         match self.receive_data(false) {
             (Some(data), ProcessResult::Success) => {
-                self.write_to_sock(&data, true)
+                // client <= local_sock -- remote_sock <= data
+                if cfg!(feature = "is_client") {
+                    try_write!(&data)
+                // ssclient <= local_sock -- remote_sock <= data
+                } else {
+                    match self.encryptor.encrypt(&data) {
+                        Some(ref data) => try_write!(data),
+                        _ => need_destroy!(self),
+                    }
+                }
+
             }
             (_, result @ ProcessResult::Failed(_)) => result,
             _ => ProcessResult::Success
@@ -484,23 +571,13 @@ impl TCPProcessor {
     }
 
     fn on_write(&mut self, _event_loop: &mut EventLoop<Relay>, is_local_sock: bool) -> ProcessResult<Vec<Token>> {
-        macro_rules! get_buf_len {
-            () => (
-                if is_local_sock {
-                    self.data_to_write_to_local.len()
-                } else {
-                    self.data_to_write_to_remote.len()
-                }
-            );
-        }
-
-        let result = if get_buf_len!() > 0 {
+        let result = if self.get_buf_len(is_local_sock) > 0 {
             self.send_buf_data(is_local_sock)
         } else {
             ProcessResult::Success
         };
 
-        if get_buf_len!() == 0 {
+        if self.get_buf_len(is_local_sock) == 0 {
             self.change_interest_to_r();
         }
 
