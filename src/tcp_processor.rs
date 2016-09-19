@@ -2,11 +2,10 @@ use std::slice;
 use std::rc::Rc;
 use std::str::FromStr;
 use std::cell::RefCell;
-use std::io::{Result, Error, ErrorKind};
+use std::io::{Read, Write, Result, Error, ErrorKind};
 
 use rand::{thread_rng, Rng};
 use mio::tcp::{TcpStream, Shutdown};
-use mio::prelude::{TryRead, TryWrite};
 use mio::{EventLoop, Token, EventSet, PollOpt};
 
 use config::Config;
@@ -232,12 +231,10 @@ impl TCPProcessor {
             &mut slice::from_raw_parts_mut(ptr, cap)
         };
 
-        let need_destroy = match sock.try_read(buf_slice) {
-            Ok(None) => false,
-            Ok(Some(0)) => true,
-            Ok(Some(n)) => {
+        let need_destroy = match sock.read(buf_slice) {
+            Ok(n) => {
                 unsafe { buf.set_len(n); }
-                false
+                n == 0
             }
             Err(e) => {
                 if is_local_sock {
@@ -316,15 +313,14 @@ impl TCPProcessor {
                 ($sock:expr) => (
                     {
                         let mut sock = $sock.take().unwrap();
-                        let result = match sock.try_write(&data) {
-                            Ok(None) => (false, data.len()),
-                            Ok(Some(size)) => {
+                        let result = match sock.write(&data) {
+                            Ok(n) => {
                                 if is_local_sock {
-                                    debug!("writed {} bytes to local socket of {}", size, processor2str!(self));
+                                    debug!("writed {} bytes to local socket of {}", n, processor2str!(self));
                                 } else {
-                                    debug!("writed {} bytes to remote socket of {}", size, processor2str!(self));
+                                    debug!("writed {} bytes to remote socket of {}", n, processor2str!(self));
                                 }
-                                (false, data.len() - size)
+                                (false, data.len() - n)
                             }
                             Err(e) => {
                                 if is_local_sock {
