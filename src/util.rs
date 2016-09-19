@@ -12,7 +12,7 @@ use std::hash::{Hash, BuildHasherDefault};
 use mio::Token;
 use rand::random;
 use fnv::FnvHasher;
-use chrono::{Local};
+use chrono::Local;
 use env_logger::LogBuilder;
 use log::{LogRecord, LogLevelFilter};
 
@@ -65,14 +65,14 @@ pub fn handle_every_line(filepath: &str, func: &mut FnMut(String)) {
 
 
 pub struct Dict<K, V> {
-    map: HashMap<K, V, BuildHasherDefault<FnvHasher>>
+    map: HashMap<K, V, BuildHasherDefault<FnvHasher>>,
 }
 
-impl<K, V> Dict<K, V> where K: Hash + Eq {
+impl<K, V> Dict<K, V>
+    where K: Hash + Eq
+{
     pub fn new() -> Self {
-        Dict {
-            map: HashMap::default()
-        }
+        Dict { map: HashMap::default() }
     }
 
     pub fn put(&mut self, k: K, v: V) {
@@ -94,9 +94,15 @@ impl<K, V> Dict<K, V> where K: Hash + Eq {
     pub fn del(&mut self, k: &K) -> Option<V> {
         self.map.remove(k)
     }
+
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
 }
 
-impl<K, V> Index<K> for Dict<K, V> where K: Hash + Eq {
+impl<K, V> Index<K> for Dict<K, V>
+    where K: Hash + Eq
+{
     type Output = V;
 
     fn index(&self, index: K) -> &V {
@@ -104,7 +110,9 @@ impl<K, V> Index<K> for Dict<K, V> where K: Hash + Eq {
     }
 }
 
-impl<K, V> IndexMut<K> for Dict<K, V> where K: Hash + Eq {
+impl<K, V> IndexMut<K> for Dict<K, V>
+    where K: Hash + Eq
+{
     fn index_mut(&mut self, index: K) -> &mut V {
         self.get_mut(&index).expect("invalid index")
     }
@@ -115,17 +123,15 @@ pub struct Set<T> {
     items: HashSet<T, BuildHasherDefault<FnvHasher>>,
 }
 
-impl<T> Set<T> where T: Hash + Eq {
+impl<T> Set<T>
+    where T: Hash + Eq
+{
     pub fn new() -> Self {
-        Set {
-            items: HashSet::default(),
-        }
+        Set { items: HashSet::default() }
     }
 
     pub fn from_vec(items: Vec<T>) -> Self {
-        Set {
-            items: HashSet::from_iter(items),
-        }
+        Set { items: HashSet::from_iter(items) }
     }
 
     pub fn has(&self, t: &T) -> bool {
@@ -208,6 +214,10 @@ impl<T> Holder<T> {
     pub fn del(&mut self, token: Token) -> Option<T> {
         self.exclusions.del(&token);
         self.items.del(&token)
+    }
+
+    pub fn len(&self) -> usize {
+        self.items.len()
     }
 }
 
