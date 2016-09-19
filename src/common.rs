@@ -6,6 +6,16 @@ pub const ADDRTYPE_HOST: u8 = 0x03;
 pub const ADDRTYPE_AUTH: u8 = 0x10;
 pub const ADDRTYPE_MASK: u8 = 0xF;
 
+// SOCKS method definition
+const METHOD_NOAUTH: u8 = 0;
+
+#[derive(Debug, PartialEq)]
+pub enum CheckAuthResult {
+    Success,
+    BadSocksHeader,
+    NoAcceptableMethods,
+}
+
 pub fn parse_header(data: &[u8]) -> Option<(u8, String, u16, usize)> {
     let addr_type = data[0];
     let mut dest_addr = None;
@@ -51,10 +61,45 @@ pub fn parse_header(data: &[u8]) -> Option<(u8, String, u16, usize)> {
                 warn!("header is too short");
             }
         }
-        _ => warn!("unsupported addrtype {}, maybe wrong password or encryption method", addr_type),
+        _ => {
+            warn!("unsupported addrtype {}, maybe wrong password or encryption method",
+                  addr_type)
+        }
     }
 
-    dest_addr.and_then(|dest_addr| {
-        Some((addr_type, dest_addr, dest_port, header_len))
-    })
+    dest_addr.and_then(|dest_addr| Some((addr_type, dest_addr, dest_port, header_len)))
+}
+
+pub fn check_auth_method(data: &[u8]) -> CheckAuthResult {
+    if data.len() < 3 {
+        warn!("method selection header too short");
+        return CheckAuthResult::BadSocksHeader;
+    }
+
+    let socks_version = data[0];
+    if socks_version != 5 {
+        warn!("unsupported SOCKS protocol version {}", socks_version);
+        return CheckAuthResult::BadSocksHeader;
+    }
+
+    let nmethods = data[1];
+    if nmethods < 1 || data.len() as u8 != nmethods + 2 {
+        warn!("NMETHODS and number of METHODS mismatch");
+        return CheckAuthResult::BadSocksHeader;
+    }
+
+    let mut noauto_exist = false;
+    for method in &data[2..] {
+        if *method == METHOD_NOAUTH {
+            noauto_exist = true;
+            break;
+        }
+    }
+
+    if noauto_exist {
+        CheckAuthResult::Success
+    } else {
+        warn!("none of socks method's requested by client is supported");
+        CheckAuthResult::NoAcceptableMethods
+    }
 }

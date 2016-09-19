@@ -12,25 +12,17 @@ use mio::{EventLoop, Token, EventSet, PollOpt};
 use config::Config;
 use util::address2str;
 use encrypt::Encryptor;
-use common::parse_header;
+use common::{parse_header, check_auth_method, CheckAuthResult};
 use network::pair2socket_addr;
 use relay::{Relay, Processor, ProcessResult};
 use asyncdns::{Caller, DNSResolver};
 
 const BUF_SIZE: usize = 32 * 1024;
-// SOCKS method definition
-const METHOD_NOAUTH: u8 = 0;
 // SOCKS command definition
 const CMD_CONNECT: u8 = 1;
 const _CMD_BIND: u8 = 2;
 const CMD_UDP_ASSOCIATE: u8 = 3;
 
-#[derive(Debug, PartialEq)]
-enum CheckAuthResult {
-    Success,
-    BadSocksHeader,
-    NoAcceptableMethods,
-}
 // for each opening port, we have a TCP Relay
 // for each connection, we have a TCP Relay Handler to handle the connection
 //
@@ -445,7 +437,7 @@ impl TCPProcessor {
 
     fn handle_stage_init(&mut self, _event_loop: &mut EventLoop<Relay>, data: &[u8]) -> ProcessResult<Vec<Token>> {
         trace!("handle stage init: {}", processor2str!(self));
-        match self.check_auth_method(data) {
+        match check_auth_method(data) {
             CheckAuthResult::Success => {
                 try_process!(self.write_to_sock(&[0x05, 0x00], true));
                 self.stage = HandleStage::Addr;
@@ -458,40 +450,6 @@ impl TCPProcessor {
                 self.write_to_sock(&[0x05, 0xff], true);
                 need_destroy!(self)
             }
-        }
-    }
-
-    fn check_auth_method(&self, data: &[u8]) -> CheckAuthResult {
-        if data.len() < 3 {
-            warn!("method selection header too short");
-            return CheckAuthResult::BadSocksHeader;
-        }
-
-        let socks_version = data[0];
-        if socks_version != 5 {
-            warn!("unsupported SOCKS protocol version {}", socks_version);
-            return CheckAuthResult::BadSocksHeader;
-        }
-
-        let nmethods = data[1];
-        if nmethods < 1 || data.len() as u8 != nmethods + 2 {
-            warn!("NMETHODS and number of METHODS mismatch");
-            return CheckAuthResult::BadSocksHeader;
-        }
-
-        let mut noauto_exist = false;
-        for method in &data[2..] {
-            if *method == METHOD_NOAUTH {
-                noauto_exist = true;
-                break;
-            }
-        }
-
-        if noauto_exist {
-            CheckAuthResult::Success
-        } else {
-            warn!("none of socks method's requested by client is supported");
-            CheckAuthResult::NoAcceptableMethods
         }
     }
 
