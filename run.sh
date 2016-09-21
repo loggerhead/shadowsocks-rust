@@ -1,12 +1,9 @@
 #!/bin/bash
 PROXY_PORT=8010
 if [[ "$1" == "ps" ]]; then
-    pids=$(ps | grep shadowsocks-rust | grep  target | awk '{ print $1 }')
-    cmd="sudo htop"
-    for p in $pids; do
-        cmd=$(echo "$cmd -p $p")
-    done
-    eval $cmd
+    cpid=$(lsof -i :$PROXY_PORT | grep LISTEN | awk '{ print $2 }')
+    spid=$(lsof -i :8111 | grep LISTEN | awk '{ print $2 }')
+    sudo htop -p $cpid -p $spid
 elif [[ "$1" == "r" ]]; then
     nc -X 5 -x 127.0.0.1:$PROXY_PORT localhost 8001
 elif [[ "$1" == "rs" ]]; then
