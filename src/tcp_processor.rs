@@ -1,5 +1,6 @@
 use std::slice;
 use std::rc::Rc;
+use std::ops::BitAnd;
 use std::str::FromStr;
 use std::cell::RefCell;
 use std::io::{Read, Write, Result, Error, ErrorKind};
@@ -47,20 +48,45 @@ enum HandleStage {
     Destroyed,
 }
 
-pub struct TCPProcessor {
-    conf: Config,
-    stage: HandleStage,
-    dns_resolver: Rc<RefCell<DNSResolver>>,
-    local_token: Option<Token>,
-    local_sock: Option<TcpStream>,
-    remote_token: Option<Token>,
-    remote_sock: Option<TcpStream>,
-    data_to_write_to_local: Option<Vec<u8>>,
-    data_to_write_to_remote: Option<Vec<u8>>,
-    client_address: Option<(String, u16)>,
-    server_address: Option<(String, u16)>,
-    encryptor: Encryptor,
-    interest: EventSet,
+#[derive(Debug, PartialEq)]
+enum StreamDirection {
+    Down,
+    Up
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum StreamStatus {
+    Init,
+    WaitReading,
+    WaitWriting,
+    WaitBoth,
+}
+
+impl BitAnd for StreamStatus {
+    type Output = bool;
+
+    fn bitand(self, rhs: Self) -> Self::Output {
+        if self == StreamStatus::Init || rhs == StreamStatus::Init {
+            return false;
+        }
+
+        match rhs {
+            StreamStatus::WaitReading => {
+                match self {
+                    StreamStatus::WaitWriting => false,
+                    _ => true,
+                }
+            }
+            StreamStatus::WaitWriting => {
+                match self {
+                    StreamStatus::WaitReading => false,
+                    _ => true,
+                }
+            }
+            StreamStatus::WaitBoth => true,
+            _ => unreachable!(),
+        }
+    }
 }
 
 macro_rules! need_destroy {
@@ -94,6 +120,25 @@ macro_rules! processor2str {
     );
 }
 
+pub struct TCPProcessor {
+    conf: Config,
+    stage: HandleStage,
+    dns_resolver: Rc<RefCell<DNSResolver>>,
+    local_token: Option<Token>,
+    local_sock: Option<TcpStream>,
+    remote_token: Option<Token>,
+    remote_sock: Option<TcpStream>,
+    data_to_write_to_local: Option<Vec<u8>>,
+    data_to_write_to_remote: Option<Vec<u8>>,
+    client_address: Option<(String, u16)>,
+    server_address: Option<(String, u16)>,
+    encryptor: Encryptor,
+    local_interest: EventSet,
+    remote_interest: EventSet,
+    downstream_status: StreamStatus,
+    upstream_status: StreamStatus,
+}
+
 impl TCPProcessor {
     pub fn new(conf: Config, local_sock: TcpStream, dns_resolver: Rc<RefCell<DNSResolver>>) -> TCPProcessor {
         let encryptor = Encryptor::new(conf["password"].as_str().unwrap());
@@ -123,7 +168,10 @@ impl TCPProcessor {
             client_address: client_address,
             server_address: None,
             encryptor: encryptor,
-            interest: EventSet::none(),
+            local_interest: EventSet::readable(),
+            remote_interest: EventSet::readable() | EventSet::writable(),
+            downstream_status: StreamStatus::Init,
+            upstream_status: StreamStatus::Init,
         }
     }
 
@@ -146,12 +194,54 @@ impl TCPProcessor {
         Some((addr, port))
     }
 
+    fn update_stream(&mut self, stream: StreamDirection, status: StreamStatus) {
+        let mut dirty = false;
+        match stream {
+            StreamDirection::Down => {
+                dirty = dirty || self.downstream_status != status;
+                self.downstream_status = status
+            }
+            StreamDirection::Up => {
+                dirty = dirty || self.upstream_status != status;
+                self.upstream_status = status
+            }
+        }
+
+        if !dirty {
+            return;
+        }
+
+        if self.local_sock.is_some() {
+            self.local_interest = EventSet::none();
+            if self.downstream_status & StreamStatus::WaitWriting {
+                self.local_interest = self.local_interest | EventSet::writable();
+            }
+            if self.upstream_status & StreamStatus::WaitReading {
+                self.local_interest = self.local_interest | EventSet::readable();
+            }
+        }
+
+        if self.remote_sock.is_some() {
+            self.remote_interest = EventSet::none();
+            if self.downstream_status & StreamStatus::WaitReading {
+                self.remote_interest = self.remote_interest | EventSet::readable();
+            }
+            if self.upstream_status & StreamStatus::WaitWriting {
+                self.remote_interest = self.remote_interest | EventSet::writable();
+            }
+        }
+    }
+
     fn do_register(&mut self, event_loop: &mut EventLoop<Relay>, is_local_sock: bool, is_reregister: bool) -> bool {
         macro_rules! register_sock {
             ($sock:expr, $token:expr) => (
                 {
                     let sock = $sock.take().unwrap();
-                    let events = self.interest;
+                    let events = if is_local_sock {
+                        self.local_interest
+                    } else {
+                        self.remote_interest
+                    };
                     let pollopts = PollOpt::edge() | PollOpt::oneshot();
 
                     let register_result = if is_reregister {
@@ -192,29 +282,11 @@ impl TCPProcessor {
     }
 
     pub fn register(&mut self, event_loop: &mut EventLoop<Relay>, is_local_sock: bool) -> bool {
-        self.interest = if is_local_sock {
-            EventSet::readable()
-        } else {
-            EventSet::writable()
-        };
         self.do_register(event_loop, is_local_sock, false)
     }
 
     fn reregister(&mut self, event_loop: &mut EventLoop<Relay>, is_local_sock: bool) -> bool {
         self.do_register(event_loop, is_local_sock, true)
-    }
-
-    fn change_interest(&mut self, events: EventSet) {
-        debug!("{} change to interest to {:?}", processor2str!(self), events);
-        self.interest = events;
-    }
-
-    fn change_interest_to_rw(&mut self) {
-        self.change_interest(EventSet::readable() | EventSet::writable());
-    }
-
-    fn change_interest_to_r(&mut self) {
-        self.change_interest(EventSet::readable());
     }
 
     fn receive_data(&mut self, is_local_sock: bool) -> (Option<Vec<u8>>, ProcessResult<Vec<Token>>) {
@@ -311,29 +383,6 @@ impl TCPProcessor {
         self.set_buf(buf, is_local_sock);
     }
 
-    fn send_buf_data(&mut self, is_local_sock: bool) -> ProcessResult<Vec<Token>> {
-        let mut buf = self.get_buf(is_local_sock);
-        let result = if buf.len() == 0 {
-            ProcessResult::Success
-        } else {
-            match self.write_to_sock(&buf, is_local_sock) {
-                (nwrite, ProcessResult::Success) => {
-                    let uncompleted = buf.len() - nwrite;
-                    for i in 0..uncompleted {
-                        buf[i] = buf[i + nwrite];
-                    }
-                    unsafe { buf.set_len(uncompleted); }
-                    self.change_interest_to_rw();
-                    ProcessResult::Success
-                }
-                (_, result) => result,
-            }
-        };
-
-        self.set_buf(buf, is_local_sock);
-        result
-    }
-
     fn write_to_sock(&mut self, data: &[u8], is_local_sock: bool) -> (usize, ProcessResult<Vec<Token>>) {
         macro_rules! write {
             ($sock:expr, $data:expr) => (
@@ -343,6 +392,25 @@ impl TCPProcessor {
                     let result = match sock.write($data) {
                         Ok(n) => {
                             debug!("writed {} bytes to {} socket of {}", n, s, processor2str!(self));
+                            // if complete
+                            if n == data.len() {
+                                if is_local_sock {
+                                    self.update_stream(StreamDirection::Down,
+                                                       StreamStatus::WaitReading);
+                                } else {
+                                    self.update_stream(StreamDirection::Up,
+                                                       StreamStatus::WaitReading);
+                                }
+                            } else {
+                                if is_local_sock {
+                                    self.update_stream(StreamDirection::Down,
+                                                       StreamStatus::WaitWriting);
+                                } else {
+                                    self.update_stream(StreamDirection::Up,
+                                                       StreamStatus::WaitWriting);
+                                }
+                            }
+
                             (n, ProcessResult::Success)
                         }
                         Err(e) => {
@@ -440,7 +508,7 @@ impl TCPProcessor {
         match parse_header(data) {
             Some((_addr_type, remote_address, remote_port, header_length)) => {
                 self.stage = HandleStage::DNS;
-
+                self.update_stream(StreamDirection::Up, StreamStatus::WaitWriting);
                 // => ssserver
                 if cfg!(feature = "is_client") {
                     let response = &[0x05, 0x00, 0x00, 0x01,
@@ -571,17 +639,37 @@ impl TCPProcessor {
     }
 
     fn on_write(&mut self, _event_loop: &mut EventLoop<Relay>, is_local_sock: bool) -> ProcessResult<Vec<Token>> {
-        let result = if self.get_buf_len(is_local_sock) > 0 {
-            self.send_buf_data(is_local_sock)
+        if self.get_buf_len(is_local_sock) > 0 {
+            let mut buf = self.get_buf(is_local_sock);
+            let result = if buf.len() == 0 {
+                ProcessResult::Success
+            } else {
+                match self.write_to_sock(&buf, is_local_sock) {
+                    (nwrite, ProcessResult::Success) => {
+                        let uncompleted = buf.len() - nwrite;
+                        for i in 0..uncompleted {
+                            buf[i] = buf[i + nwrite];
+                        }
+                        unsafe { buf.set_len(uncompleted); }
+
+                        ProcessResult::Success
+                    }
+                    (_, result) => result,
+                }
+            };
+
+            self.set_buf(buf, is_local_sock);
+
+            result
         } else {
+            if is_local_sock {
+                self.update_stream(StreamDirection::Down, StreamStatus::WaitReading);
+            } else {
+                self.update_stream(StreamDirection::Up, StreamStatus::WaitReading);
+            }
+
             ProcessResult::Success
-        };
-
-        if self.get_buf_len(is_local_sock) == 0 {
-            self.change_interest_to_r();
         }
-
-        result
     }
 
     fn on_local_write(&mut self, event_loop: &mut EventLoop<Relay>) -> ProcessResult<Vec<Token>> {
@@ -637,6 +725,8 @@ impl Caller for TCPProcessor {
                                                           ip, port);
                         self.remote_sock = Some(sock);
                         self.register(event_loop, false);
+                        self.update_stream(StreamDirection::Up, StreamStatus::WaitBoth);
+                        self.update_stream(StreamDirection::Down, StreamStatus::WaitReading);
                         ProcessResult::Success
                     }
                     Err(e) => {
