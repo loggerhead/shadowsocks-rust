@@ -508,7 +508,6 @@ impl TCPProcessor {
         match parse_header(data) {
             Some((_addr_type, remote_address, remote_port, header_length)) => {
                 self.stage = HandleStage::DNS;
-                self.update_stream(StreamDirection::Up, StreamStatus::WaitWriting);
                 // => ssserver
                 if cfg!(feature = "is_client") {
                     let response = &[0x05, 0x00, 0x00, 0x01,
