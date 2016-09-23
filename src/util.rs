@@ -35,9 +35,9 @@ pub fn init_env_logger() {
 }
 
 pub fn address2str(address: &Option<(String, u16)>) -> String {
-    match address {
-        &Some((ref host, port)) => format!("{}:{}", host, port),
-        _ => format!("None"),
+    match *address {
+        Some((ref host, port)) => format!("{}:{}", host, port),
+        _ => "None".to_string(),
     }
 }
 
@@ -98,6 +98,10 @@ impl<K, V> Dict<K, V>
     pub fn len(&self) -> usize {
         self.map.len()
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 impl<K, V> Index<K> for Dict<K, V>
@@ -148,10 +152,6 @@ impl<T> Set<T>
 
     pub fn iter(&self) -> Iter<T> {
         self.items.iter()
-    }
-
-    pub fn to_vec(self) -> Vec<T> {
-        self.items.into_iter().collect()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -218,6 +218,10 @@ impl<T> Holder<T> {
 
     pub fn len(&self) -> usize {
         self.items.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 

@@ -56,12 +56,12 @@ use network::{NetworkWriteBytes, NetworkReadBytes};
 //     |                    ARCOUNT                    |
 //     +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
 
-const QTYPE_A    : u16 = 1;
-const QTYPE_AAAA : u16 = 28;
+const QTYPE_A: u16 = 1;
+const QTYPE_AAAA: u16 = 28;
 const QTYPE_CNAME: u16 = 5;
-const QTYPE_NS   : u16 = 2;
-const QCLASS_IN  : u16 = 1;
-const _QTYPE_ANY  : u16 = 255;
+const QTYPE_NS: u16 = 2;
+const QCLASS_IN: u16 = 1;
+const _QTYPE_ANY: u16 = 255;
 
 type ResponseRecord = (String, String, u16, u16);
 type ResponseHeader = (u16, u16, u16, u16, u16, u16, u16, u16, u16);
@@ -69,8 +69,10 @@ pub type Callback = FnMut(&mut Caller, Option<(String, String)>, Option<&str>);
 
 pub trait Caller {
     fn get_id(&self) -> Token;
-    fn handle_dns_resolved(&mut self, event_loop: &mut EventLoop<Relay>,
-                           Option<(String, String)>, Option<String>)
+    fn handle_dns_resolved(&mut self,
+                           event_loop: &mut EventLoop<Relay>,
+                           Option<(String, String)>,
+                           Option<String>)
                            -> ProcessResult<Vec<Token>>;
 }
 
@@ -91,7 +93,7 @@ impl DNSResponse {
         DNSResponse {
             hostname: String::new(),
             questions: Vec::new(),
-            answers: Vec::new()
+            answers: Vec::new(),
         }
     }
 }
@@ -164,7 +166,7 @@ impl DNSResolver {
         match self.sock {
             Some(ref sock) => {
                 debug!("send query request of {} to servers", &hostname);
-                for server in self.servers.iter() {
+                for server in &self.servers {
                     let server = format!("{}:53", server);
                     let addr = SocketAddr::V4(str2addr4(&server).unwrap());
                     let req = build_request(&hostname, qtype).unwrap();
@@ -178,8 +180,11 @@ impl DNSResolver {
         }
     }
 
-    pub fn resolve(&mut self, token: Token, hostname: String) -> (Option<(String, String)>, Option<String>) {
-        if hostname.len() == 0 {
+    pub fn resolve(&mut self,
+                   token: Token,
+                   hostname: String)
+                   -> (Option<(String, String)>, Option<String>) {
+        if hostname.is_empty() {
             (None, Some("empty hostname".to_string()))
         } else if is_ip(&hostname) {
             (Some((hostname.clone(), hostname.clone())), None)
@@ -209,11 +214,11 @@ impl DNSResolver {
     fn call_callback(&mut self, event_loop: &mut EventLoop<Relay>, hostname: String, ip: String) {
         if let Some(tokens) = self.hostname_to_tokens.del(&hostname) {
             for token in tokens.iter() {
-                self.token_to_hostname.del(&token);
+                self.token_to_hostname.del(token);
 
                 let hostname_ip = Some((hostname.clone(), ip.clone()));
                 let caller = self.callers.get_mut(token).unwrap();
-                if ip.len() > 0 {
+                if !ip.is_empty() {
                     caller.borrow_mut().handle_dns_resolved(event_loop, hostname_ip, None);
                 } else {
                     let errmsg = format!("unknown hostname {}", hostname.clone());
@@ -229,7 +234,7 @@ impl DNSResolver {
         match parse_response(data) {
             Some(response) => {
                 let mut ip = String::new();
-                for answer in response.answers.iter() {
+                for answer in &response.answers {
                     if (answer.1 == QTYPE_A || answer.1 == QTYPE_AAAA) && answer.2 == QCLASS_IN {
                         ip = answer.0.clone();
                         break;
@@ -240,13 +245,13 @@ impl DNSResolver {
                 let hostname_status = match self.hostname_status.get(&hostname) {
                     Some(&HostnameStatus::First) => 1,
                     Some(&HostnameStatus::Second) => 2,
-                    _ => 0
+                    _ => 0,
                 };
 
-                if ip.len() == 0 && hostname_status == 1 {
+                if ip.is_empty() && hostname_status == 1 {
                     self.hostname_status.put(hostname.clone(), HostnameStatus::Second);
                     self.send_request(hostname, self.qtypes[1]);
-                } else if ip.len() > 0 {
+                } else if !ip.is_empty() {
                     self.cache.insert(hostname.clone(), ip.clone());
                     self.call_callback(event_loop, hostname, ip);
                 } else if hostname_status == 2 {
@@ -299,7 +304,8 @@ impl DNSResolver {
 }
 
 impl Processor for DNSResolver {
-    fn process(&mut self, event_loop: &mut EventLoop<Relay>,
+    fn process(&mut self,
+               event_loop: &mut EventLoop<Relay>,
                token: Token,
                events: EventSet)
                -> ProcessResult<Vec<Token>> {
@@ -342,13 +348,13 @@ impl Processor for DNSResolver {
 fn build_address(address: &str) -> Option<Vec<u8>> {
     let mut v = vec![];
     let bytes = address.as_bytes();
-    for label in bytes.split(|b| *b == '.' as u8) {
+    for label in bytes.split(|ch| *ch == b'.') {
         match label.len() {
             0 => continue,
             n if n > 63 => return None,
             n => {
                 v.push(n as u8);
-                v.extend(label);
+                v.extend_from_slice(label);
             }
         }
     }
@@ -463,35 +469,35 @@ fn parse_record(data: &[u8], offset: u16, question: bool) -> Option<(u16, Respon
     //     |                     QCLASS                    |
     //     +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
     let res = if question {
-        let bytes = &data[(offset + nlen) as usize ..(offset + nlen + 4) as usize];
+        let bytes = &data[(offset + nlen) as usize..(offset + nlen + 4) as usize];
         let mut record = Cursor::new(bytes);
 
         let record_type = try_opt!(record.get_u16());
         let record_class = try_opt!(record.get_u16());
 
         (nlen + 4, (name, String::new(), record_type, record_class))
-    //                                    1  1  1  1  1  1
-    //      0  1  2  3  4  5  6  7  8  9  0  1  2  3  4  5
-    //    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
-    //    |                                               |
-    //    /                                               /
-    //    /                      NAME                     /
-    //    |                                               |
-    //    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
-    //    |                      TYPE                     |
-    //    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
-    //    |                     CLASS                     |
-    //    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
-    //    |                      TTL                      |
-    //    |                                               |
-    //    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
-    //    |                   RDLENGTH                    |
-    //    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--|
-    //    /                     RDATA                     /
-    //    /                                               /
-    //    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+        //                                    1  1  1  1  1  1
+        //      0  1  2  3  4  5  6  7  8  9  0  1  2  3  4  5
+        //    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+        //    |                                               |
+        //    /                                               /
+        //    /                      NAME                     /
+        //    |                                               |
+        //    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+        //    |                      TYPE                     |
+        //    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+        //    |                     CLASS                     |
+        //    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+        //    |                      TTL                      |
+        //    |                                               |
+        //    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+        //    |                   RDLENGTH                    |
+        //    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--|
+        //    /                     RDATA                     /
+        //    /                                               /
+        //    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
     } else {
-        let bytes = &data[(offset + nlen) as usize ..(offset + nlen + 10) as usize];
+        let bytes = &data[(offset + nlen) as usize..(offset + nlen + 10) as usize];
         let mut record = Cursor::new(bytes);
 
         let record_type = try_opt!(record.get_u16());
@@ -523,22 +529,26 @@ fn parse_header(data: &[u8]) -> Option<ResponseHeader> {
         (u8, $r:expr) => ( try_opt!($r.get_u8()); );
     }
 
-    let id      = unpack!(u16, header);
-    let byte3   = unpack!(u8, header);
-    let byte4   = unpack!(u8, header);
+    let id = unpack!(u16, header);
+    let byte3 = unpack!(u8, header);
+    let byte4 = unpack!(u8, header);
     let qdcount = unpack!(u16, header);
     let ancount = unpack!(u16, header);
     let nscount = unpack!(u16, header);
     let arcount = unpack!(u16, header);
-    let qr      = (byte3 & 0b10000000) as u16;
-    let tc      = (byte3 & 0b00000010) as u16;
-    let ra      = (byte4 & 0b00000010) as u16;
-    let rcode   = (byte4 & 0b00001111) as u16;
+    let qr = (byte3 & 0b10000000) as u16;
+    let tc = (byte3 & 0b00000010) as u16;
+    let ra = (byte4 & 0b00000010) as u16;
+    let rcode = (byte4 & 0b00001111) as u16;
 
     Some((id, qr, tc, ra, rcode, qdcount, ancount, nscount, arcount))
 }
 
-fn parse_records(data: &[u8], offset: u16, count: u16, question: bool) -> Option<(u16, Vec<ResponseRecord>)> {
+fn parse_records(data: &[u8],
+                 offset: u16,
+                 count: u16,
+                 question: bool)
+                 -> Option<(u16, Vec<ResponseRecord>)> {
     let mut records: Vec<ResponseRecord> = Vec::new();
     let mut offset = offset;
 
@@ -567,7 +577,7 @@ fn parse_response(data: &[u8]) -> Option<DNSResponse> {
         let (_offset, _ars) = try_opt!(parse_records(data, _offset, _arcount, false));
 
         let mut response = DNSResponse::new();
-        if qds.len() > 0 {
+        if !qds.is_empty() {
             response.hostname = qds[0].0.clone();
         }
         for an in qds {
@@ -584,7 +594,8 @@ fn parse_response(data: &[u8]) -> Option<DNSResponse> {
 fn parse_resolv() -> Vec<String> {
     let mut servers = vec![];
 
-    handle_every_line("/etc/resolv.conf", &mut |line| {
+    handle_every_line("/etc/resolv.conf",
+                      &mut |line| {
         if line.starts_with("nameserver") {
             if let Some(server) = line.split_whitespace().nth(1) {
                 if is_ip(server) {
@@ -594,9 +605,8 @@ fn parse_resolv() -> Vec<String> {
         }
     });
 
-    if servers.len() == 0 {
-        servers = vec!["8.8.4.4".to_string(),
-                       "8.8.8.8".to_string()];
+    if servers.is_empty() {
+        servers = vec!["8.8.4.4".to_string(), "8.8.8.8".to_string()];
     }
 
     servers
@@ -605,13 +615,14 @@ fn parse_resolv() -> Vec<String> {
 fn parse_hosts() -> Dict<String, String> {
     let mut hosts = Dict::new();
 
-    handle_every_line("/etc/hosts", &mut |line| {
+    handle_every_line("/etc/hosts",
+                      &mut |line| {
         let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() > 0 {
+        if !parts.is_empty() {
             let ip = parts[0];
             if is_ip(ip) {
                 for hostname in parts[1..].iter() {
-                    if hostname.len() > 0 {
+                    if !hostname.is_empty() {
                         hosts.put(hostname.to_string(), ip.to_string());
                     }
                 }
@@ -619,8 +630,7 @@ fn parse_hosts() -> Dict<String, String> {
         }
     });
 
-    hosts.put("localhost".to_string(),
-              "127.0.0.1".to_string());
+    hosts.put("localhost".to_string(), "127.0.0.1".to_string());
 
     hosts
 }
@@ -640,7 +650,7 @@ fn is_valid_hostname(hostname: &str) -> bool {
         .split(|c| *c == b'.')
         .all(|s| {
             let s = slice2str(s).unwrap_or("");
-            s.len() > 0 && !s.starts_with("-") && !s.ends_with("-") && RE.is_match(s)
+            !s.is_empty() && !s.starts_with('-') && !s.ends_with('-') && RE.is_match(s)
         })
 }
 
@@ -650,31 +660,20 @@ mod test {
 
     #[test]
     fn parse_response() {
-        let data: &[u8] = &[
-            0x0d, 0x0d, 0x81, 0x80, 0x00, 0x01, 0x00, 0x04,
-            0x00, 0x05, 0x00, 0x00, 0x05, 0x62, 0x61, 0x69,
-            0x64, 0x75, 0x03, 0x63, 0x6f, 0x6d, 0x00, 0x00,
-            0x01, 0x00, 0x01, 0xc0, 0x0c, 0x00, 0x01, 0x00,
-            0x01, 0x00, 0x00, 0x00, 0x36, 0x00, 0x04, 0xb4,
-            0x95, 0x84, 0x2f, 0xc0, 0x0c, 0x00, 0x01, 0x00,
-            0x01, 0x00, 0x00, 0x00, 0x36, 0x00, 0x04, 0xdc,
-            0xb5, 0x39, 0xd9, 0xc0, 0x0c, 0x00, 0x01, 0x00,
-            0x01, 0x00, 0x00, 0x00, 0x36, 0x00, 0x04, 0x6f,
-            0x0d, 0x65, 0xd0, 0xc0, 0x0c, 0x00, 0x01, 0x00,
-            0x01, 0x00, 0x00, 0x00, 0x36, 0x00, 0x04, 0x7b,
-            0x7d, 0x72, 0x90, 0xc0, 0x0c, 0x00, 0x02, 0x00,
-            0x01, 0x00, 0x01, 0x4f, 0x30, 0x00, 0x06, 0x03,
-            0x64, 0x6e, 0x73, 0xc0, 0x0c, 0xc0, 0x0c, 0x00,
-            0x02, 0x00, 0x01, 0x00, 0x01, 0x4f, 0x30, 0x00,
-            0x06, 0x03, 0x6e, 0x73, 0x37, 0xc0, 0x0c, 0xc0,
-            0x0c, 0x00, 0x02, 0x00, 0x01, 0x00, 0x01, 0x4f,
-            0x30, 0x00, 0x06, 0x03, 0x6e, 0x73, 0x33, 0xc0,
-            0x0c, 0xc0, 0x0c, 0x00, 0x02, 0x00, 0x01, 0x00,
-            0x01, 0x4f, 0x30, 0x00, 0x06, 0x03, 0x6e, 0x73,
-            0x34, 0xc0, 0x0c, 0xc0, 0x0c, 0x00, 0x02, 0x00,
-            0x01, 0x00, 0x01, 0x4f, 0x30, 0x00, 0x06, 0x03,
-            0x6e, 0x73, 0x32, 0xc0, 0x0c,
-        ];
+        let data: &[u8] =
+            &[0x0d, 0x0d, 0x81, 0x80, 0x00, 0x01, 0x00, 0x04, 0x00, 0x05, 0x00, 0x00, 0x05, 0x62,
+              0x61, 0x69, 0x64, 0x75, 0x03, 0x63, 0x6f, 0x6d, 0x00, 0x00, 0x01, 0x00, 0x01, 0xc0,
+              0x0c, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x36, 0x00, 0x04, 0xb4, 0x95, 0x84,
+              0x2f, 0xc0, 0x0c, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x36, 0x00, 0x04, 0xdc,
+              0xb5, 0x39, 0xd9, 0xc0, 0x0c, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x36, 0x00,
+              0x04, 0x6f, 0x0d, 0x65, 0xd0, 0xc0, 0x0c, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00,
+              0x36, 0x00, 0x04, 0x7b, 0x7d, 0x72, 0x90, 0xc0, 0x0c, 0x00, 0x02, 0x00, 0x01, 0x00,
+              0x01, 0x4f, 0x30, 0x00, 0x06, 0x03, 0x64, 0x6e, 0x73, 0xc0, 0x0c, 0xc0, 0x0c, 0x00,
+              0x02, 0x00, 0x01, 0x00, 0x01, 0x4f, 0x30, 0x00, 0x06, 0x03, 0x6e, 0x73, 0x37, 0xc0,
+              0x0c, 0xc0, 0x0c, 0x00, 0x02, 0x00, 0x01, 0x00, 0x01, 0x4f, 0x30, 0x00, 0x06, 0x03,
+              0x6e, 0x73, 0x33, 0xc0, 0x0c, 0xc0, 0x0c, 0x00, 0x02, 0x00, 0x01, 0x00, 0x01, 0x4f,
+              0x30, 0x00, 0x06, 0x03, 0x6e, 0x73, 0x34, 0xc0, 0x0c, 0xc0, 0x0c, 0x00, 0x02, 0x00,
+              0x01, 0x00, 0x01, 0x4f, 0x30, 0x00, 0x06, 0x03, 0x6e, 0x73, 0x32, 0xc0, 0x0c];
 
         assert!(asyncdns::parse_response(data).is_some());
     }

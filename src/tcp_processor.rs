@@ -105,7 +105,7 @@ macro_rules! try_process {
     ($process:expr) => (
         match $process {
             ProcessResult::Success => {},
-            res @ _ => return res,
+            res => return res,
         }
     );
 }
@@ -348,7 +348,7 @@ impl TCPProcessor {
         let need_decrypt = (cfg!(feature = "is_client") && !is_local_sock)
                         || (!cfg!(feature = "is_client") && is_local_sock);
 
-        let (data, need_destroy) = if need_decrypt && buf.len() > 0 {
+        let (data, need_destroy) = if need_decrypt && !buf.is_empty() {
             match self.encryptor.decrypt(&buf) {
                 decrypted @ Some(_) => {
                     (decrypted, need_destroy || false)
@@ -647,7 +647,7 @@ impl TCPProcessor {
     fn on_write(&mut self, _event_loop: &mut EventLoop<Relay>, is_local_sock: bool) -> ProcessResult<Vec<Token>> {
         if self.get_buf_len(is_local_sock) > 0 {
             let mut buf = self.get_buf(is_local_sock);
-            let result = if buf.len() == 0 {
+            let result = if buf.is_empty() {
                 ProcessResult::Success
             } else {
                 match self.write_to_sock(&buf, is_local_sock) {

@@ -9,7 +9,7 @@ use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt};
 #[allow(non_camel_case_types)]
 pub enum AddressFamily {
     AF_INET,
-    AF_INET6
+    AF_INET6,
 }
 
 pub fn alloc_udp_socket() -> Option<UdpSocket> {
@@ -27,7 +27,7 @@ pub fn get_address_family(address: &str) -> Option<AddressFamily> {
         return Some(AddressFamily::AF_INET);
     }
 
-    match str2addr6(&format!("{}", address)) {
+    match str2addr6(address) {
         Some(_) => Some(AddressFamily::AF_INET6),
         _ => None,
     }
@@ -70,9 +70,7 @@ pub fn str2addr6(ip: &str) -> Option<SocketAddrV6> {
 }
 
 pub fn pair2socket_addr(ip: &str, port: u16) -> Result<SocketAddr, AddrParseError> {
-    Ipv4Addr::from_str(ip).map(|ip| {
-        SocketAddr::new(IpAddr::V4(ip), port)
-    })
+    Ipv4Addr::from_str(ip).map(|ip| SocketAddr::new(IpAddr::V4(ip), port))
 }
 
 
@@ -86,7 +84,7 @@ pub trait NetworkWriteBytes: WriteBytesExt {
     }
 }
 
-impl NetworkWriteBytes for Vec<u8> { }
+impl NetworkWriteBytes for Vec<u8> {}
 
 pub trait NetworkReadBytes: ReadBytesExt {
     fn get_u8(&mut self) -> Option<u8> {
@@ -102,8 +100,8 @@ pub trait NetworkReadBytes: ReadBytesExt {
     }
 }
 
-impl<'a> NetworkReadBytes for Cursor<&'a [u8]> { }
-impl<'a> NetworkReadBytes for Cursor<&'a Vec<u8>> { }
+impl<'a> NetworkReadBytes for Cursor<&'a [u8]> {}
+impl<'a> NetworkReadBytes for Cursor<&'a Vec<u8>> {}
 
 impl<'a> NetworkReadBytes for &'a [u8] {
     fn get_u8(&mut self) -> Option<u8> {

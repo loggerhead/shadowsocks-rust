@@ -1,3 +1,7 @@
+#![feature(plugin)]
+#![plugin(clippy)]
+#![allow(collapsible_if, needless_range_loop)]
+
 #[macro_use]
 extern crate try_opt;
 #[macro_use]

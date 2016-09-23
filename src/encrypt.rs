@@ -7,7 +7,7 @@ use crypto::symmetriccipher::SynchronousStreamCipher;
 type Cipher = Box<SynchronousStreamCipher + 'static>;
 
 fn create_cipher(key: &[u8], iv: &[u8]) -> Cipher {
-    Box::new(ctr(KeySize::KeySize256, &key, &iv))
+    Box::new(ctr(KeySize::KeySize256, key, iv))
 }
 
 // equivalent to OpenSSL's EVP_BytesToKey() with count 1
@@ -50,8 +50,8 @@ macro_rules! process {
     ($cipher:expr, $data:expr) => (
         {
             let mut output = vec![0u8; $data.len()];
-            match $cipher {
-                &mut Some(ref mut cipher) => {
+            match *($cipher) {
+                Some(ref mut cipher) => {
                     cipher.process($data, output.as_mut_slice());
                     Some(output)
                 }
@@ -109,7 +109,7 @@ impl Encryptor {
 
                     Some(result)
                 }
-                _ => return None,
+                _ => None,
             }
         }
     }
