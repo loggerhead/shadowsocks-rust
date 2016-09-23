@@ -12,11 +12,11 @@
 - [x] remove unnecessary `clone` ~~(maybe this is the cause of high CPU problem)~~
 - [x] find the reason of high CPU (5% ~ 20%)
 - [ ] response slow after fixed high CPU problem
+- [ ] finish all TODO items in source
 - [ ] handle the timeout situation of client
+- [ ] handle DNS error properly (e.g. remove caller or call `resolve` again)
 - [ ] review `tcp_processor`
 - [ ] refactor error handle
-- [ ] handle DNS error properly (e.g. remove caller or call `resolve` again)
-- [ ] finish all TODO items in source
 
 #Test
 * http://www.bilibili.com/
