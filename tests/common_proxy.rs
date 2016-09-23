@@ -7,16 +7,14 @@ use shadowsocks::config;
 use shadowsocks::relay::Relay;
 
 
-const URLS: &'static [&'static str] = &[
-    "https://www.baidu.com/",
-    "https://news.ycombinator.com/news/",
-    "http://test-ipv6.com/",
-];
+const URLS: &'static [&'static str] =
+    &["https://www.baidu.com/", "https://news.ycombinator.com/news/", "http://test-ipv6.com/"];
 
 
 #[test]
 fn main() {
     // TODO: change to get args from command line
+    // TODO: to use curl lib, see tokio-socks/tests
     start_client("tests/config/local_conf.toml");
     start_server("tests/config/server_conf.toml");
 
@@ -29,7 +27,9 @@ fn main() {
             let res1 = run_curl(url, None);
             let res2 = run_curl(url, Some("127.0.0.1:8488"));
             assert_eq!(res1.status, res2.status, "{}", url);
-            assert!(res1.stdout == res2.stdout, "output of curl not equal: {}", url);
+            assert!(res1.stdout == res2.stdout,
+                    "output of curl not equal: {}",
+                    url);
 
             // if res1.stdout != res2.stdout {
             //     use std::str;
@@ -72,9 +72,13 @@ fn start_server(config_path: &str) -> thread::JoinHandle<()> {
 
 fn run_curl(url: &str, proxy: Option<&str>) -> Output {
     let mut cmd = Command::new("curl");
-    cmd.arg(url).arg("-v").arg("-L")
-       .arg("-m").arg("15")
-       .arg("--connect-timeout").arg("10");
+    cmd.arg(url)
+        .arg("-v")
+        .arg("-L")
+        .arg("-m")
+        .arg("15")
+        .arg("--connect-timeout")
+        .arg("10");
 
     if let Some(proxy_address) = proxy {
         cmd.arg("--socks5-hostname").arg(proxy_address);
