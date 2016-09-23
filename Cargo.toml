@@ -10,8 +10,16 @@ My implemention of shadowsocks
 """
 readme = "README.md"
 
-[lib]
-name = "shadowsocks"
+[[bin]]
+name = "sslocal"
+path = "src/main.rs"
+
+# TODO: uncomment the following lines when
+# https://github.com/rust-lang/cargo/pull/2325 has implemented.
+# [[bin]]
+# name = "ssserver"
+# path = "src/main.rs"
+# required-features = ["is_client"]
 
 [dependencies]
 mio = "0.5"
