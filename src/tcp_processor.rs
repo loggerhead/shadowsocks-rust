@@ -168,10 +168,10 @@ impl TCPProcessor {
             client_address: client_address,
             server_address: None,
             encryptor: encryptor,
-            local_interest: EventSet::readable(),
-            remote_interest: EventSet::readable() | EventSet::writable(),
+            local_interest: EventSet::none(),
+            remote_interest: EventSet::none(),
             downstream_status: StreamStatus::Init,
-            upstream_status: StreamStatus::Init,
+            upstream_status: StreamStatus::WaitReading,
         }
     }
 
@@ -232,6 +232,22 @@ impl TCPProcessor {
         }
     }
 
+    fn update_stream_depend_on(&mut self, is_finished: bool, is_local_sock: bool) {
+        if is_finished {
+            if is_local_sock {
+                self.update_stream(StreamDirection::Down, StreamStatus::WaitReading);
+            } else {
+                self.update_stream(StreamDirection::Up, StreamStatus::WaitReading);
+            }
+        } else {
+            if is_local_sock {
+                self.update_stream(StreamDirection::Down, StreamStatus::WaitWriting);
+            } else {
+                self.update_stream(StreamDirection::Up, StreamStatus::WaitWriting);
+            }
+        }
+    }
+
     fn do_register(&mut self, event_loop: &mut EventLoop<Relay>, is_local_sock: bool, is_reregister: bool) -> bool {
         macro_rules! register_sock {
             ($sock:expr, $token:expr) => (
@@ -282,6 +298,11 @@ impl TCPProcessor {
     }
 
     pub fn register(&mut self, event_loop: &mut EventLoop<Relay>, is_local_sock: bool) -> bool {
+        if is_local_sock {
+            self.local_interest = EventSet::readable();
+        } else {
+            self.remote_interest = EventSet::readable() | EventSet::writable();
+        }
         self.do_register(event_loop, is_local_sock, false)
     }
 
@@ -392,25 +413,6 @@ impl TCPProcessor {
                     let result = match sock.write($data) {
                         Ok(n) => {
                             debug!("writed {} bytes to {} socket of {}", n, s, processor2str!(self));
-                            // if complete
-                            if n == data.len() {
-                                if is_local_sock {
-                                    self.update_stream(StreamDirection::Down,
-                                                       StreamStatus::WaitReading);
-                                } else {
-                                    self.update_stream(StreamDirection::Up,
-                                                       StreamStatus::WaitReading);
-                                }
-                            } else {
-                                if is_local_sock {
-                                    self.update_stream(StreamDirection::Down,
-                                                       StreamStatus::WaitWriting);
-                                } else {
-                                    self.update_stream(StreamDirection::Up,
-                                                       StreamStatus::WaitWriting);
-                                }
-                            }
-
                             (n, ProcessResult::Success)
                         }
                         Err(e) => {
@@ -444,6 +446,7 @@ impl TCPProcessor {
                             if nwrite < $data.len() {
                                 self.extend_buf(&$data[nwrite..], false);
                             }
+                            self.update_stream_depend_on($data.len() == nwrite, false);
                             ProcessResult::Success
                         }
                         (_, result) => result,
@@ -507,8 +510,9 @@ impl TCPProcessor {
         // parse socks5 header
         match parse_header(data) {
             Some((_addr_type, remote_address, remote_port, header_length)) => {
+                self.update_stream(StreamDirection::Up, StreamStatus::WaitWriting);
                 self.stage = HandleStage::DNS;
-                // => ssserver
+                // remote_address is ssserver
                 if cfg!(feature = "is_client") {
                     let response = &[0x05, 0x00, 0x00, 0x01,
                                      0x00, 0x00, 0x00, 0x00,
@@ -517,6 +521,7 @@ impl TCPProcessor {
                         (_, ProcessResult::Success) => {},
                         (_, result) => return result,
                     }
+                    self.update_stream(StreamDirection::Down, StreamStatus::WaitReading);
 
                     match self.encryptor.encrypt(data) {
                         Some(ref data) => self.extend_buf(data, false),
@@ -526,7 +531,7 @@ impl TCPProcessor {
                         }
                     }
                     self.server_address = self.choose_a_server();
-                // => server
+                // remote_address is server
                 } else {
                     if data.len() > header_length {
                         self.extend_buf(&data[header_length..], false);
@@ -610,6 +615,8 @@ impl TCPProcessor {
                             if nwrite < $data.len() {
                                 self.extend_buf(&$data[nwrite..], true);
                             }
+                            self.update_stream_depend_on($data.len() == nwrite, true);
+
                             ProcessResult::Success
                         }
                         (_, result) => result,
@@ -645,11 +652,12 @@ impl TCPProcessor {
             } else {
                 match self.write_to_sock(&buf, is_local_sock) {
                     (nwrite, ProcessResult::Success) => {
-                        let uncompleted = buf.len() - nwrite;
-                        for i in 0..uncompleted {
+                        let uncompleted_len = buf.len() - nwrite;
+                        for i in 0..uncompleted_len {
                             buf[i] = buf[i + nwrite];
                         }
-                        unsafe { buf.set_len(uncompleted); }
+                        unsafe { buf.set_len(uncompleted_len); }
+                        self.update_stream_depend_on(uncompleted_len == 0, is_local_sock);
 
                         ProcessResult::Success
                     }
@@ -711,11 +719,9 @@ impl Caller for TCPProcessor {
         match hostname_ip {
             Some((_hostname, ip)) => {
                 self.stage = HandleStage::Connecting;
-                let port = if let Some(ref server) = self.server_address {
-                    server.1
-                } else {
-                    unreachable!();
-                };
+                let server_address = self.server_address.take().unwrap();
+                let port = server_address.1;
+                self.server_address = Some(server_address);
 
                 match self.create_connection(&ip, port) {
                     Ok(sock) => {
@@ -726,6 +732,7 @@ impl Caller for TCPProcessor {
                         self.register(event_loop, false);
                         self.update_stream(StreamDirection::Up, StreamStatus::WaitBoth);
                         self.update_stream(StreamDirection::Down, StreamStatus::WaitReading);
+                        self.reregister(event_loop, true);
                         ProcessResult::Success
                     }
                     Err(e) => {
