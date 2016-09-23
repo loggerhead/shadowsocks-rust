@@ -1,9 +1,14 @@
 [package]
-name = "shadowsocks-rust"
+name = "shadowsocks"
 version = "0.1.0"
 authors = ["loggerhead <lloggerhead@gmail.com>"]
+license = "GPL-3.0"
+repository = "https://github.com/loggerhead/shadowsocks-rust"
+homepage = "https://github.com/loggerhead/shadowsocks-rust"
+description = """
+My implemention of shadowsocks
+"""
 readme = "README.md"
-license = "MIT"
 
 [lib]
 name = "shadowsocks"
