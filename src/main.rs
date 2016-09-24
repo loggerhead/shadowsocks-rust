@@ -7,20 +7,15 @@ use std::process::exit;
 
 use shadowsocks::config;
 use shadowsocks::relay::Relay;
-use shadowsocks::util::init_env_logger;
+use shadowsocks::my_logger;
 
 fn main() {
-    init_env_logger();
-    // TODO: parse config from command line
-    // https://crates.io/crates/clap
-    let default_config_path = if cfg!(feature = "is_client") {
-        "tests/config/client_conf.toml"
-    } else {
-        "tests/config/server_conf.toml"
-    };
-
-    let conf = config::read_config(default_config_path).unwrap_or_else(|e| {
-        error!("config error: {}", e);
+    let conf = config::gen_config().unwrap_or_else(|e| {
+        println!("config error: {}", e);
+        exit(1);
+    });
+    my_logger::init(&conf).unwrap_or_else(|e| {
+        println!("init logger failed: {}", e);
         exit(1);
     });
 

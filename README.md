@@ -10,14 +10,21 @@
 - [x] check if there exists `cannot decrypt` log
 - [x] test with shadowsocks
 - [x] remove unnecessary `clone` ~~(maybe this is the cause of high CPU problem)~~
-- [x] find the reason of high CPU (5% ~ 20%)
-- [ ] response slow after fixed high CPU problem
+- [ ] find the reason of high CPU (5% ~ 20%)
+- [ ] ~~response slow after fixed high CPU problem~~
 - [ ] finish all TODO items in source
 - [ ] handle the timeout situation of client
 - [ ] handle DNS error properly (e.g. remove caller or call `resolve` again)
 - [ ] review `tcp_processor`
 - [ ] refactor error handle
 
-#Test
+#Features need to finished
+- [ ] Running as daemon
+- [ ] UDP support
+- [ ] OTA encrypt method support
+- [ ] TCP fast open
+- [ ] Multiple encrypt methods support
+
+#Test sites
 * http://www.bilibili.com/
 * http://www.panda.tv/

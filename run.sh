@@ -9,7 +9,7 @@ elif [[ "$1" == "r" ]]; then
 elif [[ "$1" == "rs" ]]; then
     python -m SimpleHTTPServer 8001
 elif [[ "$1" == "c" ]]; then
-    RUST_BACKTRACE=1 RUST_LOG=shadowsocks=trace cargo run --features is_client 2>&1 | tee client.log
+    RUST_BACKTRACE=1 RUST_LOG=shadowsocks=trace cargo run --features is_client -- -c tests/config/client_conf.toml 2>&1 | tee client.log
 elif [[ "$1" == "s" ]]; then
-    RUST_BACKTRACE=1 RUST_LOG=shadowsocks=trace cargo run 2>&1 | tee server.log
+    RUST_BACKTRACE=1 RUST_LOG=shadowsocks=trace cargo run -- -c tests/config/server_conf.toml 2>&1 | tee server.log
 fi

@@ -10,12 +10,12 @@ My implemention of shadowsocks
 """
 readme = "README.md"
 
-[[bin]]
-name = "sslocal"
-path = "src/main.rs"
-
 # TODO: uncomment the following lines when
-# https://github.com/rust-lang/cargo/pull/2325 has implemented.
+#       https://github.com/rust-lang/cargo/pull/2325 has implemented.
+# [[bin]]
+# name = "sslocal"
+# path = "src/main.rs"
+
 # [[bin]]
 # name = "ssserver"
 # path = "src/main.rs"
@@ -23,8 +23,8 @@ path = "src/main.rs"
 
 [dependencies]
 mio = "0.5"
-log = "0.3"
 fnv = "1"
+log = "0.3"
 clap = "2.11"
 rand = "0.3"
 toml = "0.1"
@@ -33,7 +33,6 @@ chrono = "0.2"
 try_opt = "0.1"
 byteorder = "0.5"
 lru_time_cache = "0.5"
-env_logger = "0.3"
 lazy_static = "0.2"
 rust-crypto = "0.2"
 clippy = { version = "0.0.90", optional = true }

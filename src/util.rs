@@ -1,4 +1,3 @@
-use std::env;
 use std::str;
 use std::fs::File;
 use std::io::BufReader;
@@ -12,27 +11,6 @@ use std::hash::{Hash, BuildHasherDefault};
 use mio::Token;
 use rand::random;
 use fnv::FnvHasher;
-use chrono::Local;
-use env_logger::LogBuilder;
-use log::{LogRecord, LogLevelFilter};
-
-pub fn init_env_logger() {
-    let format = |record: &LogRecord| {
-        let dt = Local::now().format("%Y-%m-%d %H:%M:%S%.3f").to_string();
-        format!("{} - {:5} - {}", dt, record.level(), record.args())
-    };
-
-    let mut builder = LogBuilder::new();
-    builder.format(format).filter(None, LogLevelFilter::Info);
-
-    if env::var("RUST_LOG").is_ok() {
-        let _ = env::var("RUST_LOG").map(|val| {
-            builder.parse(&val);
-        });
-    }
-
-    builder.init().unwrap();
-}
 
 pub fn address2str(address: &Option<(String, u16)>) -> String {
     match *address {
