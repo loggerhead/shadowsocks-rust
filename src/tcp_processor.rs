@@ -195,20 +195,9 @@ impl TCPProcessor {
     }
 
     fn update_stream(&mut self, stream: StreamDirection, status: StreamStatus) {
-        let mut dirty = false;
         match stream {
-            StreamDirection::Down => {
-                dirty = dirty || self.downstream_status != status;
-                self.downstream_status = status
-            }
-            StreamDirection::Up => {
-                dirty = dirty || self.upstream_status != status;
-                self.upstream_status = status
-            }
-        }
-
-        if !dirty {
-            return;
+            StreamDirection::Down => self.downstream_status = status,
+            StreamDirection::Up => self.upstream_status = status,
         }
 
         if self.local_sock.is_some() {
