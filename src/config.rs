@@ -244,6 +244,15 @@ pub fn check_config(matches: ArgMatches, mut config: Table) -> Result<Config, Co
         )
     }
 
+    macro_rules! set_occurrences {
+        ($key:expr) => (
+            if matches.is_present($key) {
+                let v = Value::Integer(matches.occurrences_of($key) as i64);
+                config.insert($key.to_string(), v);
+            }
+        )
+    }
+
     if cfg!(feature = "is_client") {
         if let Some(server) = matches.value_of("server") {
             let mut servers = Array::new();
@@ -266,6 +275,9 @@ pub fn check_config(matches: ArgMatches, mut config: Table) -> Result<Config, Co
     try_set_config!("daemon");
     try_set_config!("pid_file");
     try_set_config!("log_file");
+
+    set_occurrences!("quiet");
+    set_occurrences!("verbose");
 
     Ok(Config::new(config))
 }

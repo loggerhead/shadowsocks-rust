@@ -95,7 +95,12 @@ pub fn init(conf: &Config) -> Result<(), LoggerInitError> {
 
     let output_type = if let Some(v) = conf.get("log_file") {
         let log_path = v.as_str().unwrap();
-        match OpenOptions::new().write(true).open(log_path) {
+        let f = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(log_path);
+        match f {
             Ok(f) => OutputType::File(Mutex::new(f)),
             Err(_) => {
                 let errmsg = format!("cannot open log file {}", log_path);
