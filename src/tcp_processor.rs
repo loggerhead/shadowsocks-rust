@@ -259,19 +259,13 @@ impl TCPProcessor {
 
                     match register_result {
                         Ok(_) => {
-                            if is_local_sock {
-                                debug!("{} has registred local socket with {:?}", processor2str!(self), events);
-                            } else {
-                                debug!("{} has registred remote socket with {:?}", processor2str!(self), events);
-                            }
+                            let s = if is_local_sock { "local" } else { "remote" };
+                            debug!("{} has registred {} socket with {:?}", processor2str!(self), s, events);
                             true
                         }
                         Err(e) => {
-                            if is_local_sock {
-                                error!("{} register local socket with {:?} failed: {}", processor2str!(self), events, e);
-                            } else {
-                                error!("{} register remote socket with {:?} failed: {}", processor2str!(self), events, e);
-                            }
+                            let s = if is_local_sock { "local" } else { "remote" };
+                            error!("{} register {} socket with {:?} failed: {}", processor2str!(self), s, events, e);
                             false
                         }
                     }
@@ -319,11 +313,8 @@ impl TCPProcessor {
                 n == 0
             }
             Err(e) => {
-                if is_local_sock {
-                    error!("{} read data from local socket failed: {}", processor2str!(self), e);
-                } else {
-                    error!("{} read data from remote socket failed: {}", processor2str!(self), e);
-                }
+                let s = if is_local_sock { "local" } else { "remote" };
+                error!("{} read data from {} socket failed: {}", processor2str!(self), s, e);
                 true
             }
         };
