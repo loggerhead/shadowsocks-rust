@@ -585,6 +585,7 @@ impl TCPProcessor {
         }
     }
 
+    // TODO: find a way to reduce calling this method, which caused high CPU
     // remote_sock <= data
     fn on_remote_read(&mut self, _event_loop: &mut EventLoop<Relay>) -> ProcessResult<Vec<Token>> {
         macro_rules! try_write {

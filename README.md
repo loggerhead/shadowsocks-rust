@@ -10,7 +10,8 @@
 - [x] check if there exists `cannot decrypt` log
 - [x] test with shadowsocks
 - [x] remove unnecessary `clone` ~~(maybe this is the cause of high CPU problem)~~
-- [ ] find the reason of high CPU (5% ~ 20%)
+- [x] find the reason of high CPU (5% ~ 20%)
+- [ ] fix high CPU caused by `on_remote_read`
 - [ ] ~~response slow after fixed high CPU problem~~
 - [ ] finish all TODO items in source
 - [ ] handle the timeout situation of client
