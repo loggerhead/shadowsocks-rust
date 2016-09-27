@@ -6,6 +6,7 @@ use std::str::FromStr;
 use std::error::Error;
 use std::clone::Clone;
 use std::io::prelude::*;
+use std::collections::HashMap;
 
 use clap::{Arg, App, ArgMatches};
 use toml::{Parser, Value, Table, Array};
@@ -73,6 +74,23 @@ impl Error for ConfigError {
     }
 }
 
+lazy_static! {
+    static ref DEFAULT_VALUE: HashMap<&'static str, &'static str> = {
+        let mut m = HashMap::new();
+        m.insert("encryption_method", "aes-256-ctr");
+        m.insert("timeout", "300");
+        if cfg!(feature = "is_client") {
+            m.insert("listen_address", "127.0.0.1");
+            m.insert("listen_port", "8010");
+        } else {
+            m.insert("listen_address", "0.0.0.0");
+            m.insert("listen_port", "8111");
+        }
+
+        m
+    };
+}
+
 pub fn gen_config() -> Result<Config, ConfigError> {
     let mut args = App::new("A fast tunnel proxy that helps you bypass firewalls.")
         .about("You can supply configurations via either config file or command line arguments.")
@@ -90,12 +108,12 @@ pub fn gen_config() -> Result<Config, ConfigError> {
             .short("m")
             .value_name("method")
             .help("encryption method")
-            .default_value("aes-256-ctr"))
+            .default_value(DEFAULT_VALUE.get("encryption_method").unwrap()))
         .arg(Arg::with_name("timeout")
             .short("t")
             .value_name("timeout")
             .help("timeout in seconds")
-            .default_value("300"))
+            .default_value(DEFAULT_VALUE.get("timeout").unwrap()))
         .arg(Arg::with_name("fast_open")
             .long("fast-open")
             .help("use TCP_FASTOPEN, requires Linux 3.7+"))
@@ -121,7 +139,17 @@ pub fn gen_config() -> Result<Config, ConfigError> {
             .long("log-file")
             .value_name("log_file")
             .help("log file for daemon mode")
-            .takes_value(true));
+            .takes_value(true))
+        .arg(Arg::with_name("listen_address")
+            .short("b")
+            .value_name("address")
+            .help("binding address")
+            .default_value(DEFAULT_VALUE.get("listen_address").unwrap()))
+        .arg(Arg::with_name("listen_port")
+            .short("p")
+            .value_name("port")
+            .help("local port")
+            .default_value(DEFAULT_VALUE.get("listen_port").unwrap()));
     if cfg!(feature = "is_client") {
         args = args.arg(Arg::with_name("server")
             .short("s")
@@ -129,22 +157,6 @@ pub fn gen_config() -> Result<Config, ConfigError> {
             .help("server address and port")
             .takes_value(true));
     }
-
-    let (addr, port) = if cfg!(feature = "is_client") {
-        ("127.0.0.1", "8010")
-    } else {
-        ("0.0.0.0", "8111")
-    };
-    args = args.arg(Arg::with_name("listen_address")
-            .short("b")
-            .value_name("address")
-            .help("binding address")
-            .default_value(addr))
-        .arg(Arg::with_name("listen_port")
-            .short("p")
-            .value_name("port")
-            .help("local port")
-            .default_value(port));
 
     let matches = args.get_matches();
     let config = match matches.value_of("config") {
@@ -233,12 +245,14 @@ pub fn check_config(matches: ArgMatches, mut config: Table) -> Result<Config, Co
         );
         ($key:expr, $parse_val:ident) => (
             let k = $key.to_string();
+            // args set by command line is prefer than config file
             if let Some(v) = matches.value_of(&k) {
-                match $parse_val(v) {
-                    Ok(v) => {
-                        config.insert(k, v);
+                if !config.contains_key($key)
+                    || (DEFAULT_VALUE.contains_key($key) && DEFAULT_VALUE[$key] != v) {
+                    match $parse_val(v) {
+                        Ok(v) => { config.insert(k, v); },
+                        Err(e) => return Err(e),
                     }
-                    Err(e) => return Err(e),
                 }
             }
         )
@@ -270,8 +284,6 @@ pub fn check_config(matches: ArgMatches, mut config: Table) -> Result<Config, Co
     try_set_config!("encryption_method", check);
 
     try_set_config!("fast_open", bool);
-    try_set_config!("verbose", i64);
-    try_set_config!("quiet", i64);
     try_set_config!("daemon");
     try_set_config!("pid_file");
     try_set_config!("log_file");
