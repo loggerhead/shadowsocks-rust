@@ -7,7 +7,7 @@ use std::io::{Read, Write, Result, Error, ErrorKind};
 
 use rand::{thread_rng, Rng};
 use mio::tcp::{TcpStream, Shutdown};
-use mio::{EventLoop, Token, EventSet, PollOpt};
+use mio::{EventLoop, Token, Timeout, EventSet, PollOpt};
 
 use config::Config;
 use util::address2str;
@@ -124,6 +124,7 @@ pub struct TCPProcessor {
     conf: Config,
     stage: HandleStage,
     dns_resolver: Rc<RefCell<DNSResolver>>,
+    timeout: Option<Timeout>,
     local_token: Option<Token>,
     local_sock: Option<TcpStream>,
     remote_token: Option<Token>,
@@ -159,6 +160,7 @@ impl TCPProcessor {
             conf: conf,
             stage: stage,
             dns_resolver: dns_resolver,
+            timeout: None,
             local_token: None,
             local_sock: Some(local_sock),
             remote_token: None,
@@ -175,12 +177,25 @@ impl TCPProcessor {
         }
     }
 
+    pub fn set_timeout(&mut self, timeout: Timeout) {
+        self.timeout = Some(timeout);
+    }
+
     pub fn set_local_token(&mut self, token: Token) {
         self.local_token = Some(token);
     }
 
     pub fn set_remote_token(&mut self, token: Token) {
         self.remote_token = Some(token);
+    }
+
+    pub fn reset_timeout(&mut self, event_loop: &mut EventLoop<Relay>) {
+        if self.timeout.is_some() {
+            let timeout = self.timeout.take().unwrap();
+            event_loop.clear_timeout(timeout);
+        }
+        let delay = self.conf["timeout"].as_integer().unwrap() as u64;
+        self.timeout = event_loop.timeout_ms(self.get_id(), delay).ok();
     }
 
     fn choose_a_server(&self) -> Option<(String, u16)> {
@@ -776,7 +791,7 @@ impl Processor for TCPProcessor {
         ProcessResult::Success
     }
 
-    fn destroy(&mut self, _event_loop: &mut EventLoop<Relay>) {
+    fn destroy(&mut self, event_loop: &mut EventLoop<Relay>) {
         trace!("destroy processor {}", processor2str!(self));
 
         if let Some(ref sock) = self.local_sock {
@@ -799,6 +814,11 @@ impl Processor for TCPProcessor {
                     }
                 }
             }
+        }
+
+        if self.timeout.is_some() {
+            let timeout = self.timeout.take().unwrap();
+            event_loop.clear_timeout(timeout);
         }
 
         self.dns_resolver.borrow_mut().remove_caller(self.get_id());

@@ -101,7 +101,7 @@ impl Relay {
 }
 
 impl Handler for Relay {
-    type Timeout = ();
+    type Timeout = Token;
     type Message = ();
 
     fn ready(&mut self, event_loop: &mut EventLoop<Relay>, token: Token, events: EventSet) {
@@ -141,6 +141,13 @@ impl Handler for Relay {
             }
         }
     }
+
+    fn timeout(&mut self, event_loop: &mut EventLoop<Self>, token: Self::Timeout) {
+        warn!("{:?} timed out", token);
+        if !self.processors[token].borrow().is_destroyed() {
+            self.processors[token].borrow_mut().destroy(event_loop);
+        }
+    }
 }
 
 impl Processor for Relay {
@@ -170,6 +177,7 @@ impl Processor for Relay {
                             tcp_processor.borrow_mut().set_local_token(local_token);
                             tcp_processor.borrow_mut().set_remote_token(remote_token);
                             self.dns_resolver.borrow_mut().add_caller(tcp_processor.clone());
+                            tcp_processor.borrow_mut().reset_timeout(event_loop);
                             if !tcp_processor.borrow_mut().register(event_loop, true) {
                                 result = ProcessResult::Failed(vec![local_token, remote_token]);
                             }
