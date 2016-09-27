@@ -23,9 +23,9 @@ readme = "README.md"
 
 [dependencies]
 mio = "0.5"
-fnv = "1"
+fnv = "~1.0"
 log = "0.3"
-clap = "2.11"
+clap = "~2.11"
 rand = "0.3"
 toml = "0.1"
 regex = "0.1"
@@ -36,6 +36,9 @@ lru_time_cache = "0.5"
 lazy_static = "0.2"
 rust-crypto = "0.2"
 clippy = { version = "0.0.90", optional = true }
+
+[dev-dependencies]
+curl = "0.3"
 
 [features]
 is_client = []
