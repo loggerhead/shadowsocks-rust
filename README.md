@@ -17,7 +17,7 @@
 - [x] test with shadowsocks
 - [x] remove unnecessary `clone` ~~(maybe this is the cause of high CPU problem)~~
 - [x] find the reason of high CPU (5% ~ 20%)
-- [ ] fix high CPU caused by `on_remote_read`
+- [ ] ~~fix high CPU caused by `on_remote_read`~~ (see issue [#1](https://github.com/loggerhead/shadowsocks-rust/issues/1))
 - [ ] ~~response slow after fixed high CPU problem~~
 - [ ] finish all TODO items in source
 - [x] handle the timeout situation of client
