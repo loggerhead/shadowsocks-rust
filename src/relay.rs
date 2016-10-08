@@ -174,8 +174,8 @@ impl Processor for Relay {
                     // register local socket to event loop
                     match tokens {
                         (Some(local_token), Some(remote_token)) => {
-                            tcp_processor.borrow_mut().set_local_token(local_token);
-                            tcp_processor.borrow_mut().set_remote_token(remote_token);
+                            tcp_processor.borrow_mut().set_token(local_token, true);
+                            tcp_processor.borrow_mut().set_token(remote_token, false);
                             self.dns_resolver.borrow_mut().add_caller(tcp_processor.clone());
                             tcp_processor.borrow_mut().reset_timeout(event_loop);
                             if !tcp_processor.borrow_mut().register(event_loop, true) {
