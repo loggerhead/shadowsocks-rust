@@ -1,10 +1,12 @@
 use std::fmt;
 use std::str;
 use std::rc::Rc;
-use std::io::Cursor;
+use std::fs::File;
 use std::cell::RefCell;
 use std::time::Duration;
 use std::net::SocketAddr;
+use std::io::prelude::*;
+use std::io::{BufReader, Cursor};
 
 use rand;
 use regex::Regex;
@@ -12,8 +14,8 @@ use lru_time_cache::LruCache;
 use mio::udp::UdpSocket;
 use mio::{Token, EventSet, EventLoop, PollOpt};
 
+use collections::{Set, Dict};
 use relay::{Relay, Processor, ProcessResult};
-use util::{Set, handle_every_line, Dict, slice2str, slice2string};
 use network::{is_ip, slice2ip4, slice2ip6, str2addr4, alloc_udp_socket};
 use network::{NetworkWriteBytes, NetworkReadBytes};
 
@@ -661,6 +663,28 @@ fn is_valid_hostname(hostname: &str) -> bool {
             let s = slice2str(s).unwrap_or("");
             !s.is_empty() && !s.starts_with('-') && !s.ends_with('-') && RE.is_match(s)
         })
+}
+
+fn slice2str(data: &[u8]) -> Option<&str> {
+    str::from_utf8(data).ok()
+}
+
+fn slice2string(data: &[u8]) -> Option<String> {
+    String::from_utf8(data.to_vec()).ok()
+}
+
+fn handle_every_line(filepath: &str, func: &mut FnMut(String)) {
+    if let Ok(f) = File::open(filepath) {
+        let reader = BufReader::new(f);
+        for line in reader.lines() {
+            let line = match line {
+                Ok(line) => line.trim().to_string(),
+                _ => break,
+            };
+
+            func(line);
+        }
+    }
 }
 
 #[cfg(test)]

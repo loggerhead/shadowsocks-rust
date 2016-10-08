@@ -6,9 +6,9 @@ use std::net::SocketAddr;
 use mio::tcp::TcpListener;
 use mio::{Token, Handler, EventSet, EventLoop, PollOpt};
 
-use util::Holder;
 use config::Config;
 use network::str2addr4;
+use collections::Holder;
 use asyncdns::DNSResolver;
 use tcp_processor::TCPProcessor;
 

@@ -10,12 +10,11 @@ use mio::tcp::{TcpStream, Shutdown};
 use mio::{EventLoop, Token, Timeout, EventSet, PollOpt};
 
 use config::Config;
-use util::address2str;
 use encrypt::Encryptor;
-use common::{parse_header, check_auth_method, CheckAuthResult};
 use network::pair2socket_addr;
-use relay::{Relay, Processor, ProcessResult};
 use asyncdns::{Caller, DNSResolver};
+use relay::{Relay, Processor, ProcessResult};
+use socks5::{parse_header, check_auth_method, CheckAuthResult};
 
 const BUF_SIZE: usize = 32 * 1024;
 // SOCKS command definition
@@ -86,6 +85,13 @@ impl BitAnd for StreamStatus {
             StreamStatus::WaitBoth => true,
             _ => unreachable!(),
         }
+    }
+}
+
+fn address2str(address: &Option<(String, u16)>) -> String {
+    match *address {
+        Some((ref host, port)) => format!("{}:{}", host, port),
+        _ => "None".to_string(),
     }
 }
 

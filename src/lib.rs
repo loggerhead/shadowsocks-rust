@@ -22,12 +22,12 @@ extern crate lru_time_cache;
 extern crate byteorder;
 
 #[macro_use]
-pub mod util;
 pub mod relay;
 pub mod config;
-pub mod common;
+pub mod socks5;
 pub mod network;
 pub mod encrypt;
 pub mod asyncdns;
 pub mod my_logger;
+pub mod collections;
 pub mod tcp_processor;
