@@ -7,6 +7,7 @@ use std::io::prelude::*;
 use std::fs::{File, OpenOptions};
 
 use chrono::Local;
+use ansi_term::Colour::{Green, Yellow, Red};
 use log::{LogRecord, LogLevel, LogMetadata, LogLevelFilter};
 
 use config::Config;
@@ -62,7 +63,15 @@ impl log::Log for MyLogger {
     fn log(&self, record: &LogRecord) {
         if self.enabled(record.metadata()) {
             let dt = Local::now().format("%Y-%m-%d %H:%M:%S%.3f").to_string();
-            let msg = format!("{} - {:5} - {}\n", dt, record.level(), record.args());
+            let lv_str = format!("{:5}", record.level());
+            let level = match record.level() {
+                LogLevel::Info => Green.paint(lv_str).to_string(),
+                LogLevel::Warn => Yellow.paint(lv_str).to_string(),
+                LogLevel::Error => Red.paint(lv_str).to_string(),
+                _ => lv_str,
+            };
+
+            let msg = format!("{} - {} - {}\n", dt, level, record.args());
             match self.output_type {
                 OutputType::None => {}
                 OutputType::Stdout => {

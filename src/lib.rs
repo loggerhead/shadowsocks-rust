@@ -17,6 +17,7 @@ extern crate clap;
 extern crate regex;
 extern crate crypto;
 extern crate chrono;
+extern crate ansi_term;
 extern crate lru_time_cache;
 extern crate byteorder;
 
