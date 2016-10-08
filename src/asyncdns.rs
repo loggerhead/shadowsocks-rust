@@ -311,9 +311,18 @@ impl Processor for DNSResolver {
                -> ProcessResult<Vec<Token>> {
         if events.is_error() {
             error!("events error on DNS socket");
-            self.sock.take();
-            // TODO: maybe should change to reregister
+            let sock = self.sock.take().unwrap();
+            let _ = event_loop.deregister(&sock);
             self.register(event_loop, token);
+
+            for caller in self.callers.values() {
+                caller.borrow_mut().handle_dns_resolved(event_loop, None, Some("DNS socket closed".to_string()));
+            }
+
+            self.callers.clear();
+            self.hostname_status.clear();
+            self.token_to_hostname.clear();
+            self.hostname_to_tokens.clear();
         } else {
             let mut buf = [0u8; 1024];
             let received = match self.sock {

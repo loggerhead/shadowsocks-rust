@@ -21,7 +21,7 @@
 - [ ] ~~response slow after fixed high CPU problem~~
 - [ ] finish all TODO items in source
 - [x] handle the timeout situation of client
-- [ ] handle DNS error properly (e.g. remove caller or call `resolve` again)
+- [x] handle DNS error properly (e.g. remove caller or call `resolve` again)
 - [ ] review `tcp_processor`
 - [ ] refactor error handle
 

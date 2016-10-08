@@ -4,9 +4,9 @@ use std::io::BufReader;
 use std::io::prelude::*;
 use std::iter::FromIterator;
 use std::ops::{Index, IndexMut};
-use std::collections::hash_set::Iter;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, BuildHasherDefault};
+use std::collections::{hash_map, hash_set};
 
 use mio::Token;
 use rand::random;
@@ -73,12 +73,20 @@ impl<K, V> Dict<K, V>
         self.map.remove(k)
     }
 
+    pub fn clear(&mut self) {
+        self.map.clear()
+    }
+
     pub fn len(&self) -> usize {
         self.map.len()
     }
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    pub fn values(&self) -> hash_map::Values<K, V> {
+        self.map.values()
     }
 }
 
@@ -128,7 +136,7 @@ impl<T> Set<T>
         self.items.remove(t)
     }
 
-    pub fn iter(&self) -> Iter<T> {
+    pub fn iter(&self) -> hash_set::Iter<T> {
         self.items.iter()
     }
 
