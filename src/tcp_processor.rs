@@ -9,6 +9,7 @@ use rand::{thread_rng, Rng};
 use mio::tcp::{TcpStream, Shutdown};
 use mio::{EventLoop, Token, Timeout, EventSet, PollOpt};
 
+use socks5;
 use config::Config;
 use encrypt::Encryptor;
 use network::pair2socket_addr;
@@ -17,11 +18,6 @@ use relay::{Relay, Processor, ProcessResult};
 use socks5::{parse_header, check_auth_method, CheckAuthResult};
 
 const BUF_SIZE: usize = 32 * 1024;
-// SOCKS command definition
-const CMD_CONNECT: u8 = 1;
-const _CMD_BIND: u8 = 2;
-const CMD_UDP_ASSOCIATE: u8 = 3;
-
 // for each opening port, we have a TCP Relay
 // for each connection, we have a TCP Relay Handler to handle the connection
 //
@@ -492,11 +488,11 @@ impl TCPProcessor {
         trace!("handle stage addr: {}", processor2str!(self));
         let data = if cfg!(feature = "is_client") {
             match data[1] {
-                CMD_UDP_ASSOCIATE => {
+                socks5::cmd::UDP_ASSOCIATE => {
                     self.stage = HandleStage::UDPAssoc;
                     unimplemented!();
                 }
-                CMD_CONNECT => {
+                socks5::cmd::CONNECT => {
                     &data[3..]
                 }
                 cmd => {

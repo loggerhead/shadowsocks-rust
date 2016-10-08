@@ -1,14 +1,5 @@
 use network::{slice2ip4, slice2ip6, NetworkReadBytes};
 
-pub const ADDRTYPE_IPV4: u8 = 0x01;
-pub const ADDRTYPE_IPV6: u8 = 0x04;
-pub const ADDRTYPE_HOST: u8 = 0x03;
-pub const ADDRTYPE_AUTH: u8 = 0x10;
-pub const ADDRTYPE_MASK: u8 = 0xF;
-
-// SOCKS method definition
-const METHOD_NOAUTH: u8 = 0;
-
 #[derive(Debug, PartialEq)]
 pub enum CheckAuthResult {
     Success,
@@ -22,8 +13,8 @@ pub fn parse_header(data: &[u8]) -> Option<(u8, String, u16, usize)> {
     let mut dest_port = 0;
     let mut header_len = 0;
 
-    match addr_type & ADDRTYPE_MASK {
-        ADDRTYPE_IPV4 => {
+    match addr_type & addr_type::MASK {
+        addr_type::IPV4 => {
             if data.len() >= 7 {
                 dest_addr = Some(slice2ip4(&data[1..5]));
                 dest_port = (&data[5..7]).get_u16().unwrap();
@@ -32,7 +23,7 @@ pub fn parse_header(data: &[u8]) -> Option<(u8, String, u16, usize)> {
                 warn!("header is too short");
             }
         }
-        ADDRTYPE_IPV6 => {
+        addr_type::IPV6 => {
             if data.len() >= 19 {
                 dest_addr = Some(slice2ip6(&data[1..17]));
                 dest_port = (&data[17..19]).get_u16().unwrap();
@@ -41,7 +32,7 @@ pub fn parse_header(data: &[u8]) -> Option<(u8, String, u16, usize)> {
                 warn!("header is too short");
             }
         }
-        ADDRTYPE_HOST => {
+        addr_type::HOST => {
             if data.len() >= 2 {
                 let addr_len = data[1] as usize;
                 if data.len() >= 4 + addr_len {
@@ -90,7 +81,7 @@ pub fn check_auth_method(data: &[u8]) -> CheckAuthResult {
 
     let mut noauto_exist = false;
     for method in &data[2..] {
-        if *method == METHOD_NOAUTH {
+        if *method == method::NOAUTH {
             noauto_exist = true;
             break;
         }
@@ -102,4 +93,29 @@ pub fn check_auth_method(data: &[u8]) -> CheckAuthResult {
         warn!("none of socks method's requested by client is supported");
         CheckAuthResult::NoAcceptableMethods
     }
+}
+
+#[allow(dead_code, non_snake_case)]
+pub mod addr_type {
+    pub const IPV4: u8 = 0x01;
+    pub const IPV6: u8 = 0x04;
+    pub const HOST: u8 = 0x03;
+    pub const AUTH: u8 = 0x10;
+    pub const MASK: u8 = 0xF;
+}
+
+// SOCKS method definition
+#[allow(dead_code, non_snake_case)]
+pub mod method {
+    pub const NOAUTH: u8 = 0;
+    pub const GSSAPI: u8 = 1;
+    pub const USER_PASS: u8 = 2;
+}
+
+// SOCKS command definition
+#[allow(dead_code, non_snake_case)]
+pub mod cmd {
+    pub const CONNECT: u8 = 1;
+    pub const BIND: u8 = 2;
+    pub const UDP_ASSOCIATE: u8 = 3;
 }

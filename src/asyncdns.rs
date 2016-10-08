@@ -57,14 +57,6 @@ use network::{NetworkWriteBytes, NetworkReadBytes};
 //     +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
 //     |                    ARCOUNT                    |
 //     +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
-
-const QTYPE_A: u16 = 1;
-const QTYPE_AAAA: u16 = 28;
-const QTYPE_CNAME: u16 = 5;
-const QTYPE_NS: u16 = 2;
-const QCLASS_IN: u16 = 1;
-const _QTYPE_ANY: u16 = 255;
-
 type ResponseRecord = (String, String, u16, u16);
 type ResponseHeader = (u16, u16, u16, u16, u16, u16, u16, u16, u16);
 pub type Callback = FnMut(&mut Caller, Option<(String, String)>, Option<&str>);
@@ -127,8 +119,8 @@ impl DNSResolver {
             None => parse_resolv(),
         };
         let qtypes = match prefer_ipv6 {
-            Some(true) => vec![QTYPE_AAAA, QTYPE_A],
-            _ => vec![QTYPE_A, QTYPE_AAAA],
+            Some(true) => vec![QType::AAAA, QType::A],
+            _ => vec![QType::A, QType::AAAA],
         };
         let hosts = parse_hosts();
         let cache_timeout = Duration::new(600, 0);
@@ -237,7 +229,7 @@ impl DNSResolver {
             Some(response) => {
                 let mut ip = String::new();
                 for answer in &response.answers {
-                    if (answer.1 == QTYPE_A || answer.1 == QTYPE_AAAA) && answer.2 == QCLASS_IN {
+                    if (answer.1 == QType::A || answer.1 == QType::AAAA) && answer.2 == QClass::IN {
                         ip = answer.0.clone();
                         break;
                     }
@@ -411,7 +403,7 @@ fn build_request(address: &str, qtype: u16) -> Option<Vec<u8>> {
     r.extend(addr);
     // qtype and qclass
     pack!(u16, r, qtype);
-    pack!(u16, r, QCLASS_IN);
+    pack!(u16, r, QClass::IN);
 
     Some(r)
 }
@@ -424,9 +416,9 @@ fn parse_ip(addrtype: u16, data: &[u8], length: usize, offset: usize) -> Option<
     let ip_part = &data[offset..offset + length];
 
     let ip = match addrtype {
-        QTYPE_A => slice2ip4(ip_part),
-        QTYPE_AAAA => slice2ip6(ip_part),
-        QTYPE_CNAME | QTYPE_NS => try_opt!(parse_name(data, offset as u16)).1,
+        QType::A => slice2ip4(ip_part),
+        QType::AAAA => slice2ip6(ip_part),
+        QType::CNAME | QType::NS => try_opt!(parse_name(data, offset as u16)).1,
         _ => String::from(try_opt!(slice2str(ip_part))),
     };
 
@@ -686,6 +678,21 @@ fn handle_every_line(filepath: &str, func: &mut FnMut(String)) {
         }
     }
 }
+
+#[allow(dead_code, non_snake_case)]
+mod QType {
+    pub const A: u16 = 1;
+    pub const AAAA: u16 = 28;
+    pub const CNAME: u16 = 5;
+    pub const NS: u16 = 2;
+    pub const ANY: u16 = 255;
+}
+
+#[allow(dead_code, non_snake_case)]
+mod QClass {
+    pub const IN: u16 = 1;
+}
+
 
 #[cfg(test)]
 mod test {
