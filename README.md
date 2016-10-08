@@ -22,7 +22,7 @@
 - [ ] finish all TODO items in source
 - [x] handle the timeout situation of client
 - [x] handle DNS error properly (e.g. remove caller or call `resolve` again)
-- [ ] review `tcp_processor`
+- [x] review `tcp_processor`
 - [ ] refactor error handle
 
 #Features need to finished
