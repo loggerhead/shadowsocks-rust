@@ -16,4 +16,8 @@ elif [[ "$1" == "c" ]]; then
 elif [[ "$1" == "s" ]]; then
     shift
     cargo run -- -c tests/config/server_conf.toml $@
+elif [[ "$1" == "check" ]]; then
+    rustup default nightly
+    cargo build --features clippy
+    rustup default stable
 fi
