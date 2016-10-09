@@ -492,6 +492,7 @@ impl TCPProcessor {
     fn on_local_read(&mut self, event_loop: &mut EventLoop<Relay>) -> ProcessResult<Vec<Token>> {
         match self.receive_data(LOCAL) {
             (Some(data), ProcessResult::Success) => {
+                self.reset_timeout(event_loop);
                 match self.stage {
                     HandleStage::Init => {
                         self.handle_stage_init(event_loop, &data)
@@ -514,7 +515,7 @@ impl TCPProcessor {
     }
 
     // remote_sock <= data
-    fn on_remote_read(&mut self, _event_loop: &mut EventLoop<Relay>) -> ProcessResult<Vec<Token>> {
+    fn on_remote_read(&mut self, event_loop: &mut EventLoop<Relay>) -> ProcessResult<Vec<Token>> {
         macro_rules! try_write {
             ($data:expr) => (
                 match self.write_to_sock($data, LOCAL) {
@@ -533,6 +534,7 @@ impl TCPProcessor {
 
         match self.receive_data(REMOTE) {
             (Some(data), ProcessResult::Success) => {
+                self.reset_timeout(event_loop);
                 // client <= local_sock -- remote_sock <= data
                 if cfg!(feature = "is_client") {
                     try_write!(&data)
