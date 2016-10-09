@@ -77,6 +77,8 @@ impl Error for ConfigError {
 lazy_static! {
     static ref DEFAULT_VALUE: HashMap<&'static str, &'static str> = {
         let mut m = HashMap::new();
+        m.insert("pid_file", "/var/run/ss-rust.pid");
+        m.insert("log_file", "/var/log/ss-rust.log");
         m.insert("encryption_method", "aes-256-ctr");
         m.insert("timeout", "300");
         if cfg!(feature = "is_client") {
@@ -108,12 +110,12 @@ pub fn gen_config() -> Result<Config, ConfigError> {
             .short("m")
             .value_name("method")
             .help("encryption method")
-            .default_value(DEFAULT_VALUE.get("encryption_method").unwrap()))
+            .default_value(DEFAULT_VALUE["encryption_method"]))
         .arg(Arg::with_name("timeout")
             .short("t")
             .value_name("timeout")
             .help("timeout in seconds")
-            .default_value(DEFAULT_VALUE.get("timeout").unwrap()))
+            .default_value(DEFAULT_VALUE["timeout"]))
         .arg(Arg::with_name("fast_open")
             .long("fast-open")
             .help("use TCP_FASTOPEN, requires Linux 3.7+"))
@@ -144,12 +146,12 @@ pub fn gen_config() -> Result<Config, ConfigError> {
             .short("b")
             .value_name("address")
             .help("binding address")
-            .default_value(DEFAULT_VALUE.get("listen_address").unwrap()))
+            .default_value(DEFAULT_VALUE["listen_address"]))
         .arg(Arg::with_name("listen_port")
             .short("p")
             .value_name("port")
             .help("local port")
-            .default_value(DEFAULT_VALUE.get("listen_port").unwrap()));
+            .default_value(DEFAULT_VALUE["listen_port"]));
     if cfg!(feature = "is_client") {
         args = args.arg(Arg::with_name("server")
             .short("s")
@@ -277,6 +279,9 @@ pub fn check_config(matches: ArgMatches, mut config: Table) -> Result<Config, Co
         }
     }
 
+    set_occurrences!("quiet");
+    set_occurrences!("verbose");
+
     try_set_config!("listen_address", check);
     try_set_config!("listen_port", i64, check);
     try_set_config!("password", check);
@@ -284,12 +289,21 @@ pub fn check_config(matches: ArgMatches, mut config: Table) -> Result<Config, Co
     try_set_config!("encryption_method", check);
 
     try_set_config!("fast_open", bool);
+
     try_set_config!("daemon");
     try_set_config!("pid_file");
     try_set_config!("log_file");
 
-    set_occurrences!("quiet");
-    set_occurrences!("verbose");
+    if config.get("daemon").is_some() {
+        if config.get("pid_file").is_none() {
+            let path = Value::String(DEFAULT_VALUE["pid_file"].to_string());
+            config.insert("pid_file".to_string(), path);
+        }
+        if config.get("log_file").is_none() {
+            let path = Value::String(DEFAULT_VALUE["log_file"].to_string());
+            config.insert("log_file".to_string(), path);
+        }
+    }
 
     Ok(Config::new(config))
 }

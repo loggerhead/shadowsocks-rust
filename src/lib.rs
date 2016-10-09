@@ -18,8 +18,8 @@ extern crate regex;
 extern crate crypto;
 extern crate chrono;
 extern crate ansi_term;
-extern crate lru_time_cache;
 extern crate byteorder;
+extern crate lru_time_cache;
 
 #[macro_use]
 pub mod relay;

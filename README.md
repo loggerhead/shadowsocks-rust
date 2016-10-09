@@ -26,7 +26,7 @@
 - [ ] ~~refactor error handle~~
 
 #Features need to finished
-- [ ] Running as daemon
+- [x] Running as daemon
 - [ ] UDP support
 - [ ] OTA encrypt method support
 - [ ] TCP fast open
