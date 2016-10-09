@@ -16,7 +16,7 @@ pub fn parse_header(data: &[u8]) -> Option<(u8, String, u16, usize)> {
     match addr_type & addr_type::MASK {
         addr_type::IPV4 => {
             if data.len() >= 7 {
-                dest_addr = Some(slice2ip4(&data[1..5]));
+                dest_addr = slice2ip4(&data[1..5]);
                 dest_port = (&data[5..7]).get_u16().unwrap();
                 header_len = 7;
             } else {
@@ -25,7 +25,7 @@ pub fn parse_header(data: &[u8]) -> Option<(u8, String, u16, usize)> {
         }
         addr_type::IPV6 => {
             if data.len() >= 19 {
-                dest_addr = Some(slice2ip6(&data[1..17]));
+                dest_addr = slice2ip6(&data[1..17]);
                 dest_port = (&data[17..19]).get_u16().unwrap();
                 header_len = 19;
             } else {

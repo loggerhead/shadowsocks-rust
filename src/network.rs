@@ -50,15 +50,20 @@ macro_rules! slice2sized {
     )
 }
 
-// TODO: consider change to return Result
-pub fn slice2ip4(data: &[u8]) -> String {
-    assert!(data.len() >= 4);
-    format!("{}", Ipv4Addr::from(slice2sized!(data, 4)))
+pub fn slice2ip4(data: &[u8]) -> Option<String> {
+    if data.len() >= 4 {
+        Some(format!("{}", Ipv4Addr::from(slice2sized!(data, 4))))
+    } else {
+        None
+    }
 }
 
-pub fn slice2ip6(data: &[u8]) -> String {
-    assert!(data.len() >= 16);
-    format!("{}", Ipv6Addr::from(slice2sized!(data, 16)))
+pub fn slice2ip6(data: &[u8]) -> Option<String> {
+    if data.len() >= 16 {
+        Some(format!("{}", Ipv6Addr::from(slice2sized!(data, 16))))
+    } else {
+        None
+    }
 }
 
 pub fn str2addr4(ip: &str) -> Option<SocketAddrV4> {

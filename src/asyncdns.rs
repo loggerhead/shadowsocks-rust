@@ -415,14 +415,12 @@ fn build_request(address: &str, qtype: u16) -> Option<Vec<u8>> {
 fn parse_ip(addrtype: u16, data: &[u8], length: usize, offset: usize) -> Option<String> {
     let ip_part = &data[offset..offset + length];
 
-    let ip = match addrtype {
+    match addrtype {
         QType::A => slice2ip4(ip_part),
         QType::AAAA => slice2ip6(ip_part),
-        QType::CNAME | QType::NS => try_opt!(parse_name(data, offset as u16)).1,
-        _ => String::from(try_opt!(slice2str(ip_part))),
-    };
-
-    Some(ip)
+        QType::CNAME | QType::NS => Some(try_opt!(parse_name(data, offset as u16)).1),
+        _ => slice2string(ip_part),
+    }
 }
 
 // For detail, see page 29 of RFC 1035
