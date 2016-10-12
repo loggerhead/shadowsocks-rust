@@ -808,12 +808,8 @@ impl BitAnd for StreamStatus {
         }
 
         match rhs {
-            StreamStatus::WaitReading => {
-                self != StreamStatus::WaitWriting
-            }
-            StreamStatus::WaitWriting => {
-                self != StreamStatus::WaitReading
-            }
+            StreamStatus::WaitReading => self != StreamStatus::WaitWriting,
+            StreamStatus::WaitWriting => self != StreamStatus::WaitReading,
             StreamStatus::WaitBoth => true,
             _ => unreachable!(),
         }
