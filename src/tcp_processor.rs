@@ -48,7 +48,7 @@ pub struct TCPProcessor {
 impl TCPProcessor {
     pub fn new(conf: Config, local_sock: TcpStream, dns_resolver: Rc<RefCell<DNSResolver>>) -> TCPProcessor {
         let encryptor = Encryptor::new(conf["password"].as_str().unwrap());
-        let stage = if cfg!(feature = "is_client") {
+        let stage = if cfg!(feature = "sslocal") {
             HandleStage::Init
         } else {
             HandleStage::Addr
@@ -292,8 +292,8 @@ impl TCPProcessor {
         };
         self.set_sock(sock, is_local_sock);
 
-        let need_decrypt = (cfg!(feature = "is_client") && !is_local_sock)
-                        || (!cfg!(feature = "is_client") && is_local_sock);
+        let need_decrypt = (cfg!(feature = "sslocal") && !is_local_sock)
+                        || (!cfg!(feature = "sslocal") && is_local_sock);
 
         let (data, need_destroy) = if need_decrypt && !buf.is_empty() {
             match self.encryptor.decrypt(&buf) {
@@ -352,7 +352,7 @@ impl TCPProcessor {
             )
         }
 
-        if cfg!(feature = "is_client") {
+        if cfg!(feature = "sslocal") {
             match self.encryptor.encrypt(data) {
                 Some(ref data) => try_write!(data),
                 _ => {
@@ -369,7 +369,7 @@ impl TCPProcessor {
         let this = processor2str(self);
         trace!("handle stage connecting: {}", this);
 
-        if cfg!(feature = "is_client") {
+        if cfg!(feature = "sslocal") {
             match self.encryptor.encrypt(data) {
                 Some(ref data) => {
                     self.extend_buf(data, REMOTE);
@@ -391,7 +391,7 @@ impl TCPProcessor {
         let this = processor2str(self);
         trace!("handle stage addr: {}", this);
 
-        let data = if cfg!(feature = "is_client") {
+        let data = if cfg!(feature = "sslocal") {
             match data[1] {
                 socks5::cmd::UDP_ASSOCIATE => {
                     self.stage = HandleStage::UDPAssoc;
@@ -414,7 +414,7 @@ impl TCPProcessor {
             Some((_addr_type, remote_address, remote_port, header_length)) => {
                 self.update_stream(StreamDirection::Up, StreamStatus::WaitWriting);
                 self.stage = HandleStage::DNS;
-                if cfg!(feature = "is_client") {
+                if cfg!(feature = "sslocal") {
                     let response = &[0x05, 0x00, 0x00, 0x01,
                                      // fake ip
                                      0x00, 0x00, 0x00, 0x00,
@@ -534,7 +534,7 @@ impl TCPProcessor {
             (Some(data), ProcessResult::Success) => {
                 self.reset_timeout(event_loop);
                 // client <= local_sock -- remote_sock <= data
-                if cfg!(feature = "is_client") {
+                if cfg!(feature = "sslocal") {
                     try_write!(&data)
                 // ssclient <= local_sock -- remote_sock <= data
                 } else {

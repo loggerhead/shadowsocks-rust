@@ -12,4 +12,4 @@ build: false
 
 test_script:
   - cargo build
-  - cargo build --features is_client
+  - cargo build --features sslocal

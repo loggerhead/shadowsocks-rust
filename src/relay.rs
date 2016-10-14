@@ -61,7 +61,7 @@ impl Relay {
             error!("cannot bind address {} because {}", address, e);
             exit(1);
         });
-        if cfg!(feature = "is_client") {
+        if cfg!(feature = "sslocal") {
             info!("ssclient listen on {}", address);
         } else {
             info!("ssserver listen on {}", address);

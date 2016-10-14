@@ -81,7 +81,7 @@ lazy_static! {
         m.insert("log_file", "/var/log/ss-rust.log");
         m.insert("encryption_method", "aes-256-ctr");
         m.insert("timeout", "300");
-        if cfg!(feature = "is_client") {
+        if cfg!(feature = "sslocal") {
             m.insert("listen_address", "127.0.0.1");
             m.insert("listen_port", "8010");
         } else {
@@ -152,7 +152,7 @@ pub fn gen_config() -> Result<Config, ConfigError> {
             .value_name("port")
             .help("local port")
             .default_value(DEFAULT_VALUE["listen_port"]));
-    if cfg!(feature = "is_client") {
+    if cfg!(feature = "sslocal") {
         args = args.arg(Arg::with_name("server")
             .short("s")
             .value_name("ip:port")
@@ -269,7 +269,7 @@ pub fn check_config(matches: ArgMatches, mut config: Table) -> Result<Config, Co
         )
     }
 
-    if cfg!(feature = "is_client") {
+    if cfg!(feature = "sslocal") {
         if let Some(server) = matches.value_of("server") {
             let mut servers = Array::new();
             servers.push(Value::String(server.to_string()));
