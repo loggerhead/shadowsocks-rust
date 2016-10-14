@@ -50,7 +50,9 @@ impl Relay {
         let address = format!("{}:{}",
                               conf["listen_address"].as_str().unwrap(),
                               conf["listen_port"].as_integer().unwrap());
-        let dns_resolver = Rc::new(RefCell::new(DNSResolver::new(None, None)));
+        // TODO: parse prefer_ipv6 from command line
+        let dns_resolver = Rc::new(RefCell::new(DNSResolver::new(None, false)));
+        // TODO: need resolve DNS here
         let socket_addr = str2addr4(&address).unwrap_or_else(|| {
             error!("invalid socket address: {}", address);
             return exit(1);

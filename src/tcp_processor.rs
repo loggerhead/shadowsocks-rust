@@ -1,4 +1,3 @@
-use std::slice;
 use std::rc::Rc;
 use std::ops::BitAnd;
 use std::str::FromStr;
@@ -278,9 +277,7 @@ impl TCPProcessor {
         let mut sock = self.get_sock(is_local_sock);
         let mut buf = Vec::with_capacity(BUF_SIZE);
 
-        let ptr = buf.as_mut_ptr();
-        let cap = buf.capacity();
-        let buf_slice = unsafe { &mut slice::from_raw_parts_mut(ptr, cap) };
+        new_fat_slice_from_vec!(buf_slice, buf);
 
         let this = processor2str(self);
         let need_destroy = match sock.read(buf_slice) {
@@ -389,6 +386,7 @@ impl TCPProcessor {
         }
     }
 
+    // spec `replies` section of https://www.ietf.org/rfc/rfc1928.txt
     fn handle_stage_addr(&mut self, event_loop: &mut EventLoop<Relay>, data: &[u8]) -> ProcessResult<Vec<Token>> {
         let this = processor2str(self);
         trace!("handle stage addr: {}", this);
@@ -416,11 +414,12 @@ impl TCPProcessor {
             Some((_addr_type, remote_address, remote_port, header_length)) => {
                 self.update_stream(StreamDirection::Up, StreamStatus::WaitWriting);
                 self.stage = HandleStage::DNS;
-                // remote_address is ssserver
                 if cfg!(feature = "is_client") {
                     let response = &[0x05, 0x00, 0x00, 0x01,
+                                     // fake ip
                                      0x00, 0x00, 0x00, 0x00,
-                                     0x10, 0x10];
+                                     // fake port
+                                     0x00, 0x00];
                     match self.write_to_sock(response, LOCAL) {
                         (_, ProcessResult::Success) => {},
                         (_, result) => return result,
@@ -435,7 +434,6 @@ impl TCPProcessor {
                         }
                     }
                     self.server_address = self.choose_a_server();
-                // remote_address is server
                 } else {
                     if data.len() > header_length {
                         self.extend_buf(&data[header_length..], REMOTE);

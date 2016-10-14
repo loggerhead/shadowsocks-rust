@@ -22,6 +22,8 @@ extern crate byteorder;
 extern crate lru_time_cache;
 
 #[macro_use]
+pub mod util;
+#[macro_use]
 pub mod relay;
 pub mod config;
 pub mod socks5;

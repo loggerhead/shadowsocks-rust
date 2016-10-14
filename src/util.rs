@@ -1,0 +1,37 @@
+use std::str;
+use std::fs::File;
+use std::io::BufReader;
+use std::io::prelude::*;
+
+pub fn slice2str(data: &[u8]) -> Option<&str> {
+    str::from_utf8(data).ok()
+}
+
+pub fn slice2string(data: &[u8]) -> Option<String> {
+    String::from_utf8(data.to_vec()).ok()
+}
+
+pub fn handle_every_line(filepath: &str, func: &mut FnMut(String)) {
+    if let Ok(f) = File::open(filepath) {
+        let reader = BufReader::new(f);
+        for line in reader.lines() {
+            let line = match line {
+                Ok(line) => line.trim().to_string(),
+                _ => break,
+            };
+
+            func(line);
+        }
+    }
+}
+
+macro_rules! new_fat_slice_from_vec {
+    ($name:ident, $v:expr) => (
+        use std::slice::from_raw_parts_mut;
+
+        let ptr = $v.as_mut_ptr();
+        let cap = $v.capacity();
+        let raw = unsafe { &mut from_raw_parts_mut(ptr, cap) };
+        let $name = raw;
+    );
+}

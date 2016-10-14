@@ -1,3 +1,4 @@
+use std::borrow::Borrow;
 use std::ops::{Index, IndexMut};
 use std::hash::{Hash, BuildHasherDefault};
 use std::collections::{HashMap, hash_map};
@@ -19,15 +20,21 @@ impl<K, V> Dict<K, V>
         self.map.insert(k, v);
     }
 
-    pub fn get(&self, k: &K) -> Option<&V> {
+    pub fn get<Q: ?Sized>(&self, k: &Q) -> Option<&V>
+        where K: Borrow<Q>,
+              Q: Hash + Eq {
         self.map.get(k)
     }
 
-    pub fn get_mut(&mut self, k: &K) -> Option<&mut V> {
+    pub fn get_mut<Q: ?Sized>(&mut self, k: &Q) -> Option<&mut V>
+        where K: Borrow<Q>,
+              Q: Hash + Eq {
         self.map.get_mut(k)
     }
 
-    pub fn has(&self, k: &K) -> bool {
+    pub fn has<Q: ?Sized>(&self, k: &Q) -> bool
+        where K: Borrow<Q>,
+              Q: Hash + Eq {
         self.map.contains_key(k)
     }
 
@@ -52,20 +59,24 @@ impl<K, V> Dict<K, V>
     }
 }
 
-impl<K, V> Index<K> for Dict<K, V>
-    where K: Hash + Eq
+impl<'a, K, Q: ?Sized, V> Index<&'a Q> for Dict<K, V>
+    where K: Eq + Hash + Borrow<Q>,
+          Q: Eq + Hash
 {
     type Output = V;
 
-    fn index(&self, index: K) -> &V {
-        self.get(&index).expect("invalid index")
+    #[inline]
+    fn index(&self, index: &Q) -> &V {
+        self.get(index).expect("invalid index")
     }
 }
 
-impl<K, V> IndexMut<K> for Dict<K, V>
-    where K: Hash + Eq
+impl<'a, K, Q: ?Sized, V> IndexMut<&'a Q> for Dict<K, V>
+    where K: Eq + Hash + Borrow<Q>,
+          Q: Eq + Hash
 {
-    fn index_mut(&mut self, index: K) -> &mut V {
-        self.get_mut(&index).expect("invalid index")
+    #[inline]
+    fn index_mut(&mut self, index: &Q) -> &mut V {
+        self.get_mut(index).expect("invalid index")
     }
 }
