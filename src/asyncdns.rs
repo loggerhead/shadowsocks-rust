@@ -56,9 +56,10 @@ use util::{handle_every_line, slice2string, slice2str};
 //     +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
 //     |                    ARCOUNT                    |
 //     +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+type HostIpPair = (String, String);
+type ErrorMessage = String;
 type ResponseRecord = (String, String, u16, u16);
 type ResponseHeader = (u16, u16, u16, u16, u16, u16, u16, u16, u16);
-pub type Callback = FnMut(&mut Caller, Option<(String, String)>, Option<&str>);
 
 const BUF_SIZE: usize = 1024;
 const NAP_TIME: u64 = 10;
@@ -68,8 +69,8 @@ pub trait Caller {
     fn get_id(&self) -> Token;
     fn handle_dns_resolved(&mut self,
                            event_loop: &mut EventLoop<Relay>,
-                           Option<(String, String)>,
-                           Option<String>)
+                           Option<HostIpPair>,
+                           Option<ErrorMessage>)
                            -> ProcessResult<Vec<Token>>;
 }
 
@@ -99,7 +100,7 @@ impl DNSResponse {
 #[derive(Debug)]
 enum ResolveStatus<T> {
     Continue,
-    Error(String),
+    Error(ErrorMessage),
     Result(T)
 }
 
@@ -219,10 +220,10 @@ impl DNSResolver {
         self.receive_buf = Some(buf);
     }
 
-    pub fn local_resolve(&mut self, hostname: &String) -> (Option<(String, String)>, Option<String>) {
+    pub fn local_resolve(&mut self, hostname: &String) -> (Option<HostIpPair>, Option<ErrorMessage>) {
         if hostname.is_empty() {
             (None, Some("empty hostname".to_string()))
-        } else if is_ip(&hostname) {
+        } else if is_ip(hostname) {
             (Some((hostname.to_string(), hostname.to_string())), None)
         } else if self.hosts.has(hostname) {
             let ip = self.hosts[hostname].clone();
@@ -238,7 +239,7 @@ impl DNSResolver {
         }
     }
 
-    pub fn block_resolve(&mut self, hostname: String) -> (Option<(String, String)>, Option<String>) {
+    pub fn block_resolve(&mut self, hostname: String) -> (Option<HostIpPair>, Option<ErrorMessage>) {
         let mut res = self.local_resolve(&hostname);
         if res == (None, None) {
             self.send_request(hostname, self.qtypes[0]);
@@ -266,10 +267,7 @@ impl DNSResolver {
         res
     }
 
-    pub fn resolve(&mut self,
-                   token: Token,
-                   hostname: String)
-                   -> (Option<(String, String)>, Option<String>) {
+    pub fn resolve(&mut self, token: Token, hostname: String) -> (Option<HostIpPair>, Option<ErrorMessage>) {
         let res = self.local_resolve(&hostname);
         if res == (None, None) {
             // if this is the first time that any caller query the hostname
@@ -305,10 +303,10 @@ impl DNSResolver {
         self.hostname_status.del(&hostname);
     }
 
-    fn handle_recevied(&mut self) -> ResolveStatus<(String, String)> {
+    fn handle_recevied(&mut self) -> ResolveStatus<HostIpPair> {
         let mut res = ResolveStatus::Error("no data available".to_string());
         let receive_buf = self.receive_buf.take().unwrap();
-        if receive_buf.len() == 0 {
+        if receive_buf.is_empty() {
             return res;
         }
 

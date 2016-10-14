@@ -163,7 +163,7 @@ impl TCPProcessor {
         }
     }
 
-    fn is_buf_empty(&mut self, is_local_sock: bool) -> bool {
+    fn check_buf_empty(&mut self, is_local_sock: bool) -> bool {
         let buf = self.get_buf(is_local_sock);
         let res = buf.is_empty();
         self.set_buf(buf, is_local_sock);
@@ -550,7 +550,7 @@ impl TCPProcessor {
     }
 
     fn on_write(&mut self, _event_loop: &mut EventLoop<Relay>, is_local_sock: bool) -> ProcessResult<Vec<Token>> {
-        if self.is_buf_empty(is_local_sock) {
+        if self.check_buf_empty(is_local_sock) {
             if is_local_sock {
                 self.update_stream(StreamDirection::Down, StreamStatus::WaitReading);
             } else {

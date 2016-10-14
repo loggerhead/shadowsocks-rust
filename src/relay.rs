@@ -55,11 +55,11 @@ impl Relay {
         // TODO: need resolve DNS here
         let socket_addr = str2addr4(&address).unwrap_or_else(|| {
             error!("invalid socket address: {}", address);
-            return exit(1);
+            exit(1);
         });
         let tcp_listener = TcpListener::bind(&SocketAddr::V4(socket_addr)).unwrap_or_else(|e| {
             error!("cannot bind address {} because {}", address, e);
-            return exit(1);
+            exit(1);
         });
         if cfg!(feature = "is_client") {
             info!("ssclient listen on {}", address);
@@ -91,11 +91,11 @@ impl Relay {
                                             EventSet::readable(),
                                             PollOpt::edge() | PollOpt::oneshot()) {
             error!("failed to register relay: {}", e);
-            return exit(1);
+            exit(1);
         }
         if !self.dns_resolver.borrow_mut().register(&mut event_loop, DNS_RESOLVER_TOKEN) {
             error!("failed to register DNS resolver");
-            return exit(1);
+            exit(1);
         }
 
         event_loop.run(self).unwrap();
@@ -207,7 +207,7 @@ impl Processor for Relay {
                                               EventSet::readable(),
                                               PollOpt::edge() | PollOpt::oneshot()) {
             error!("failed to reregister relay: {}", e);
-            return exit(1);
+            exit(1);
         }
 
         result
