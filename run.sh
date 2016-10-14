@@ -7,7 +7,7 @@ if [[ "$1" == "ps" ]]; then
     spid=$(lsof -i :8111 | grep LISTEN | awk '{ print $2 }')
     sudo htop -p $cpid -p $spid
 elif [[ "$1" == "r" ]]; then
-    nc -X 5 -x 127.0.0.1:$PROXY_PORT localhost 8001
+    curl --socks5 127.0.0.1:$PROXY_PORT http://localhost:8001/
 elif [[ "$1" == "rs" ]]; then
     python -m SimpleHTTPServer 8001
 elif [[ "$1" == "c" ]]; then
