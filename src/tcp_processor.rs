@@ -82,10 +82,6 @@ impl TCPProcessor {
         }
     }
 
-    pub fn set_timeout(&mut self, timeout: Timeout) {
-        self.timeout = Some(timeout);
-    }
-
     fn sock_desc(&self, is_local_sock: bool) -> &'static str {
         if is_local_sock { "local" } else { "remote" }
     }
@@ -181,7 +177,7 @@ impl TCPProcessor {
             let timeout = self.timeout.take().unwrap();
             event_loop.clear_timeout(timeout);
         }
-        let delay = self.conf["timeout"].as_integer().unwrap() as u64;
+        let delay = self.conf["timeout"].as_integer().unwrap() as u64 * 1000;
         self.timeout = event_loop.timeout_ms(self.get_id(), delay).ok();
     }
 
