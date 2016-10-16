@@ -1,16 +1,87 @@
-extern crate log;
-
+use std::io;
 use std::fmt;
-use std::sync::Mutex;
 use std::error::Error;
-use std::io::prelude::*;
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 
 use chrono::Local;
-use ansi_term::Colour::{Green, Yellow, Red};
-use log::{LogRecord, LogLevel, LogMetadata, LogLevelFilter};
+use slog;
+use slog_term;
+use slog_stream;
+use slog_stdlog;
+use slog::Level;
+use slog::DrainExt;
 
 use config::Config;
+
+macro_rules! now {
+    () => ( Local::now().format("%m-%d %H:%M:%S%.3f") )
+}
+
+macro_rules! setup_global_logger {
+    ($lv:expr, $drain:expr) => (
+        let d = slog::level_filter($lv, $drain).fuse();
+        let logger = slog::Logger::root(d, o!());
+        slog_stdlog::set_logger(logger).unwrap();
+    )
+}
+
+pub fn init(conf: &Config) -> Result<(), LoggerInitError> {
+    let log_level = if let Some(v) = conf.get_i64("verbose") {
+        match v {
+            1 => Level::Debug,
+            _ => Level::Trace,
+        }
+    } else if let Some(v) = conf.get_i64("quiet") {
+        match v {
+            1 => Level::Warning,
+            2 => Level::Error,
+            _ => Level::Critical,
+        }
+    } else {
+        Level::Info
+    };
+
+    if let Some(v) = conf.get("log_file") {
+        let log_path = v.as_str().unwrap();
+        let f = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(log_path);
+
+        match f {
+            Ok(file) => {
+                let streamer = slog_stream::stream(file, MyFormat);
+                setup_global_logger!(log_level, streamer);
+            }
+            Err(_) => {
+                let errmsg = format!("cannot open log file {}", log_path);
+                return Err(LoggerInitError::new(errmsg));
+            }
+        }
+    } else {
+        let drain = slog_term::StreamerBuilder::new().use_custom_timestamp(move |io| {
+            write!(io, "{}", now!())
+        }).build();
+        setup_global_logger!(log_level, drain);
+    }
+
+    Ok(())
+}
+
+
+struct MyFormat;
+
+impl slog_stream::Format for MyFormat {
+    fn format(&self,
+              io: &mut io::Write,
+              rinfo: &slog::Record,
+              _logger_values: &slog::OwnedKeyValueList)
+              -> io::Result<()> {
+        let msg = format!("{} {} - {}\n", now!(), rinfo.level(), rinfo.msg());
+        io.write_all(msg.as_bytes()).map(|_| ())
+    }
+}
 
 #[derive(Debug)]
 pub struct LoggerInitError {
@@ -33,100 +104,4 @@ impl Error for LoggerInitError {
     fn description(&self) -> &str {
         &self.desc
     }
-}
-
-enum OutputType {
-    None,
-    Stdout,
-    File(Mutex<File>),
-}
-
-struct MyLogger {
-    log_level: LogLevel,
-    output_type: OutputType,
-}
-
-impl MyLogger {
-    fn new(log_level: LogLevel, output_type: OutputType) -> Self {
-        MyLogger {
-            log_level: log_level,
-            output_type: output_type,
-        }
-    }
-}
-
-impl log::Log for MyLogger {
-    fn enabled(&self, metadata: &LogMetadata) -> bool {
-        metadata.level() <= self.log_level
-    }
-
-    fn log(&self, record: &LogRecord) {
-        if self.enabled(record.metadata()) {
-            let dt = Local::now().format("%Y-%m-%d %H:%M:%S%.3f").to_string();
-            let lv_str = format!("{:5}", record.level());
-            let level = match record.level() {
-                LogLevel::Info => Green.paint(lv_str).to_string(),
-                LogLevel::Warn => Yellow.paint(lv_str).to_string(),
-                LogLevel::Error => Red.paint(lv_str).to_string(),
-                _ => lv_str,
-            };
-
-            let msg = format!("{} - {} - {}\n", dt, level, record.args());
-            match self.output_type {
-                OutputType::None => {}
-                OutputType::Stdout => {
-                    print!("{}", msg);
-                }
-                OutputType::File(ref f) => {
-                    let _ = f.lock().unwrap().write_all(msg.as_bytes());
-                    let _ = f.lock().unwrap().flush();
-                }
-            }
-        }
-    }
-}
-
-pub fn init(conf: &Config) -> Result<(), LoggerInitError> {
-    let log_level_filter = if let Some(v) = conf.get_i64("verbose") {
-        match v {
-            1 => LogLevelFilter::Debug,
-            _ => LogLevelFilter::Trace,
-        }
-    } else if let Some(v) = conf.get_i64("quiet") {
-        match v {
-            1 => LogLevelFilter::Warn,
-            2 => LogLevelFilter::Error,
-            _ => LogLevelFilter::Off,
-        }
-    } else {
-        LogLevelFilter::Info
-    };
-
-    let output_type = if let Some(v) = conf.get("log_file") {
-        let log_path = v.as_str().unwrap();
-        let f = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(log_path);
-        match f {
-            Ok(f) => OutputType::File(Mutex::new(f)),
-            Err(_) => {
-                let errmsg = format!("cannot open log file {}", log_path);
-                return Err(LoggerInitError::new(errmsg));
-            }
-        }
-    } else {
-        OutputType::Stdout
-    };
-
-    log::set_logger(|max_log_level| {
-            max_log_level.set(log_level_filter);
-            let my_logger = match log_level_filter.to_log_level() {
-                Some(log_level) => MyLogger::new(log_level, output_type),
-                _ => MyLogger::new(LogLevel::Error, OutputType::None),
-            };
-            Box::new(my_logger)
-        })
-        .map_err(|e| LoggerInitError::new(e.description().to_string()))
 }

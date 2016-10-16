@@ -7,6 +7,12 @@ extern crate try_opt;
 #[macro_use]
 extern crate lazy_static;
 #[macro_use]
+extern crate slog;
+extern crate slog_term;
+extern crate slog_stream;
+extern crate slog_stdlog;
+// NOTICE: `log` must below `slog`
+#[macro_use]
 extern crate log;
 
 extern crate mio;
@@ -17,7 +23,6 @@ extern crate clap;
 extern crate regex;
 extern crate crypto;
 extern crate chrono;
-extern crate ansi_term;
 extern crate byteorder;
 extern crate lru_time_cache;
 
