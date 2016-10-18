@@ -3,7 +3,6 @@ use std::rc::Rc;
 use std::io::Cursor;
 use std::cell::RefCell;
 use std::time::Duration;
-use std::net::SocketAddr;
 use std::{thread, time};
 
 use rand;
@@ -13,7 +12,7 @@ use mio::udp::UdpSocket;
 use mio::{Token, EventSet, EventLoop, PollOpt};
 
 use collections::{Set, Dict};
-use relay::{Relay, Processor, ProcessResult};
+use relay::{Relay, ProcessResult};
 use network::{NetworkWriteBytes, NetworkReadBytes};
 use network::{is_ip, slice2ip4, slice2ip6, str2addr4, alloc_udp_socket};
 use util::{handle_every_line, slice2string, slice2str};
@@ -184,7 +183,7 @@ impl DNSResolver {
                 debug!("send query request of {} to servers", &hostname);
                 for server in &self.servers {
                     let server = format!("{}:53", server);
-                    let addr = SocketAddr::V4(str2addr4(&server).unwrap());
+                    let addr = str2addr4(&server).unwrap();
                     let req = build_request(&hostname, qtype).unwrap();
                     sock.send_to(&req, &addr).unwrap_or_else(|e| {
                         error!("send query request failed: {}", e);
@@ -386,14 +385,12 @@ impl DNSResolver {
     pub fn reregister(&mut self, event_loop: &mut EventLoop<Relay>) -> bool {
         self.do_register(event_loop, true)
     }
-}
 
-impl Processor for DNSResolver {
-    fn process(&mut self,
+    pub fn process(&mut self,
                event_loop: &mut EventLoop<Relay>,
                token: Token,
                events: EventSet)
-               -> ProcessResult<Vec<Token>> {
+               -> ProcessResult<()> {
         if events.is_error() {
             error!("events error on DNS socket");
             let sock = self.sock.take().unwrap();
@@ -408,15 +405,27 @@ impl Processor for DNSResolver {
             self.hostname_status.clear();
             self.token_to_hostname.clear();
             self.hostname_to_tokens.clear();
+            ProcessResult::Failed(())
         } else {
             self.receive_data_into_buf();
             if let ResolveStatus::Result((hostname, ip)) = self.handle_recevied() {
                 self.call_callback(event_loop, hostname, ip);
             }
-            self.reregister(event_loop);
-        }
 
-        ProcessResult::Success
+            if self.reregister(event_loop) {
+                ProcessResult::Success
+            } else {
+                ProcessResult::Failed(())
+            }
+        }
+    }
+
+    pub fn is_destroyed(&self) -> bool {
+        unimplemented!();
+    }
+
+    pub fn destroy(&mut self, event_loop: &mut EventLoop<Relay>) {
+        unimplemented!();
     }
 }
 
@@ -458,11 +467,6 @@ fn build_request(address: &str, qtype: u16) -> Option<Vec<u8>> {
     //     |                       0                       |
     //     +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
     let request_id = rand::random::<u16>();
-
-    macro_rules! pack {
-        (u16, $r:expr, $v:expr) => ( try_opt!($r.put_u16($v)); );
-        (u8, $r:expr, $v:expr) => ( try_opt!($r.put_u8($v)); );
-    }
 
     pack!(u16, r, request_id);
     pack!(u8, r, 1);
@@ -597,11 +601,6 @@ fn parse_header(data: &[u8]) -> Option<ResponseHeader> {
     }
 
     let mut header = Cursor::new(data);
-
-    macro_rules! unpack {
-        (u16, $r:expr) => ( try_opt!($r.get_u16()); );
-        (u8, $r:expr) => ( try_opt!($r.get_u8()); );
-    }
 
     let id = unpack!(u16, header);
     let byte3 = unpack!(u8, header);

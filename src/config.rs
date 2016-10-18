@@ -1,5 +1,5 @@
 use std::fmt;
-use std::rc::Rc;
+use std::sync::Arc;
 use std::fs::File;
 use std::ops::Index;
 use std::str::FromStr;
@@ -12,12 +12,12 @@ use clap::{Arg, App, ArgMatches};
 use toml::{Parser, Value, Table, Array};
 
 pub struct Config {
-    values: Rc<Table>,
+    values: Arc<Table>,
 }
 
 impl Config {
     fn new(conf: Table) -> Self {
-        Config { values: Rc::new(conf) }
+        Config { values: Arc::new(conf) }
     }
 
     pub fn get(&self, key: &'static str) -> Option<&Value> {

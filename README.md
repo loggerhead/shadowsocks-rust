@@ -27,7 +27,7 @@
 
 #Features need to finished
 - [x] Running as daemon
-- [ ] UDP support
+- [x] UDP support
 - [ ] OTA encrypt method support
 - [ ] TCP fast open
 - [ ] Multiple encrypt methods support

@@ -38,6 +38,14 @@ impl Encryptor {
         }
     }
 
+    pub fn get_key(&self) -> &Vec<u8> {
+        &self.key
+    }
+
+    pub fn get_iv(&self) -> &Vec<u8> {
+        &self.cipher_iv
+    }
+
     fn process(&mut self, data: &[u8], is_encrypt: bool) -> Option<Vec<u8>> {
         let mut output = vec![0u8; data.len()];
 
@@ -68,7 +76,8 @@ impl Encryptor {
 
             match encrypted {
                 Some(ref mut encrypted) => {
-                    let mut result = vec![];
+                    let len = self.cipher_iv.len() + encrypted.len();
+                    let mut result = Vec::with_capacity(len);
                     result.extend_from_slice(&self.cipher_iv);
                     result.append(encrypted);
 
@@ -86,13 +95,27 @@ impl Encryptor {
             }
 
             let offset = self.decipher_iv.len();
-            self.decipher_iv.copy_from_slice(&data[..offset]);
+            self.decipher_iv[..].copy_from_slice(&data[..offset]);
             self.decipher = Some(create_cipher(&self.key, &self.decipher_iv));
 
             self.process(&data[offset..], false)
         } else {
             self.process(data, false)
         }
+    }
+
+    // TODO: finish this
+    pub fn encrypt_udp(&mut self, data: &[u8]) -> Option<Vec<u8>> {
+        let mut d = Vec::with_capacity(data.len());
+        d.extend_from_slice(data);
+        Some(d)
+    }
+
+    // TODO: finish this
+    pub fn decrypt_udp(&mut self, data: &[u8]) -> Option<Vec<u8>> {
+        let mut d = Vec::with_capacity(data.len());
+        d.extend_from_slice(data);
+        Some(d)
     }
 }
 
@@ -103,16 +126,16 @@ fn create_cipher(key: &[u8], iv: &[u8]) -> Cipher {
 // equivalent to OpenSSL's EVP_BytesToKey() with count 1
 fn gen_key_iv(password: &str, key_len: usize, iv_len: usize) -> (Vec<u8>, Vec<u8>) {
     let mut i = 0;
-    let mut m: Vec<Box<[u8; 16]>> = vec![];
-    let mut data = vec![];
-    data.extend_from_slice(password.as_bytes());
+    let mut m: Vec<Box<[u8; 16]>> = Vec::with_capacity(key_len + iv_len);
+    let password = password.as_bytes();
+    let mut data = Vec::with_capacity(16 + password.len());
 
     while m.len() < key_len + iv_len {
         if i > 0 {
-            data.clear();
+            unsafe { data.set_len(0); }
             data.extend_from_slice(&*m[i - 1]);
-            data.extend_from_slice(password.as_bytes());
-        };
+            data.extend_from_slice(password);
+        }
 
         let mut buf = Box::new([0u8; 16]);
         let mut md5 = Md5::new();
@@ -122,16 +145,13 @@ fn gen_key_iv(password: &str, key_len: usize, iv_len: usize) -> (Vec<u8>, Vec<u8
         i += 1;
     }
 
-    let mut tmp = vec![];
+    let mut tmp: Vec<u8> = Vec::with_capacity(16 * m.capacity());
     for bytes in m {
-        let bytes = &*bytes;
         tmp.extend_from_slice(&*bytes);
     }
 
-    let mut key = vec![];
-    let mut iv = vec![];
-    key.extend_from_slice(&tmp[..key_len]);
-    iv.extend_from_slice(&tmp[key_len..key_len + iv_len]);
+    let key = Vec::from(&tmp[..key_len]);
+    let iv = Vec::from(&tmp[key_len..key_len + iv_len]);
 
     (key, iv)
 }

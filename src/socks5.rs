@@ -1,4 +1,8 @@
+use std::net::IpAddr;
 use network::{slice2ip4, slice2ip6, NetworkReadBytes};
+
+/// (addr_type, dest_addr, dest_port, header_length)
+pub type Socks5Header = (u8, String, u16, usize);
 
 #[derive(Debug, PartialEq)]
 pub enum CheckAuthResult {
@@ -7,7 +11,12 @@ pub enum CheckAuthResult {
     NoAcceptableMethods,
 }
 
-pub fn parse_header(data: &[u8]) -> Option<(u8, String, u16, usize)> {
+// +------+----------+----------+----------+
+// | ATYP | DST.ADDR | DST.PORT |   DATA   |
+// +------+----------+----------+----------+
+// |  1   | Variable |    2     | Variable |
+// +------+----------+----------+----------+
+pub fn parse_header(data: &[u8]) -> Option<Socks5Header> {
     let addr_type = data[0];
     let mut dest_addr = None;
     let mut dest_port = 0;
@@ -93,6 +102,21 @@ pub fn check_auth_method(data: &[u8]) -> CheckAuthResult {
         warn!("none of socks method's requested by client is supported");
         CheckAuthResult::NoAcceptableMethods
     }
+}
+
+pub fn pack_addr(ip: IpAddr) -> Vec<u8> {
+    let mut res = Vec::with_capacity(17);
+    match ip {
+        IpAddr::V4(ip) => {
+            res.push(0x01);
+            res.extend_from_slice(&ip.octets());
+        }
+        IpAddr::V6(ip) => {
+            res.push(0x04);
+            res.extend_from_slice(&ip.octets());
+        }
+    }
+    res
 }
 
 #[allow(dead_code, non_snake_case)]

@@ -1,29 +1,19 @@
 use std::rc::Rc;
 use std::ops::BitAnd;
-use std::str::FromStr;
 use std::cell::RefCell;
 use std::io::{Read, Write, Result, Error, ErrorKind};
 
-use rand::{thread_rng, Rng};
 use mio::tcp::{TcpStream, Shutdown};
 use mio::{EventLoop, Token, Timeout, EventSet, PollOpt};
 
 use socks5;
+use util::shift_vec;
 use config::Config;
 use encrypt::Encryptor;
-use network::pair2socket_addr;
+use network::{pair2socket_addr, NetworkWriteBytes};
 use asyncdns::{Caller, DNSResolver};
-use relay::{Relay, Processor, ProcessResult};
-use socks5::{parse_header, check_auth_method, CheckAuthResult};
-
-macro_rules! try_process {
-    ($process:expr) => (
-        match $process {
-            ProcessResult::Success => {},
-            res => return res,
-        }
-    );
-}
+use socks5::{pack_addr, parse_header, check_auth_method, CheckAuthResult};
+use super::{choose_a_server, Relay, ProcessResult};
 
 pub struct TCPProcessor {
     conf: Config,
@@ -179,17 +169,6 @@ impl TCPProcessor {
         }
         let delay = self.conf["timeout"].as_integer().unwrap() as u64 * 1000;
         self.timeout = event_loop.timeout_ms(self.get_id(), delay).ok();
-    }
-
-    fn choose_a_server(&self) -> Option<(String, u16)> {
-        let servers = self.conf["servers"].as_slice().unwrap();
-        let mut rng = thread_rng();
-        let server = rng.choose(servers).unwrap().as_str().unwrap();
-        let parts: Vec<&str> = server.splitn(2, ':').collect();
-        let addr = parts[0].to_string();
-        let port = u16::from_str(parts[1]).unwrap();
-
-        Some((addr, port))
     }
 
     fn update_stream(&mut self, stream: StreamDirection, status: StreamStatus) {
@@ -390,8 +369,34 @@ impl TCPProcessor {
         let data = if cfg!(feature = "sslocal") {
             match data[1] {
                 socks5::cmd::UDP_ASSOCIATE => {
+                    debug!("UDP associate");
                     self.stage = HandleStage::UDPAssoc;
-                    unimplemented!();
+                    let mut sock = self.local_sock.take().unwrap();
+                    match sock.local_addr() {
+                        Ok(addr) => {
+                            let packed_addr = pack_addr(addr.ip());
+                            let mut packed_port = Vec::<u8>::new();
+                            let _ = packed_port.put_u16(addr.port());
+
+                            let mut header = Vec::with_capacity(32);
+                            // IPv4 header
+                            header.extend_from_slice(&[0x05, 0x00, 0x00]);
+                            header.extend_from_slice(&packed_addr);
+                            header.extend_from_slice(&packed_port);
+
+                            if let Err(e) = sock.write_all(&header) {
+                                error!("send UDP associate header failed: {}", e);
+                                return ProcessResult::Failed(self.get_tokens());
+                            }
+
+                            self.local_sock = Some(sock);
+                            return ProcessResult::Success;
+                        }
+                        Err(e) => {
+                            error!("UDP handshake failed: {}", e);
+                            return ProcessResult::Failed(self.get_tokens());
+                        }
+                    }
                 }
                 socks5::cmd::CONNECT => {
                     &data[3..]
@@ -429,7 +434,7 @@ impl TCPProcessor {
                             return ProcessResult::Failed(self.get_tokens());
                         }
                     }
-                    self.server_address = self.choose_a_server();
+                    self.server_address = choose_a_server(&self.conf);
                 } else {
                     if data.len() > header_length {
                         self.extend_buf(&data[header_length..], REMOTE);
@@ -558,14 +563,8 @@ impl TCPProcessor {
             let mut buf = self.get_buf(is_local_sock);
             let result = match self.write_to_sock(&buf, is_local_sock) {
                 (nwrite, ProcessResult::Success) => {
-                    // shift unfinished bytes
-                    let uncompleted_len = buf.len() - nwrite;
-                    for i in 0..uncompleted_len {
-                        buf[i] = buf[i + nwrite];
-                    }
-                    unsafe { buf.set_len(uncompleted_len); }
-
-                    self.update_stream_depend_on(uncompleted_len == 0, is_local_sock);
+                    shift_vec(&mut buf, nwrite);
+                    self.update_stream_depend_on(buf.len() == nwrite, is_local_sock);
                     ProcessResult::Success
                 }
                 (_, result) => result,
@@ -596,6 +595,97 @@ impl TCPProcessor {
             }
             Err(e) => Err(Error::new(ErrorKind::InvalidData, e)),
         }
+    }
+
+    pub fn process(&mut self, event_loop: &mut EventLoop<Relay>,
+                   token: Token,
+                   events: EventSet)
+                   -> ProcessResult<Vec<Token>> {
+        let this = processor2str(self);
+        // TODO: debug
+        debug!("current handle stage of {} is {:?}", this, self.stage);
+
+        if Some(token) == self.local_token {
+            if events.is_error() {
+                let sock = self.local_sock.take().unwrap();
+                error!("events error on local {}: {}", this, sock.take_socket_error().unwrap_err());
+                return ProcessResult::Failed(self.get_tokens());
+            }
+            debug!("got events for local {}: {:?}", this, events);
+
+            if events.is_readable() || events.is_hup() {
+                try_process!(self.on_local_read(event_loop));
+            }
+
+            if events.is_writable() {
+                try_process!(self.on_local_write(event_loop));
+            }
+
+            self.reregister(event_loop, LOCAL);
+        } else if Some(token) == self.remote_token {
+            if events.is_error() {
+                let sock = self.remote_sock.take().unwrap();
+                error!("events error on remote {}: {}", this, sock.take_socket_error().unwrap_err());
+                return ProcessResult::Failed(self.get_tokens());
+            }
+            debug!("got events for remote {}: {:?}", this, events);
+
+            if events.is_readable() || events.is_hup() {
+                try_process!(self.on_remote_read(event_loop));
+            }
+
+            if events.is_writable() {
+                try_process!(self.on_remote_write(event_loop));
+            }
+
+            self.reregister(event_loop, REMOTE);
+        }
+
+        ProcessResult::Success
+    }
+
+    pub fn destroy(&mut self, event_loop: &mut EventLoop<Relay>) {
+        let this = processor2str(self);
+        trace!("destroy processor {}", this);
+
+        if let Some(ref sock) = self.local_sock {
+            if let Err(e) = sock.shutdown(Shutdown::Both) {
+                match e.kind() {
+                    ErrorKind::NotConnected => { }
+                    _ => {
+                        error!("shutdown local {} failed: {}", this, e);
+                    }
+                }
+            }
+        }
+
+        if let Some(ref sock) = self.remote_sock {
+            if let Err(e) = sock.shutdown(Shutdown::Both) {
+                match e.kind() {
+                    ErrorKind::NotConnected => { }
+                    _ => {
+                        error!("shutdown remote {} failed: {}", this, e);
+                    }
+                }
+            }
+        }
+
+        if self.timeout.is_some() {
+            let timeout = self.timeout.take().unwrap();
+            event_loop.clear_timeout(timeout);
+        }
+
+        self.dns_resolver.borrow_mut().remove_caller(self.get_id());
+
+        self.local_sock = None;
+        self.remote_sock = None;
+        self.local_token = None;
+        self.remote_token = None;
+        self.stage = HandleStage::Destroyed;
+    }
+
+    pub fn is_destroyed(&self) -> bool {
+        self.stage == HandleStage::Destroyed
     }
 }
 
@@ -644,98 +734,6 @@ impl Caller for TCPProcessor {
     }
 }
 
-impl Processor for TCPProcessor {
-    fn process(&mut self, event_loop: &mut EventLoop<Relay>,
-               token: Token,
-               events: EventSet)
-               -> ProcessResult<Vec<Token>> {
-        let this = processor2str(self);
-        trace!("current handle stage of {} is {:?}", this, self.stage);
-
-        if Some(token) == self.local_token {
-            if events.is_error() {
-                let sock = self.local_sock.take().unwrap();
-                error!("events error on local {}: {}", this, sock.take_socket_error().unwrap_err());
-                return ProcessResult::Failed(self.get_tokens());
-            }
-            debug!("got events for local {}: {:?}", this, events);
-
-            if events.is_readable() || events.is_hup() {
-                try_process!(self.on_local_read(event_loop));
-            }
-
-            if events.is_writable() {
-                try_process!(self.on_local_write(event_loop));
-            }
-
-            self.reregister(event_loop, LOCAL);
-        } else if Some(token) == self.remote_token {
-            if events.is_error() {
-                let sock = self.remote_sock.take().unwrap();
-                error!("events error on remote {}: {}", this, sock.take_socket_error().unwrap_err());
-                return ProcessResult::Failed(self.get_tokens());
-            }
-            debug!("got events for remote {}: {:?}", this, events);
-
-            if events.is_readable() || events.is_hup() {
-                try_process!(self.on_remote_read(event_loop));
-            }
-
-            if events.is_writable() {
-                try_process!(self.on_remote_write(event_loop));
-            }
-
-            self.reregister(event_loop, REMOTE);
-        }
-
-        ProcessResult::Success
-    }
-
-    fn destroy(&mut self, event_loop: &mut EventLoop<Relay>) {
-        let this = processor2str(self);
-        trace!("destroy processor {}", this);
-
-        if let Some(ref sock) = self.local_sock {
-            if let Err(e) = sock.shutdown(Shutdown::Both) {
-                match e.kind() {
-                    ErrorKind::NotConnected => { }
-                    _ => {
-                        error!("shutdown local {} failed: {}", this, e);
-                    }
-                }
-            }
-        }
-
-        if let Some(ref sock) = self.remote_sock {
-            if let Err(e) = sock.shutdown(Shutdown::Both) {
-                match e.kind() {
-                    ErrorKind::NotConnected => { }
-                    _ => {
-                        error!("shutdown remote {} failed: {}", this, e);
-                    }
-                }
-            }
-        }
-
-        if self.timeout.is_some() {
-            let timeout = self.timeout.take().unwrap();
-            event_loop.clear_timeout(timeout);
-        }
-
-        self.dns_resolver.borrow_mut().remove_caller(self.get_id());
-
-        self.local_sock = None;
-        self.remote_sock = None;
-        self.local_token = None;
-        self.remote_token = None;
-        self.stage = HandleStage::Destroyed;
-    }
-
-    fn is_destroyed(&self) -> bool {
-        self.stage == HandleStage::Destroyed
-    }
-}
-
 
 fn address2str(address: &Option<(String, u16)>) -> String {
     match *address {
@@ -754,8 +752,8 @@ fn processor2str(p: &mut TCPProcessor) -> String {
 const BUF_SIZE: usize = 32 * 1024;
 const LOCAL: bool = true;
 const REMOTE: bool = false;
-// for each opening port, we have a TCP Relay
-// for each connection, we have a TCP Relay Handler to handle the connection
+// for each opening port, we have a TcpRelay
+// for each connection, we have a TcpProcessor to handle the connection
 //
 // for each handler, we have 2 sockets:
 //    local:   connected to the client
