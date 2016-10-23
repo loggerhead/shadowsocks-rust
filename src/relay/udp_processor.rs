@@ -77,6 +77,10 @@ impl UdpProcessor {
         (cport, sport, caddr, saddr)
     }
 
+    fn process_failed(&self) -> ProcessResult<Vec<Token>> {
+        ProcessResult::Failed(vec![self.token.unwrap()])
+    }
+
     fn do_register(&mut self, event_loop: &mut EventLoop<Relay>, is_reregister: bool) -> bool {
         let token = self.token.unwrap();
         let pollopts = PollOpt::edge() | PollOpt::oneshot();
@@ -168,7 +172,7 @@ impl UdpProcessor {
                 shift_vec(&mut buf, nwrite);
             }
         } else {
-            return ProcessResult::Failed(vec![self.get_id()]);
+            return self.process_failed();
         }
 
         self.remote_buf = Some(buf);
@@ -186,7 +190,7 @@ impl UdpProcessor {
                         self.unfinished_send_tasks.borrow_mut().push(task);
                     }
                 } else {
-                    return ProcessResult::Failed(vec![self.get_id()]);
+                    return self.process_failed();
                 }
             )
         }
@@ -232,7 +236,7 @@ impl UdpProcessor {
             }
             Err(e) => {
                 error!("UDP processor receive data failed: {}", e);
-                return ProcessResult::Failed(vec![self.get_id()]);
+                return self.process_failed();
             }
         }
 
@@ -248,7 +252,7 @@ impl UdpProcessor {
                    -> ProcessResult<Vec<Token>> {
         if events.is_error() {
             error!("UDP processor error");
-            return ProcessResult::Failed(vec![self.get_id()]);
+            return self.process_failed();
         }
 
         if events.is_readable() || events.is_hup() {
@@ -284,7 +288,7 @@ impl Caller for UdpProcessor {
         debug!("UDP processor stage: DNS resolved");
         if let Some(errmsg) = errmsg {
             error!("UDP processor resolve DNS error: {}", errmsg);
-            return ProcessResult::Failed(vec![self.get_id()]);
+            return self.process_failed();
         }
 
         match hostname_ip {
@@ -306,12 +310,12 @@ impl Caller for UdpProcessor {
                                     buf.extend_from_slice(&data[nwrite..]);
                                 }
                             } else {
-                                return ProcessResult::Failed(vec![self.get_id()]);
+                                return self.process_failed();
                             }
                         }
                         _ => {
                             error!("UDP processor encrypt data failed");
-                            return ProcessResult::Failed(vec![self.get_id()]);
+                            return self.process_failed();
                         }
                     }
                 } else {
@@ -319,7 +323,7 @@ impl Caller for UdpProcessor {
                     if let Some(nwrite) = self.send_to(&buf[self.header_length..], SERVER) {
                         shift_vec(&mut buf, self.header_length + nwrite);
                     } else {
-                        return ProcessResult::Failed(vec![self.get_id()]);
+                        return self.process_failed();
                     }
                 }
 
@@ -329,7 +333,7 @@ impl Caller for UdpProcessor {
                 }
             }
             _ => {
-                return ProcessResult::Failed(vec![self.get_id()]);
+                return self.process_failed();
             }
         }
 
