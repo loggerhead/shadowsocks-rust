@@ -219,7 +219,7 @@ impl DNSResolver {
         self.receive_buf = Some(buf);
     }
 
-    pub fn local_resolve(&mut self, hostname: &String) -> (Option<HostIpPair>, Option<ErrorMessage>) {
+    fn local_resolve(&mut self, hostname: &String) -> (Option<HostIpPair>, Option<ErrorMessage>) {
         if hostname.is_empty() {
             (None, Some("empty hostname".to_string()))
         } else if is_ip(hostname) {
@@ -382,7 +382,7 @@ impl DNSResolver {
         self.do_register(event_loop, false)
     }
 
-    pub fn reregister(&mut self, event_loop: &mut EventLoop<Relay>) -> bool {
+    fn reregister(&mut self, event_loop: &mut EventLoop<Relay>) -> bool {
         self.do_register(event_loop, true)
     }
 

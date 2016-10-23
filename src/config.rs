@@ -174,7 +174,7 @@ pub fn gen_config() -> Result<Config, ConfigError> {
     check_config(matches, config)
 }
 
-pub fn read_config(config_path: &str) -> Result<Table, ConfigError> {
+fn read_config(config_path: &str) -> Result<Table, ConfigError> {
     let mut f = match File::open(config_path) {
         Ok(f) => f,
         Err(_) => {
@@ -199,7 +199,7 @@ pub fn read_config(config_path: &str) -> Result<Table, ConfigError> {
     }
 }
 
-pub fn check_config(matches: ArgMatches, mut config: Table) -> Result<Config, ConfigError> {
+fn check_config(matches: ArgMatches, mut config: Table) -> Result<Config, ConfigError> {
     macro_rules! check_config {
         ($key:expr) => (
             if !matches.is_present($key) && !config.contains_key($key) {

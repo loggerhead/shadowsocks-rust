@@ -129,9 +129,9 @@ impl UdpRelay {
         let result = self.listener.borrow().recv_from(buf_slice);
         match result {
             Ok(None) => { }
-            Ok(Some((n, addr))) => {
+            Ok(Some((nwrite, addr))) => {
                 debug!("receive UDP request from {}", addr);
-                unsafe { buf.set_len(n); }
+                unsafe { buf.set_len(nwrite); }
                 if buf.len() < 3 {
                     warn!("UDP handshake header too short");
                 } else {

@@ -15,7 +15,7 @@ use asyncdns::{Caller, DNSResolver};
 use socks5::{pack_addr, parse_header, check_auth_method, CheckAuthResult};
 use super::{choose_a_server, Relay, ProcessResult};
 
-pub struct TCPProcessor {
+pub struct TcpProcessor {
     conf: Config,
     stage: HandleStage,
     dns_resolver: Rc<RefCell<DNSResolver>>,
@@ -26,8 +26,8 @@ pub struct TCPProcessor {
     remote_sock: Option<TcpStream>,
     local_interest: EventSet,
     remote_interest: EventSet,
-    data_to_write_to_local: Option<Vec<u8>>,
-    data_to_write_to_remote: Option<Vec<u8>>,
+    local_buf: Option<Vec<u8>>,
+    remote_buf: Option<Vec<u8>>,
     client_address: Option<(String, u16)>,
     server_address: Option<(String, u16)>,
     encryptor: Encryptor,
@@ -35,8 +35,8 @@ pub struct TCPProcessor {
     upstream_status: StreamStatus,
 }
 
-impl TCPProcessor {
-    pub fn new(conf: Config, local_sock: TcpStream, dns_resolver: Rc<RefCell<DNSResolver>>) -> TCPProcessor {
+impl TcpProcessor {
+    pub fn new(conf: Config, local_sock: TcpStream, dns_resolver: Rc<RefCell<DNSResolver>>) -> TcpProcessor {
         let encryptor = Encryptor::new(conf["password"].as_str().unwrap());
         let stage = if cfg!(feature = "sslocal") {
             HandleStage::Init
@@ -51,7 +51,7 @@ impl TCPProcessor {
 
         let _ = local_sock.set_nodelay(true);
 
-        TCPProcessor {
+        TcpProcessor {
             conf: conf,
             stage: stage,
             dns_resolver: dns_resolver,
@@ -60,8 +60,8 @@ impl TCPProcessor {
             local_sock: Some(local_sock),
             remote_token: None,
             remote_sock: None,
-            data_to_write_to_local: None,
-            data_to_write_to_remote: None,
+            local_buf: None,
+            remote_buf: None,
             client_address: client_address,
             server_address: None,
             encryptor: encryptor,
@@ -129,23 +129,23 @@ impl TCPProcessor {
 
     fn get_buf(&mut self, is_local_sock: bool) -> Vec<u8> {
         if is_local_sock {
-            if self.data_to_write_to_local.is_none() {
-                self.data_to_write_to_local = Some(Vec::with_capacity(BUF_SIZE));
+            if self.local_buf.is_none() {
+                self.local_buf = Some(Vec::with_capacity(BUF_SIZE));
             }
-            self.data_to_write_to_local.take().unwrap()
+            self.local_buf.take().unwrap()
         } else {
-            if self.data_to_write_to_remote.is_none() {
-                self.data_to_write_to_remote = Some(Vec::with_capacity(BUF_SIZE));
+            if self.remote_buf.is_none() {
+                self.remote_buf = Some(Vec::with_capacity(BUF_SIZE));
             }
-            self.data_to_write_to_remote.take().unwrap()
+            self.remote_buf.take().unwrap()
         }
     }
 
     fn set_buf(&mut self, buf: Vec<u8>, is_local_sock: bool) {
         if is_local_sock {
-            self.data_to_write_to_local = Some(buf);
+            self.local_buf = Some(buf);
         } else {
-            self.data_to_write_to_remote = Some(buf);
+            self.remote_buf = Some(buf);
         }
     }
 
@@ -256,9 +256,9 @@ impl TCPProcessor {
 
         let this = processor2str(self);
         let need_destroy = match sock.read(buf_slice) {
-            Ok(n) => {
-                unsafe { buf.set_len(n); }
-                n == 0
+            Ok(nread) => {
+                unsafe { buf.set_len(nread); }
+                nread == 0
             }
             Err(e) => {
                 error!("{} read data from {} socket failed: {}", this, self.sock_desc(is_local_sock), e);
@@ -293,9 +293,9 @@ impl TCPProcessor {
         let mut sock = self.get_sock(is_local_sock);
         let this = processor2str(self);
         let result = match sock.write(data) {
-            Ok(n) => {
-                debug!("writed {} bytes to {} socket of {}", n, self.sock_desc(is_local_sock), this);
-                (n, ProcessResult::Success)
+            Ok(nwrite) => {
+                debug!("writed {} bytes to {} socket of {}", nwrite, self.sock_desc(is_local_sock), this);
+                (nwrite, ProcessResult::Success)
             }
             Err(e) => {
                 error!("{} write to {} socket error: {}", this, self.sock_desc(is_local_sock), e);
@@ -689,7 +689,7 @@ impl TCPProcessor {
     }
 }
 
-impl Caller for TCPProcessor {
+impl Caller for TcpProcessor {
     fn get_id(&self) -> Token {
         self.remote_token.unwrap()
     }
@@ -742,7 +742,7 @@ fn address2str(address: &Option<(String, u16)>) -> String {
     }
 }
 
-fn processor2str(p: &mut TCPProcessor) -> String {
+fn processor2str(p: &mut TcpProcessor) -> String {
     let local_token = p.local_token.unwrap().as_usize();
     let remote_token = p.remote_token.unwrap().as_usize();
     format!("({}, {})", local_token, remote_token)

@@ -27,8 +27,8 @@ pub struct UdpProcessor {
     server_sock_addr: Option<SocketAddr>,
     client_address: (String, u16),
     server_address: (String, u16),
-    data_to_write_to_local: Option<Vec<u8>>,
-    data_to_write_to_remote: Option<Vec<u8>>,
+    local_buf: Option<Vec<u8>>,
+    remote_buf: Option<Vec<u8>>,
     unfinished_send_tasks: Rc<RefCell<Vec<(SocketAddr, Vec<u8>)>>>,
     header_length: usize,
     encryptor: Encryptor,
@@ -58,8 +58,8 @@ impl UdpProcessor {
             server_sock_addr: None,
             client_address: client_address,
             server_address: server_address,
-            data_to_write_to_local: Some(Vec::with_capacity(BUF_SIZE)),
-            data_to_write_to_remote: None,
+            local_buf: Some(Vec::with_capacity(BUF_SIZE)),
+            remote_buf: None,
             unfinished_send_tasks: unfinished_send_tasks,
             header_length: header_length,
             encryptor: encryptor,
@@ -105,11 +105,11 @@ impl UdpProcessor {
 
     pub fn handle_init(&mut self, event_loop: &mut EventLoop<Relay>, data: &[u8]) -> ProcessResult<Vec<Token>> {
         debug!("UDP processor stage: init");
-        // copy data to self.data_to_write_to_remote
-        if self.data_to_write_to_remote.is_none() {
-            self.data_to_write_to_remote = Some(Vec::with_capacity(data.len()));
+        // copy data to self.remote_buf
+        if self.remote_buf.is_none() {
+            self.remote_buf = Some(Vec::with_capacity(data.len()));
         }
-        if let Some(ref mut buf) = self.data_to_write_to_remote {
+        if let Some(ref mut buf) = self.remote_buf {
             if buf.capacity() < data.len() {
                 let inc_cap = data.len() - buf.capacity();
                 buf.reserve(inc_cap);
@@ -154,24 +154,24 @@ impl UdpProcessor {
 
     fn on_write(&mut self, _event_loop: &mut EventLoop<Relay>) -> ProcessResult<Vec<Token>> {
         debug!("UDP processor: on_write");
-        let mut buf = self.data_to_write_to_remote.take().unwrap();
+        let mut buf = self.remote_buf.take().unwrap();
         if buf.is_empty() {
-            self.data_to_write_to_remote = Some(buf);
+            self.remote_buf = Some(buf);
             return ProcessResult::Success;
         }
 
-        if let Some(n) = self.send_to(&buf, SERVER) {
-            if n == buf.len() {
+        if let Some(nwrite) = self.send_to(&buf, SERVER) {
+            if nwrite == buf.len() {
                 self.interest = EventSet::readable();
             } else {
                 self.interest = EventSet::readable() | EventSet::writable();
-                shift_vec(&mut buf, n);
+                shift_vec(&mut buf, nwrite);
             }
         } else {
             return ProcessResult::Failed(vec![self.get_id()]);
         }
 
-        self.data_to_write_to_remote = Some(buf);
+        self.remote_buf = Some(buf);
         ProcessResult::Success
     }
 
@@ -179,9 +179,9 @@ impl UdpProcessor {
         // send to client, append unfinished data to `unfinished_send_tasks`
         macro_rules! try_send {
             ($data:expr) => (
-                if let Some(n) = self.send_to(&$data, CLIENT) {
-                    if n < $data.len() {
-                        shift_vec(&mut $data, n);
+                if let Some(nwrite) = self.send_to(&$data, CLIENT) {
+                    if nwrite < $data.len() {
+                        shift_vec(&mut $data, nwrite);
                         let task = (self.client_sock_addr.clone(), $data);
                         self.unfinished_send_tasks.borrow_mut().push(task);
                     }
@@ -192,14 +192,14 @@ impl UdpProcessor {
         }
 
         debug!("UDP processor: on_read");
-        let mut buf = self.data_to_write_to_local.take().unwrap();
+        let mut buf = self.local_buf.take().unwrap();
         unsafe { buf.set_len(0); }
         new_fat_slice_from_vec!(buf_slice, buf);
 
         match self.sock.recv_from(buf_slice) {
             Ok(None) => { }
-            Ok(Some((n, addr))) => {
-                unsafe { buf.set_len(n); }
+            Ok(Some((nread, addr))) => {
+                unsafe { buf.set_len(nread); }
 
                 if cfg!(feature = "sslocal") {
                     if let Some(data) = self.encryptor.decrypt_udp(&buf) {
@@ -236,7 +236,7 @@ impl UdpProcessor {
             }
         }
 
-        self.data_to_write_to_local = Some(buf);
+        self.local_buf = Some(buf);
         ProcessResult::Success
     }
 
@@ -293,12 +293,12 @@ impl Caller for UdpProcessor {
                 self.server_sock_addr = str2addr4(&ip_port);
 
                 let mut unfinished = 0;
-                let mut buf = self.data_to_write_to_remote.take().unwrap();
+                let mut buf = self.remote_buf.take().unwrap();
 
                 if cfg!(feature = "sslocal") {
                     match self.encryptor.encrypt_udp(&buf) {
                         Some(ref data) => {
-                            // copy unfinished data to self.data_to_write_to_remote
+                            // copy unfinished data to self.remote_buf
                             if let Some(nwrite) = self.send_to(data, SERVER) {
                                 unfinished = data.len() - nwrite;
                                 unsafe { buf.set_len(0); }
@@ -315,7 +315,7 @@ impl Caller for UdpProcessor {
                         }
                     }
                 } else {
-                    // shift unfinished data to self.data_to_write_to_remote
+                    // shift unfinished data to self.remote_buf
                     if let Some(nwrite) = self.send_to(&buf[self.header_length..], SERVER) {
                         shift_vec(&mut buf, self.header_length + nwrite);
                     } else {
@@ -323,7 +323,7 @@ impl Caller for UdpProcessor {
                     }
                 }
 
-                self.data_to_write_to_remote = Some(buf);
+                self.remote_buf = Some(buf);
                 if unfinished > 0 {
                     self.interest = EventSet::readable() | EventSet::writable();
                 }

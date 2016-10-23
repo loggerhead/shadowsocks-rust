@@ -9,7 +9,7 @@ use config::Config;
 
 pub use self::tcp_relay::TcpRelay;
 pub use self::udp_relay::UdpRelay;
-pub use self::tcp_processor::TCPProcessor;
+pub use self::tcp_processor::TcpProcessor;
 pub use self::udp_processor::UdpProcessor;
 
 #[macro_export]

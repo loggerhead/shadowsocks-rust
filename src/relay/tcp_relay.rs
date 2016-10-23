@@ -9,12 +9,12 @@ use config::Config;
 use network::str2addr4;
 use collections::Holder;
 use asyncdns::DNSResolver;
-use super::{TCPProcessor, MyHandler, Relay, ProcessResult};
+use super::{TcpProcessor, MyHandler, Relay, ProcessResult};
 
 const RELAY_TOKEN: Token = Token(0);
 const DNS_RESOLVER_TOKEN: Token = Token(1);
 
-type RcCellTcpProcessor = Rc<RefCell<TCPProcessor>>;
+type RcCellTcpProcessor = Rc<RefCell<TcpProcessor>>;
 
 pub struct TcpRelay {
     conf: Config,
@@ -95,7 +95,7 @@ impl TcpRelay {
             match self.listener.accept() {
                 Ok(Some((conn, _addr))) => {
                     info!("create processor for {}", _addr);
-                    let tcp_processor = TCPProcessor::new(self.conf.clone(), conn, self.dns_resolver.clone());
+                    let tcp_processor = TcpProcessor::new(self.conf.clone(), conn, self.dns_resolver.clone());
                     let tcp_processor = Rc::new(RefCell::new(tcp_processor));
                     let tokens = (self.add_processor(tcp_processor.clone()),
                                   self.add_processor(tcp_processor.clone()));
