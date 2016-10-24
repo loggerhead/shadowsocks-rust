@@ -11,6 +11,7 @@ macro_rules! new_fat_slice_from_vec {
         let cap = $v.capacity();
         let raw = unsafe { &mut from_raw_parts_mut(ptr, cap) };
         let $name = raw;
+        unsafe { $v.set_len(0); }
     );
 }
 

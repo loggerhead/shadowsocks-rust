@@ -251,7 +251,6 @@ impl TcpProcessor {
     fn receive_data(&mut self, is_local_sock: bool) -> (Option<Vec<u8>>, ProcessResult<Vec<Token>>) {
         let mut sock = self.get_sock(is_local_sock);
         let mut buf = Vec::with_capacity(BUF_SIZE);
-
         new_fat_slice_from_vec!(buf_slice, buf);
 
         let need_destroy = match sock.read(buf_slice) {

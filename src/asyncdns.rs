@@ -195,25 +195,24 @@ impl DNSResolver {
         }
     }
 
+    // TODO: handle error in DNS
     fn receive_data_into_buf(&mut self) {
         let mut buf = self.receive_buf.take().unwrap();
-        unsafe { buf.set_len(0); }
 
-        match self.sock {
-            Some(ref sock) => {
-                new_fat_slice_from_vec!(buf_slice, buf);
+        if let Some(ref sock) = self.sock {
+            new_fat_slice_from_vec!(buf_slice, buf);
 
-                match sock.recv_from(buf_slice) {
-                    Ok(Some((n, _addr))) => {
-                        unsafe { buf.set_len(n); }
-                    }
-                    Ok(None) => {},
-                    Err(e) => {
-                        error!("receive data failed on DNS socket: {}", e);
-                    }
+            match sock.recv_from(buf_slice) {
+                Ok(Some((nread, _addr))) => {
+                    unsafe { buf.set_len(nread); }
+                }
+                Ok(None) => {},
+                Err(e) => {
+                    error!("receive data failed on DNS socket: {}", e);
                 }
             }
-            None => error!("DNS socket not init"),
+        } else {
+            error!("DNS socket not init");
         }
 
         self.receive_buf = Some(buf);

@@ -2,6 +2,7 @@ use std::borrow::Borrow;
 use std::ops::{Index, IndexMut};
 use std::hash::{Hash, BuildHasherDefault};
 use std::collections::{HashMap, hash_map};
+use std::collections::hash_map::Iter;
 
 use fnv::FnvHasher;
 
@@ -56,6 +57,10 @@ impl<K, V> Dict<K, V>
 
     pub fn values(&self) -> hash_map::Values<K, V> {
         self.map.values()
+    }
+
+    pub fn iter(&self) -> Iter<K, V> {
+        self.map.iter()
     }
 }
 
