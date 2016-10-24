@@ -9,6 +9,7 @@ type Cipher = Box<SynchronousStreamCipher + 'static>;
 pub struct Encryptor {
     is_iv_sent: bool,
     key: Vec<u8>,
+    password: String,
     cipher_iv: Vec<u8>,
     decipher_iv: Vec<u8>,
     cipher: Option<Cipher>,
@@ -23,14 +24,13 @@ pub struct Encryptor {
 //       16
 impl Encryptor {
     pub fn new(password: &str) -> Encryptor {
-        let (key, _iv) = gen_key_iv(password, 256, 32);
-        let mut cipher_iv = vec![0u8; 16];
-        let _ = OsRng::new().map(|mut rng| rng.fill_bytes(&mut cipher_iv));
+        let (key, cipher_iv) = gen_key_iv(password);
         let cipher = create_cipher(&key, &cipher_iv);
 
         Encryptor {
             is_iv_sent: false,
             key: key,
+            password: String::from(password),
             cipher_iv: cipher_iv,
             decipher_iv: vec![0u8; 16],
             cipher: Some(cipher),
@@ -46,6 +46,7 @@ impl Encryptor {
         &self.cipher_iv
     }
 
+    // TODO: use Cow instead
     fn process(&mut self, data: &[u8], is_encrypt: bool) -> Option<Vec<u8>> {
         let mut output = vec![0u8; data.len()];
 
@@ -104,18 +105,30 @@ impl Encryptor {
         }
     }
 
-    // TODO: finish this
-    pub fn encrypt_udp(&mut self, data: &[u8]) -> Option<Vec<u8>> {
-        let mut d = Vec::with_capacity(data.len());
-        d.extend_from_slice(data);
-        Some(d)
+    pub fn encrypt_udp(&self, data: &[u8]) -> Option<Vec<u8>> {
+        let (key, cipher_iv) = gen_key_iv(&self.password);
+        let mut cipher = create_cipher(&key, &cipher_iv);
+
+        let mut encrypted = vec![0u8; data.len()];
+        cipher.process(data, encrypted.as_mut_slice());
+
+        let mut res = Vec::with_capacity(cipher_iv.len() + data.len());
+        res.extend_from_slice(&cipher_iv);
+        res.extend_from_slice(&encrypted);
+
+        Some(res)
     }
 
-    // TODO: finish this
-    pub fn decrypt_udp(&mut self, data: &[u8]) -> Option<Vec<u8>> {
-        let mut d = Vec::with_capacity(data.len());
-        d.extend_from_slice(data);
-        Some(d)
+    pub fn decrypt_udp(&self, data: &[u8]) -> Option<Vec<u8>> {
+        let (key, iv) = gen_key_iv(&self.password);
+        let iv_len = iv.len();
+        let decipher_iv = &data[..iv_len];
+
+        let mut decipher = create_cipher(&key, &decipher_iv);
+        let mut decrypted = vec![0u8; data.len() - iv_len];
+        decipher.process(&data[iv_len..], decrypted.as_mut_slice());
+
+        Some(decrypted)
     }
 }
 
@@ -123,8 +136,15 @@ fn create_cipher(key: &[u8], iv: &[u8]) -> Cipher {
     Box::new(ctr(KeySize::KeySize256, key, iv))
 }
 
+fn gen_key_iv(password: &str) -> (Vec<u8>, Vec<u8>) {
+    let (key, _iv) = evp_bytes_to_key(password, 256, 32);
+    let mut cipher_iv = vec![0u8; 16];
+    let _ = OsRng::new().map(|mut rng| rng.fill_bytes(&mut cipher_iv));
+    (key, cipher_iv)
+}
+
 // equivalent to OpenSSL's EVP_BytesToKey() with count 1
-fn gen_key_iv(password: &str, key_len: usize, iv_len: usize) -> (Vec<u8>, Vec<u8>) {
+fn evp_bytes_to_key(password: &str, key_len: usize, iv_len: usize) -> (Vec<u8>, Vec<u8>) {
     let mut i = 0;
     let mut m: Vec<Box<[u8; 16]>> = Vec::with_capacity(key_len + iv_len);
     let password = password.as_bytes();
@@ -259,5 +279,28 @@ mod test {
 
         t1.join().unwrap();
         t2.join().unwrap();
+    }
+
+    // TODO: test failed
+    #[test]
+    fn udp() {
+        fn encrypt_udp(cryptor: &mut Encryptor, data: &[u8]) -> Vec<u8> {
+            let encrypted = cryptor.encrypt_udp(data);
+            assert!(encrypted.is_some());
+            encrypted.unwrap()
+        }
+
+        fn decrypt_udp(cryptor: &mut Encryptor, data: &[u8]) -> Vec<u8> {
+            let decrypted = cryptor.decrypt_udp(data);
+            assert!(decrypted.is_some());
+            decrypted.unwrap()
+        }
+
+        let mut encryptor = Encryptor::new(PASSWORD);
+        for msg in MESSAGES.iter() {
+            let encrypted = encrypt_udp(&mut encryptor, msg.as_bytes());
+            let decrypted = decrypt_udp(&mut encryptor, &encrypted);
+            assert_eq!(msg.as_bytes()[..], decrypted[..]);
+        }
     }
 }
