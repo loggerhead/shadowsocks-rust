@@ -206,6 +206,7 @@ impl UdpRelay {
                     debug!("create a new UDP processor {:?}", client_sock_addr);
                     self.cache.put(client_sock_addr, p.clone());
                     p.borrow_mut().set_token(token);
+                    self.dns_resolver.borrow_mut().add_caller(p.clone());
                     p.borrow_mut().register(event_loop);
                 } else {
                     // TODO: handle error
