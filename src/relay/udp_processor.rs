@@ -106,6 +106,21 @@ impl UdpProcessor {
         port_requests_map.get_mut(&server_port).unwrap().push(data);
     }
 
+    fn send_to(&self, is_send_to_client: bool, data: &[u8], addr: &SocketAddr) -> ProcessResult<Vec<Token>> {
+        if is_send_to_client {
+            if let Err(e) = self.sock.send_to(&data, addr) {
+                error!("UDP processor send data failed: {}", e);
+                return self.process_failed();
+            }
+        } else {
+            if let Err(e) = self.relay_sock.borrow().send_to(&data, addr) {
+                error!("UDP processor send data failed: {}", e);
+                return self.process_failed();
+            }
+        }
+        ProcessResult::Success
+    }
+
     pub fn handle_init(&mut self,
                        event_loop: &mut EventLoop<Relay>,
                        data: &[u8],
@@ -155,10 +170,7 @@ impl UdpProcessor {
                             let mut response = Vec::with_capacity(3 + data.len());
                             response.extend_from_slice(&[0u8; 3]);
                             response.extend_from_slice(&data);
-                            if let Err(e) = self.relay_sock.borrow().send_to(&response, &self.addr) {
-                                error!("UDP processor send data failed: {}", e);
-                                return self.process_failed();
-                            }
+                            self.send_to(SERVER, &response, &self.addr);
                         }
                     } else {
                         warn!("decrypt udp data failed");
@@ -174,10 +186,7 @@ impl UdpProcessor {
                     data.extend_from_slice(&buf);
 
                     if let Some(response) = self.encryptor.encrypt_udp(&data) {
-                        if let Err(e) = self.relay_sock.borrow().send_to(&response, &self.addr) {
-                            error!("UDP processor send data failed: {}", e);
-                            return self.process_failed();
-                        }
+                        self.send_to(SERVER, &response, &self.addr);
                     } else {
                         warn!("encrypt udp data failed");
                     }
@@ -246,11 +255,7 @@ impl Caller for UdpProcessor {
                 let server_addr = str2addr4(&ip_port).unwrap();
 
                 for request in requests {
-                    // shift unfinished data to self.remote_buf
-                    if let Err(e) = self.sock.send_to(&request, &server_addr) {
-                        error!("UDP processor send data failed: {}", e);
-                        return self.process_failed();
-                    }
+                    self.send_to(CLIENT, &request, &server_addr);
                 }
             }
 
@@ -260,3 +265,6 @@ impl Caller for UdpProcessor {
         }
     }
 }
+
+const CLIENT: bool = true;
+const SERVER: bool = false;
