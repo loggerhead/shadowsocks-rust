@@ -143,10 +143,10 @@ impl DNSResolver {
             servers: servers,
             hosts: hosts,
             cache: LruCache::with_expiry_duration(cache_timeout),
-            callers: Dict::new(),
-            hostname_status: Dict::new(),
-            token_to_hostname: Dict::new(),
-            hostname_to_tokens: Dict::new(),
+            callers: Dict::default(),
+            hostname_status: Dict::default(),
+            token_to_hostname: Dict::default(),
+            hostname_to_tokens: Dict::default(),
             sock: alloc_udp_socket(),
             qtypes: qtypes,
             receive_buf: Some(Vec::with_capacity(BUF_SIZE)),
@@ -155,19 +155,19 @@ impl DNSResolver {
 
     pub fn add_caller(&mut self, caller: Rc<RefCell<Caller>>) {
         let token = caller.borrow().get_id();
-        self.callers.put(token, caller);
+        self.callers.insert(token, caller);
     }
 
     pub fn remove_caller(&mut self, token: Token) -> bool {
-        if let Some(hostname) = self.token_to_hostname.del(&token) {
-            self.hostname_to_tokens.get_mut(&hostname).map(|tokens| tokens.del(&token));
+        if let Some(hostname) = self.token_to_hostname.remove(&token) {
+            self.hostname_to_tokens.get_mut(&hostname).map(|tokens| tokens.remove(&token));
             if self.hostname_to_tokens.get(&hostname).unwrap().is_empty() {
-                self.hostname_to_tokens.del(&hostname);
-                self.hostname_status.del(&hostname);
+                self.hostname_to_tokens.remove(&hostname);
+                self.hostname_status.remove(&hostname);
             }
         }
 
-        self.callers.del(&token).is_some()
+        self.callers.remove(&token).is_some()
     }
 
     fn buf_len(&self) -> usize {
@@ -223,7 +223,7 @@ impl DNSResolver {
             (None, Some("empty hostname".to_string()))
         } else if is_ip(hostname) {
             (Some((hostname.to_string(), hostname.to_string())), None)
-        } else if self.hosts.has(hostname) {
+        } else if self.hosts.contains_key(hostname) {
             let ip = self.hosts[hostname].clone();
             (Some((hostname.to_string(), ip)), None)
         } else if self.cache.contains_key(hostname) {
@@ -269,12 +269,12 @@ impl DNSResolver {
         let res = self.local_resolve(&hostname);
         if res == (None, None) {
             // if this is the first time that any caller query the hostname
-            if !self.hostname_to_tokens.has(&hostname) {
-                self.hostname_status.put(hostname.clone(), HostnameStatus::First);
-                self.hostname_to_tokens.put(hostname.clone(), Set::new());
+            if !self.hostname_to_tokens.contains_key(&hostname) {
+                self.hostname_status.insert(hostname.clone(), HostnameStatus::First);
+                self.hostname_to_tokens.insert(hostname.clone(), Set::default());
             }
-            self.hostname_to_tokens[&hostname].add(token);
-            self.token_to_hostname.put(token, hostname.clone());
+            self.hostname_to_tokens.get_mut(&hostname).unwrap().insert(token);
+            self.token_to_hostname.insert(token, hostname.clone());
 
             self.send_request(hostname, self.qtypes[0]);
         }
@@ -283,9 +283,9 @@ impl DNSResolver {
     }
 
     fn call_callback(&mut self, event_loop: &mut EventLoop<Relay>, hostname: String, ip: String) {
-        if let Some(tokens) = self.hostname_to_tokens.del(&hostname) {
+        if let Some(tokens) = self.hostname_to_tokens.remove(&hostname) {
             for token in tokens.iter() {
-                self.token_to_hostname.del(token);
+                self.token_to_hostname.remove(token);
 
                 let hostname_ip = Some((hostname.clone(), ip.clone()));
                 let caller = self.callers.get_mut(token).unwrap();
@@ -298,7 +298,7 @@ impl DNSResolver {
             }
         }
 
-        self.hostname_status.del(&hostname);
+        self.hostname_status.remove(&hostname);
     }
 
     fn handle_recevied(&mut self) -> ResolveStatus<HostIpPair> {
@@ -325,7 +325,7 @@ impl DNSResolver {
             };
 
             if ip.is_empty() && hostname_status == 1 {
-                self.hostname_status.put(hostname.clone(), HostnameStatus::Second);
+                self.hostname_status.insert(hostname.clone(), HostnameStatus::Second);
                 self.send_request(hostname, self.qtypes[1]);
                 res = ResolveStatus::Continue;
             } else if !ip.is_empty() {
@@ -685,7 +685,7 @@ fn parse_resolv() -> Vec<String> {
 }
 
 fn parse_hosts() -> Dict<String, String> {
-    let mut hosts = Dict::new();
+    let mut hosts = Dict::default();
 
     handle_every_line("/etc/hosts",
                       &mut |line| {
@@ -695,14 +695,14 @@ fn parse_hosts() -> Dict<String, String> {
             if is_ip(ip) {
                 for hostname in parts[1..].iter() {
                     if !hostname.is_empty() {
-                        hosts.put(hostname.to_string(), ip.to_string());
+                        hosts.insert(hostname.to_string(), ip.to_string());
                     }
                 }
             }
         }
     });
 
-    hosts.put("localhost".to_string(), "127.0.0.1".to_string());
+    hosts.insert("localhost".to_string(), "127.0.0.1".to_string());
 
     hosts
 }

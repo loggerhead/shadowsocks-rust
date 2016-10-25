@@ -74,11 +74,11 @@ impl TcpRelay {
     }
 
     fn add_processor(&mut self, processor: RcCellTcpProcessor) -> Option<Token> {
-        self.processors.add(processor)
+        self.processors.insert(processor)
     }
 
     fn remove_processor(&mut self, token: Token) -> Option<RcCellTcpProcessor> {
-        self.processors.del(token)
+        self.processors.remove(token)
     }
 
     pub fn process(&mut self,

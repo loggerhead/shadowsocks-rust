@@ -50,7 +50,7 @@ impl UdpProcessor {
             sock: sock,
             relay_sock: relay_sock,
             receive_buf: Some(Vec::with_capacity(BUF_SIZE)),
-            requests: Dict::new(),
+            requests: Dict::default(),
             encryptor: encryptor,
             dns_resolver: dns_resolver,
         }
@@ -95,15 +95,15 @@ impl UdpProcessor {
     }
 
     fn add_request(&mut self, server_addr: String, server_port: u16, data: Vec<u8>) {
-        if !self.requests.has(&server_addr) {
-            self.requests.put(server_addr.clone(), Dict::new());
+        if !self.requests.contains_key(&server_addr) {
+            self.requests.insert(server_addr.clone(), Dict::default());
         }
-        let port_requests_map = &mut self.requests[&server_addr];
-        if !port_requests_map.has(&server_port) {
-            port_requests_map.put(server_port, vec![]);
+        let port_requests_map = self.requests.get_mut(&server_addr).unwrap();
+        if !port_requests_map.contains_key(&server_port) {
+            port_requests_map.insert(server_port, vec![]);
         }
 
-        port_requests_map[&server_port].push(data);
+        port_requests_map.get_mut(&server_port).unwrap().push(data);
     }
 
     pub fn handle_init(&mut self,
@@ -235,12 +235,12 @@ impl Caller for UdpProcessor {
         }
 
         if let Some((hostname, ip)) = hostname_ip {
-            if !self.requests.has(&hostname) {
+            if !self.requests.contains_key(&hostname) {
                 // TODO: add log
                 return self.process_failed();
             }
 
-            let port_requests_map = self.requests.del(&hostname).unwrap();
+            let port_requests_map = self.requests.remove(&hostname).unwrap();
             for (port, requests) in port_requests_map.iter() {
                 let ip_port = format!("{}:{}", ip, port);
                 let server_addr = str2addr4(&ip_port).unwrap();

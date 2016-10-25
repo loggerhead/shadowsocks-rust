@@ -1,10 +1,11 @@
+use std::iter::FromIterator;
 use std::ops::{Index, IndexMut};
 
 use mio::Token;
 use rand::random;
 
-use super::set::Set;
-use super::dict::Dict;
+use super::Set;
+use super::Dict;
 
 const MAX_RAND_RETRY_TIMES: usize = 1000;
 
@@ -16,20 +17,20 @@ pub struct Holder<T> {
 impl<T> Holder<T> {
     pub fn new() -> Holder<T> {
         Holder {
-            items: Dict::new(),
-            exclusions: Set::new(),
+            items: Dict::default(),
+            exclusions: Set::default(),
         }
     }
 
     pub fn new_exclude_from(exclusions: Vec<Token>) -> Holder<T> {
         Holder {
-            items: Dict::new(),
-            exclusions: Set::from_vec(exclusions),
+            items: Dict::default(),
+            exclusions: Set::from_iter(exclusions),
         }
     }
 
-    pub fn has(&self, token: Token) -> bool {
-        self.items.has(&token)
+    pub fn contains(&self, token: Token) -> bool {
+        self.items.contains_key(&token)
     }
 
     pub fn get(&self, token: Token) -> Option<&T> {
@@ -40,10 +41,10 @@ impl<T> Holder<T> {
         self.items.get_mut(&token)
     }
 
-    pub fn add(&mut self, v: T) -> Option<Token> {
+    pub fn insert(&mut self, v: T) -> Option<Token> {
         let mut i = 0;
         let mut token = Token(random::<usize>());
-        while self.exclusions.has(&token) {
+        while self.exclusions.contains(&token) {
             token = Token(random::<usize>());
 
             i += 1;
@@ -52,14 +53,14 @@ impl<T> Holder<T> {
             }
         }
 
-        self.items.put(token, v);
-        self.exclusions.add(token);
+        self.items.insert(token, v);
+        self.exclusions.insert(token);
         Some(token)
     }
 
-    pub fn del(&mut self, token: Token) -> Option<T> {
-        self.exclusions.del(&token);
-        self.items.del(&token)
+    pub fn remove(&mut self, token: Token) -> Option<T> {
+        self.exclusions.remove(&token);
+        self.items.remove(&token)
     }
 
     pub fn len(&self) -> usize {

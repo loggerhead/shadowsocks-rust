@@ -84,7 +84,7 @@ impl UdpRelay {
             receive_buf: Some(Vec::with_capacity(BUF_SIZE)),
             listener: Rc::new(RefCell::new(listener)),
             dns_resolver: dns_resolver,
-            cache: Dict::new(),
+            cache: Dict::default(),
             processors: Holder::new_exclude_from(vec![RELAY_TOKEN, DNS_RESOLVER_TOKEN]),
             encryptor: encryptor,
         }
@@ -110,12 +110,12 @@ impl UdpRelay {
     }
 
     fn add_processor(&mut self, processor: RcCellUdpProcessor) -> Option<Token> {
-        self.processors.add(processor)
+        self.processors.insert(processor)
     }
 
     fn remove_processor(&mut self, token: Token) -> Option<RcCellUdpProcessor> {
-        let p = try_opt!(self.processors.del(token));
-        let res = self.cache.del(p.borrow().addr());
+        let p = try_opt!(self.processors.remove(token));
+        let res = self.cache.remove(p.borrow().addr());
         res
     }
 
@@ -197,14 +197,14 @@ impl UdpRelay {
                 server_port = port;
             }
 
-            if !self.cache.has(&client_sock_addr) {
+            if !self.cache.contains_key(&client_sock_addr) {
                 let p = Rc::new(RefCell::new(UdpProcessor::new(self.conf.clone(),
                                                                client_sock_addr,
                                                                self.listener.clone(),
                                                                self.dns_resolver.clone())));
                 if let Some(token) = self.add_processor(p.clone()) {
                     debug!("create a new UDP processor {:?}", client_sock_addr);
-                    self.cache.put(client_sock_addr, p.clone());
+                    self.cache.insert(client_sock_addr, p.clone());
                     p.borrow_mut().set_token(token);
                     self.dns_resolver.borrow_mut().add_caller(p.clone());
                     p.borrow_mut().register(event_loop);
