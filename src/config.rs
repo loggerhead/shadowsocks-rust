@@ -1,5 +1,5 @@
 use std::fmt;
-use std::rc::Rc;
+use std::sync::Arc;
 use std::fs::File;
 use std::ops::Index;
 use std::str::FromStr;
@@ -12,12 +12,12 @@ use clap::{Arg, App, ArgMatches};
 use toml::{Parser, Value, Table, Array};
 
 pub struct Config {
-    values: Rc<Table>,
+    values: Arc<Table>,
 }
 
 impl Config {
     fn new(conf: Table) -> Self {
-        Config { values: Rc::new(conf) }
+        Config { values: Arc::new(conf) }
     }
 
     pub fn get(&self, key: &'static str) -> Option<&Value> {
@@ -174,7 +174,7 @@ pub fn gen_config() -> Result<Config, ConfigError> {
     check_config(matches, config)
 }
 
-pub fn read_config(config_path: &str) -> Result<Table, ConfigError> {
+fn read_config(config_path: &str) -> Result<Table, ConfigError> {
     let mut f = match File::open(config_path) {
         Ok(f) => f,
         Err(_) => {
@@ -199,7 +199,7 @@ pub fn read_config(config_path: &str) -> Result<Table, ConfigError> {
     }
 }
 
-pub fn check_config(matches: ArgMatches, mut config: Table) -> Result<Config, ConfigError> {
+fn check_config(matches: ArgMatches, mut config: Table) -> Result<Config, ConfigError> {
     macro_rules! check_config {
         ($key:expr) => (
             if !matches.is_present($key) && !config.contains_key($key) {

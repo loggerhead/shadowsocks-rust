@@ -5,11 +5,12 @@ extern crate sig;
 extern crate log;
 extern crate shadowsocks;
 
+use std::thread::spawn;
 use std::process::exit;
 
 use shadowsocks::config;
-use shadowsocks::relay::Relay;
 use shadowsocks::my_logger;
+use shadowsocks::relay::{TcpRelay, UdpRelay};
 
 fn main() {
     let conf = config::gen_config().unwrap_or_else(|e| {
@@ -23,7 +24,24 @@ fn main() {
 
     my_daemonize::do_daemonize(&conf);
 
-    Relay::new(conf).run();
+    let childs = vec![
+        {
+            let conf = conf.clone();
+            spawn(|| {
+                TcpRelay::new(conf).run();
+            })
+        },
+        {
+            let conf = conf.clone();
+            spawn(|| {
+                UdpRelay::new(conf).run();
+            })
+        },
+    ];
+
+    for child in childs {
+        child.join().unwrap();
+    }
 }
 
 #[cfg(target_family = "unix")]

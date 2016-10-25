@@ -20,8 +20,8 @@ macro_rules! now {
 macro_rules! setup_global_logger {
     ($lv:expr, $drain:expr) => (
         let d = slog::level_filter($lv, $drain).fuse();
-        let log = slog::Logger::root(d, o!());
-        slog_stdlog::set_logger(log).unwrap();
+        let logger = slog::Logger::root(d, o!());
+        slog_stdlog::set_logger(logger).unwrap();
     )
 }
 
@@ -78,9 +78,8 @@ impl slog_stream::Format for MyFormat {
               rinfo: &slog::Record,
               _logger_values: &slog::OwnedKeyValueList)
               -> io::Result<()> {
-        let msg = format!("{} {} {}\n", now!(), rinfo.level(), rinfo.msg());
-        let _ = try!(io.write_all(msg.as_bytes()));
-        Ok(())
+        let msg = format!("{} {} - {}\n", now!(), rinfo.level(), rinfo.msg());
+        io.write_all(msg.as_bytes()).map(|_| ())
     }
 }
 

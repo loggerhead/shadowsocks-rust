@@ -27,10 +27,11 @@ pub fn get_address_family(address: &str) -> Option<AddressFamily> {
         return Some(AddressFamily::AF_INET);
     }
 
-    match str2addr6(address) {
-        Some(_) => Some(AddressFamily::AF_INET6),
-        _ => None,
+    if str2addr6(address).is_some() {
+        return Some(AddressFamily::AF_INET6);
     }
+
+    None
 }
 
 pub fn is_ip(address: &str) -> bool {
@@ -66,12 +67,14 @@ pub fn slice2ip6(data: &[u8]) -> Option<String> {
     }
 }
 
-pub fn str2addr4(ip: &str) -> Option<SocketAddrV4> {
-    SocketAddrV4::from_str(ip).ok()
+pub fn str2addr4(ip: &str) -> Option<SocketAddr> {
+    let addr = try_opt!(SocketAddrV4::from_str(ip).ok());
+    Some(SocketAddr::V4(addr))
 }
 
-pub fn str2addr6(ip: &str) -> Option<SocketAddrV6> {
-    SocketAddrV6::from_str(ip).ok()
+pub fn str2addr6(ip: &str) -> Option<SocketAddr> {
+    let addr = try_opt!(SocketAddrV6::from_str(ip).ok());
+    Some(SocketAddr::V6(addr))
 }
 
 pub fn pair2socket_addr(ip: &str, port: u16) -> Result<SocketAddr, AddrParseError> {
@@ -120,4 +123,16 @@ impl<'a> NetworkReadBytes for &'a [u8] {
     fn get_u32(&mut self) -> Option<u32> {
         Cursor::new(self).read_u32::<NetworkEndian>().ok()
     }
+}
+
+#[macro_export]
+macro_rules! pack {
+    (u16, $r:expr, $v:expr) => ( try_opt!($r.put_u16($v)); );
+    (u8, $r:expr, $v:expr) => ( try_opt!($r.put_u8($v)); );
+}
+
+#[macro_export]
+macro_rules! unpack {
+    (u16, $r:expr) => ( try_opt!($r.get_u16()); );
+    (u8, $r:expr) => ( try_opt!($r.get_u8()); );
 }

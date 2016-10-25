@@ -1,17 +1,23 @@
 language: rust
-
 rust:
   - stable
   - beta
+
+os:
+  - linux
+  - osx
+
+matrix:
+  allow_failures:
+    - rust: beta
+
 sudo: false
 before_script:
   - pip install 'travis-cargo<0.2' --user && export PATH=$HOME/.local/bin:$PATH
 script:
   - cargo build
   - cargo build --features sslocal
+
 notifications:
   email:
     on_success: never
-os:
-  - linux
-  - osx

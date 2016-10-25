@@ -1,52 +1,30 @@
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::process::exit;
-use std::net::SocketAddr;
 
 use mio::tcp::TcpListener;
-use mio::{Token, Handler, EventSet, EventLoop, PollOpt};
+use mio::{Token, EventSet, EventLoop, PollOpt};
 
 use config::Config;
 use network::str2addr4;
 use collections::Holder;
 use asyncdns::DNSResolver;
-use tcp_processor::TCPProcessor;
+use super::{TcpProcessor, MyHandler, Relay, ProcessResult};
 
 const RELAY_TOKEN: Token = Token(0);
 const DNS_RESOLVER_TOKEN: Token = Token(1);
 
-#[derive(Debug, PartialEq)]
-pub enum ProcessResult<T> {
-    Success,
-    Failed(T),
-}
+type RcCellTcpProcessor = Rc<RefCell<TcpProcessor>>;
 
-#[allow(unused_variables)]
-pub trait Processor {
-    fn process(&mut self,
-               event_loop: &mut EventLoop<Relay>,
-               token: Token,
-               events: EventSet)
-               -> ProcessResult<Vec<Token>>;
-
-    fn destroy(&mut self, event_loop: &mut EventLoop<Relay>) {
-        unimplemented!();
-    }
-
-    fn is_destroyed(&self) -> bool {
-        unimplemented!();
-    }
-}
-
-pub struct Relay {
+pub struct TcpRelay {
     conf: Config,
-    tcp_listener: TcpListener,
+    listener: TcpListener,
     dns_resolver: Rc<RefCell<DNSResolver>>,
-    processors: Holder<Rc<RefCell<Processor>>>,
+    processors: Holder<RcCellTcpProcessor>,
 }
 
-impl Relay {
-    pub fn new(conf: Config) -> Relay {
+impl TcpRelay {
+    pub fn new(conf: Config) -> TcpRelay {
         let address = format!("{}:{}",
                               conf["listen_address"].as_str().unwrap(),
                               conf["listen_port"].as_integer().unwrap());
@@ -57,40 +35,33 @@ impl Relay {
             error!("invalid socket address: {}", address);
             exit(1);
         });
-        let tcp_listener = TcpListener::bind(&SocketAddr::V4(socket_addr)).unwrap_or_else(|e| {
+        let listener = TcpListener::bind(&socket_addr).unwrap_or_else(|e| {
             error!("cannot bind address {} because {}", address, e);
             exit(1);
         });
+
         if cfg!(feature = "sslocal") {
-            info!("ssclient listen on {}", address);
+            info!("ssclient tcp relay listen on {}", address);
         } else {
-            info!("ssserver listen on {}", address);
+            info!("ssserver tcp relay listen on {}", address);
         }
 
-        Relay {
+        TcpRelay {
             conf: conf,
-            tcp_listener: tcp_listener,
+            listener: listener,
             dns_resolver: dns_resolver,
             processors: Holder::new_exclude_from(vec![RELAY_TOKEN, DNS_RESOLVER_TOKEN]),
         }
     }
 
-    pub fn add_processor(&mut self, processor: Rc<RefCell<Processor>>) -> Option<Token> {
-        self.processors.add(processor)
-    }
-
-    pub fn remove_processor(&mut self, token: Token) -> Option<Rc<RefCell<Processor>>> {
-        self.processors.del(token)
-    }
-
-    pub fn run(&mut self) {
+    pub fn run(self) {
         let mut event_loop = EventLoop::new().unwrap();
 
-        if let Err(e) = event_loop.register(&self.tcp_listener,
+        if let Err(e) = event_loop.register(&self.listener,
                                             RELAY_TOKEN,
                                             EventSet::readable(),
                                             PollOpt::edge() | PollOpt::oneshot()) {
-            error!("failed to register relay: {}", e);
+            error!("failed to register tcp relay: {}", e);
             exit(1);
         }
         if !self.dns_resolver.borrow_mut().register(&mut event_loop, DNS_RESOLVER_TOKEN) {
@@ -98,77 +69,33 @@ impl Relay {
             exit(1);
         }
 
-        event_loop.run(self).unwrap();
-    }
-}
-
-impl Handler for Relay {
-    type Timeout = Token;
-    type Message = ();
-
-    fn ready(&mut self, event_loop: &mut EventLoop<Relay>, token: Token, events: EventSet) {
-        let result = match token {
-            RELAY_TOKEN => self.process(event_loop, token, events),
-            DNS_RESOLVER_TOKEN => self.dns_resolver.borrow_mut().process(event_loop, token, events),
-            token @ Token(_) => {
-                let processor = self.processors.get(token);
-                match processor {
-                    Some(processor) => processor.borrow_mut().process(event_loop, token, events),
-                    _ => {
-                        debug!("got events {:?} for destroyed processor {:?}",
-                               events,
-                               token);
-                        return;
-                    }
-                }
-
-            }
-        };
-
-        match result {
-            ProcessResult::Success => {}
-            ProcessResult::Failed(tokens) => {
-                for token in tokens {
-                    match token {
-                        RELAY_TOKEN => self.destroy(event_loop),
-                        DNS_RESOLVER_TOKEN => self.dns_resolver.borrow_mut().destroy(event_loop),
-                        _ => {
-                            if !self.processors[token].borrow().is_destroyed() {
-                                self.processors[token].borrow_mut().destroy(event_loop);
-                            }
-                            self.remove_processor(token);
-                        }
-                    }
-                }
-            }
-        }
+        let this = Rc::new(RefCell::new(self));
+        event_loop.run(&mut Relay::Tcp(this)).unwrap();
     }
 
-    fn timeout(&mut self, event_loop: &mut EventLoop<Self>, token: Self::Timeout) {
-        warn!("{:?} timed out", token);
-        if !self.processors[token].borrow().is_destroyed() {
-            self.processors[token].borrow_mut().destroy(event_loop);
-        }
+    fn add_processor(&mut self, processor: RcCellTcpProcessor) -> Option<Token> {
+        self.processors.insert(processor)
     }
-}
 
-impl Processor for Relay {
-    fn process(&mut self,
-               event_loop: &mut EventLoop<Relay>,
-               _token: Token,
-               events: EventSet)
-               -> ProcessResult<Vec<Token>> {
+    fn remove_processor(&mut self, token: Token) -> Option<RcCellTcpProcessor> {
+        self.processors.remove(token)
+    }
+
+    pub fn process(&mut self,
+                   event_loop: &mut EventLoop<Relay>,
+                   _token: Token,
+                   events: EventSet)
+                   -> ProcessResult<Vec<Token>> {
         let mut result = ProcessResult::Success;
 
         if events.is_error() {
             error!("events error on relay: {:?}",
-                   self.tcp_listener.take_socket_error().unwrap_err());
+                   self.listener.take_socket_error().unwrap_err());
         } else {
-            match self.tcp_listener.accept() {
+            match self.listener.accept() {
                 Ok(Some((conn, _addr))) => {
                     info!("create processor for {}", _addr);
-                    let tcp_processor =
-                        TCPProcessor::new(self.conf.clone(), conn, self.dns_resolver.clone());
+                    let tcp_processor = TcpProcessor::new(self.conf.clone(), conn, self.dns_resolver.clone());
                     let tcp_processor = Rc::new(RefCell::new(tcp_processor));
                     let tokens = (self.add_processor(tcp_processor.clone()),
                                   self.add_processor(tcp_processor.clone()));
@@ -202,14 +129,67 @@ impl Processor for Relay {
             }
         }
 
-        if let Err(e) = event_loop.reregister(&self.tcp_listener,
+        if let Err(e) = event_loop.reregister(&self.listener,
                                               RELAY_TOKEN,
                                               EventSet::readable(),
                                               PollOpt::edge() | PollOpt::oneshot()) {
             error!("failed to reregister relay: {}", e);
+            // TODO: replace this
             exit(1);
         }
 
         result
+    }
+
+    pub fn destroy(&mut self, event_loop: &mut EventLoop<Relay>) {
+        unimplemented!();
+    }
+
+    pub fn is_destroyed(&self) -> bool {
+        unimplemented!();
+    }
+}
+
+impl MyHandler for TcpRelay {
+    fn ready(&mut self, event_loop: &mut EventLoop<Relay>, token: Token, events: EventSet) {
+        let result = match token {
+            RELAY_TOKEN => self.process(event_loop, token, events),
+            DNS_RESOLVER_TOKEN => {
+                self.dns_resolver.borrow_mut().process(event_loop, token, events);
+                ProcessResult::Success
+            }
+            token => {
+                let processor = self.processors.get(token);
+                match processor {
+                    Some(processor) => processor.borrow_mut().process(event_loop, token, events),
+                    _ => {
+                        debug!("got events {:?} for destroyed processor {:?}", events, token);
+                        return;
+                    }
+                }
+            }
+        };
+
+        if let ProcessResult::Failed(tokens) = result {
+            for token in tokens {
+                match token {
+                    RELAY_TOKEN => self.destroy(event_loop),
+                    DNS_RESOLVER_TOKEN => self.dns_resolver.borrow_mut().destroy(event_loop),
+                    _ => {
+                        if !self.processors[token].borrow().is_destroyed() {
+                            self.processors[token].borrow_mut().destroy(event_loop);
+                        }
+                        self.remove_processor(token);
+                    }
+                }
+            }
+        }
+    }
+
+    fn timeout(&mut self, event_loop: &mut EventLoop<Relay>, token: Token) {
+        warn!("{:?} timed out", token);
+        if !self.processors[token].borrow().is_destroyed() {
+            self.processors[token].borrow_mut().destroy(event_loop);
+        }
     }
 }

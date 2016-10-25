@@ -27,7 +27,7 @@
 
 #Features need to finished
 - [x] Running as daemon
-- [ ] UDP support
+- [x] UDP support
 - [ ] OTA encrypt method support
 - [ ] TCP fast open
 - [ ] Multiple encrypt methods support
@@ -35,3 +35,5 @@
 #Test sites
 * http://www.bilibili.com/
 * http://www.panda.tv/
+* https://html.spec.whatwg.org/
+* https://facebook.com/
