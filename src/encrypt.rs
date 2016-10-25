@@ -136,9 +136,11 @@ fn create_cipher(key: &[u8], iv: &[u8]) -> Cipher {
     Box::new(ctr(KeySize::KeySize256, key, iv))
 }
 
+// TODO: cache key
 fn gen_key_iv(password: &str) -> (Vec<u8>, Vec<u8>) {
-    let (key, _iv) = evp_bytes_to_key(password, 256, 32);
-    let mut cipher_iv = vec![0u8; 16];
+    let (key, _iv) = evp_bytes_to_key(password, 32, 16);
+    let mut cipher_iv = Vec::with_capacity(16);
+    unsafe { cipher_iv.set_len(16); }
     let _ = OsRng::new().map(|mut rng| rng.fill_bytes(&mut cipher_iv));
     (key, cipher_iv)
 }
@@ -149,18 +151,21 @@ fn evp_bytes_to_key(password: &str, key_len: usize, iv_len: usize) -> (Vec<u8>, 
     let mut m: Vec<Box<[u8; 16]>> = Vec::with_capacity(key_len + iv_len);
     let password = password.as_bytes();
     let mut data = Vec::with_capacity(16 + password.len());
+    let mut cnt = 0;
 
-    while m.len() < key_len + iv_len {
+    while cnt < key_len + iv_len {
+        unsafe { data.set_len(0); }
         if i > 0 {
-            unsafe { data.set_len(0); }
             data.extend_from_slice(&*m[i - 1]);
-            data.extend_from_slice(password);
         }
+        data.extend_from_slice(password);
 
         let mut buf = Box::new([0u8; 16]);
         let mut md5 = Md5::new();
         md5.input(&data);
         md5.result(&mut *buf);
+        cnt += buf.len();
+
         m.push(buf);
         i += 1;
     }
@@ -281,7 +286,6 @@ mod test {
         t2.join().unwrap();
     }
 
-    // TODO: test failed
     #[test]
     fn udp() {
         fn encrypt_udp(cryptor: &mut Encryptor, data: &[u8]) -> Vec<u8> {
