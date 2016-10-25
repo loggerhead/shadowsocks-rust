@@ -35,3 +35,5 @@
 #Test sites
 * http://www.bilibili.com/
 * http://www.panda.tv/
+* https://html.spec.whatwg.org/
+* https://facebook.com/
