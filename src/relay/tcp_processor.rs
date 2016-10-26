@@ -228,8 +228,8 @@ impl TcpProcessor {
         self.set_sock(sock, is_local_sock);
 
         match register_result {
-            Ok(_) => debug!("{:?} has registred {} socket with {:?}", self, self.sock_desc(is_local_sock), events),
-            Err(ref e) => error!("{:?} register {} socket with {:?} failed: {}", self, self.sock_desc(is_local_sock), events, e),
+            Ok(_) => debug!("tcp processor {:?} registered {} socket with {:?}", self, self.sock_desc(is_local_sock), events),
+            Err(ref e) => error!("tcp processor {:?} register {} socket with {:?} failed: {}", self, self.sock_desc(is_local_sock), events, e),
         }
 
         register_result.is_ok()
@@ -259,7 +259,7 @@ impl TcpProcessor {
                 nread == 0
             }
             Err(e) => {
-                error!("{:?} read data from {} socket failed: {}", self, self.sock_desc(is_local_sock), e);
+                error!("tcp processor {:?} read data from {} socket failed: {}", self, self.sock_desc(is_local_sock), e);
                 true
             }
         };
@@ -269,12 +269,11 @@ impl TcpProcessor {
                         || (!cfg!(feature = "sslocal") && is_local_sock);
 
         let (data, need_destroy) = if need_decrypt && !buf.is_empty() {
-            match self.encryptor.decrypt(&buf) {
-                None => {
-                    warn!("{:?} cannot decrypt data, maybe a error client", self);
-                    (None, true)
-                }
-                decrypted => (decrypted, need_destroy || false),
+            if let Some(decrypted) = self.encryptor.decrypt(&buf) {
+                (Some(decrypted), need_destroy || false)
+            } else {
+                warn!("tcp processor {:?} decrypt data failed", self);
+                (None, true)
             }
         } else {
             (Some(buf), need_destroy || false)
@@ -637,7 +636,7 @@ impl TcpProcessor {
     }
 
     pub fn destroy(&mut self, event_loop: &mut EventLoop<Relay>) {
-        trace!("destroy processor {:?}", self);
+        trace!("destroy tcp processor {:?}", self);
 
         if let Some(ref sock) = self.local_sock {
             if let Err(e) = sock.shutdown(Shutdown::Both) {
@@ -687,14 +686,15 @@ impl Caller for TcpProcessor {
         self.remote_token.unwrap()
     }
 
-    fn handle_dns_resolved(&mut self, event_loop: &mut EventLoop<Relay>,
+    fn handle_dns_resolved(&mut self,
+                           event_loop: &mut EventLoop<Relay>,
                            hostname_ip: Option<(String, String)>,
                            errmsg: Option<String>)
                            -> ProcessResult<Vec<Token>> {
-        trace!("{:?} handle_dns_resolved: {:?}", self, hostname_ip);
+        trace!("tcp processor {:?} handle_dns_resolved: {:?}", self, hostname_ip);
 
-        if let Some(errmsg) = errmsg {
-            error!("{:?} resolve DNS error: {}", self, errmsg);
+        if let Some(e) = errmsg {
+            error!("tcp processor {:?} got a dns resolve error: {}", self, e);
             return self.process_failed();
         }
 
@@ -740,7 +740,6 @@ fn address2str(address: &Option<(String, u16)>) -> String {
         _ => "None".to_string(),
     }
 }
-
 
 const BUF_SIZE: usize = 32 * 1024;
 const LOCAL: bool = true;

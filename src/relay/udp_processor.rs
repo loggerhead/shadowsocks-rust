@@ -1,3 +1,4 @@
+use std::fmt;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::net::SocketAddr;
@@ -64,7 +65,7 @@ impl UdpProcessor {
     }
 
     fn process_failed(&self) -> ProcessResult<Vec<Token>> {
-        ProcessResult::Failed(vec![self.token.unwrap()])
+        ProcessResult::Failed(vec![self.get_id()])
     }
 
     pub fn reset_timeout(&mut self, event_loop: &mut EventLoop<Relay>) {
@@ -77,7 +78,7 @@ impl UdpProcessor {
     }
 
     fn do_register(&mut self, event_loop: &mut EventLoop<Relay>, is_reregister: bool) -> bool {
-        let token = self.token.unwrap();
+        let token = self.get_id();
         let pollopts = PollOpt::edge() | PollOpt::oneshot();
 
         let register_result = if is_reregister {
@@ -87,7 +88,7 @@ impl UdpProcessor {
         };
 
         match register_result {
-            Ok(_) => debug!("udp has registred events {:?}", self.interest),
+            Ok(_) => debug!("udp processor {:?} registered events {:?}", self, self.interest),
             Err(ref e) => error!("udp processor register events {:?} failed: {}", self.interest, e),
         }
 
@@ -116,32 +117,33 @@ impl UdpProcessor {
 
     fn send_to(&self, is_send_to_client: bool, data: &[u8], addr: &SocketAddr) -> ProcessResult<Vec<Token>> {
         if is_send_to_client {
-            if let Err(e) = self.sock.send_to(&data, addr) {
-                error!("UDP processor send data failed: {}", e);
+            if let Err(e) = self.sock.send_to(data, addr) {
+                error!("udp processor {:?} send data to {} failed: {}", self, addr, e);
                 return self.process_failed();
             }
         } else {
-            if let Err(e) = self.relay_sock.borrow().send_to(&data, addr) {
-                error!("UDP processor send data failed: {}", e);
+            if let Err(e) = self.relay_sock.borrow().send_to(data, addr) {
+                error!("udp relay send data to {} failed: {}", addr, e);
                 return self.process_failed();
             }
         }
         ProcessResult::Success
     }
 
-    pub fn handle_init(&mut self,
+    pub fn handle_data(&mut self,
                        event_loop: &mut EventLoop<Relay>,
                        data: &[u8],
                        server_addr: String,
                        server_port: u16) -> ProcessResult<Vec<Token>> {
-        debug!("UDP processor stage: init");
+        trace!("udp processor {:?} stage: init", self);
         self.stage = HandleStage::Init;
         self.reset_timeout(event_loop);
+
         let request = if cfg!(feature = "sslocal") {
-            match self.encryptor.encrypt_udp(&data) {
+            match self.encryptor.encrypt_udp(data) {
                 Some(data) => data,
                 _ => {
-                    error!("UDP processor encrypt data failed");
+                    error!("udp processor {:?} encrypt data failed", self);
                     return self.process_failed();
                 }
             }
@@ -151,7 +153,6 @@ impl UdpProcessor {
         self.add_request(server_addr.clone(), server_port, request);
 
 
-        // resolve server address by async DNS
         let resolved = self.dns_resolver.borrow_mut().resolve(self.token.unwrap(), server_addr);
         match resolved {
             (None, None) => { }
@@ -165,9 +166,10 @@ impl UdpProcessor {
     }
 
     fn on_read(&mut self, event_loop: &mut EventLoop<Relay>) -> ProcessResult<Vec<Token>> {
-        debug!("UDP processor: on_read");
+        trace!("udp processor {:?} stage: stream", self);
         self.stage = HandleStage::Stream;
         self.reset_timeout(event_loop);
+
         let mut buf = self.receive_buf.take().unwrap();
         new_fat_slice_from_vec!(buf_slice, buf);
 
@@ -185,9 +187,10 @@ impl UdpProcessor {
                             self.send_to(SERVER, &response, &self.addr);
                         }
                     } else {
-                        warn!("decrypt udp data failed");
+                        warn!("udp processor {:?} decrypt data failed", self);
                     }
                 } else {
+                    // construct a socks5 request
                     let packed_addr = pack_addr(addr.ip());
                     let mut packed_port = Vec::<u8>::new();
                     let _ = packed_port.put_u16(addr.port());
@@ -200,12 +203,12 @@ impl UdpProcessor {
                     if let Some(response) = self.encryptor.encrypt_udp(&data) {
                         self.send_to(SERVER, &response, &self.addr);
                     } else {
-                        warn!("encrypt udp data failed");
+                        warn!("udp processor {:?} encrypt data failed", self);
                     }
                 }
             }
             Err(e) => {
-                error!("UDP processor receive data failed: {}", e);
+                error!("udp processor {:?} receive data failed: {}", self, e);
                 return self.process_failed();
             }
         }
@@ -221,7 +224,7 @@ impl UdpProcessor {
                    events: EventSet)
                    -> ProcessResult<Vec<Token>> {
         if events.is_error() {
-            error!("UDP processor error");
+            error!("udp processor {:?} got a event error", self);
             return self.process_failed();
         }
 
@@ -231,6 +234,8 @@ impl UdpProcessor {
     }
 
     pub fn destroy(&mut self, event_loop: &mut EventLoop<Relay>) {
+        trace!("destroy udp processor {:?}", self);
+
         if self.timeout.is_some() {
             let timeout = self.timeout.take().unwrap();
             event_loop.clear_timeout(timeout);
@@ -259,26 +264,27 @@ impl Caller for UdpProcessor {
                            hostname_ip: Option<(String, String)>,
                            errmsg: Option<String>)
                            -> ProcessResult<Vec<Token>> {
-        debug!("UDP processor stage: DNS resolved");
+        trace!("udp processor {:?} handle_dns_resolved: {:?}", self, hostname_ip);
+
         self.stage = HandleStage::DNS;
         if let Some(e) = errmsg {
-            error!("UDP processor resolve DNS error: {}", e);
+            error!("udp processor {:?} got a dns resolve error: {}", self, e);
             return self.process_failed();
         }
 
         if let Some((hostname, ip)) = hostname_ip {
             if !self.requests.contains_key(&hostname) {
-                // TODO: add log
+                warn!("cannot find relevant request of {}", hostname);
                 return self.process_failed();
             }
 
             let port_requests_map = self.requests.remove(&hostname).unwrap();
-            for (port, requests) in port_requests_map.iter() {
+            for (port, requests) in &port_requests_map {
                 let ip_port = format!("{}:{}", ip, port);
                 let server_addr = str2addr4(&ip_port).unwrap();
 
                 for request in requests {
-                    self.send_to(CLIENT, &request, &server_addr);
+                    self.send_to(CLIENT, request, &server_addr);
                 }
             }
 
@@ -286,6 +292,13 @@ impl Caller for UdpProcessor {
         } else {
             self.process_failed()
         }
+    }
+}
+
+
+impl fmt::Debug for UdpProcessor {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.get_id().as_usize())
     }
 }
 

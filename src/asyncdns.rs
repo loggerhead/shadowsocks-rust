@@ -284,7 +284,7 @@ impl DNSResolver {
 
     fn call_callback(&mut self, event_loop: &mut EventLoop<Relay>, hostname: String, ip: String) {
         if let Some(tokens) = self.hostname_to_tokens.remove(&hostname) {
-            for token in tokens.iter() {
+            for token in &tokens {
                 self.token_to_hostname.remove(token);
 
                 let hostname_ip = Some((hostname.clone(), ip.clone()));
@@ -423,7 +423,7 @@ impl DNSResolver {
         unimplemented!();
     }
 
-    pub fn destroy(&mut self, event_loop: &mut EventLoop<Relay>) {
+    pub fn destroy(&mut self, _event_loop: &mut EventLoop<Relay>) {
         unimplemented!();
     }
 }

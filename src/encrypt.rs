@@ -124,7 +124,7 @@ impl Encryptor {
         let iv_len = iv.len();
         let decipher_iv = &data[..iv_len];
 
-        let mut decipher = create_cipher(&key, &decipher_iv);
+        let mut decipher = create_cipher(&key, decipher_iv);
         let mut decrypted = vec![0u8; data.len() - iv_len];
         decipher.process(&data[iv_len..], decrypted.as_mut_slice());
 
