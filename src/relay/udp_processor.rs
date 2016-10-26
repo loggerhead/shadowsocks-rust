@@ -5,7 +5,6 @@ use std::net::SocketAddr;
 use mio::udp::UdpSocket;
 use mio::{EventSet, Token, Timeout, EventLoop, PollOpt};
 
-use util::shift_vec;
 use collections::Dict;
 use socks5::{parse_header, pack_addr};
 use encrypt::Encryptor;
@@ -14,13 +13,12 @@ use network::{str2addr4, NetworkWriteBytes};
 use asyncdns::{DNSResolver, Caller};
 use super::{Relay, ProcessResult};
 
-const BUF_SIZE: usize = 64 * 1024;
-
 type Socks5Requests = Vec<Vec<u8>>;
 type PortRequestMap = Dict<u16, Socks5Requests>;
 
 pub struct UdpProcessor {
     conf: Config,
+    stage: HandleStage,
     token: Option<Token>,
     interest: EventSet,
     timeout: Option<Timeout>,
@@ -43,6 +41,7 @@ impl UdpProcessor {
 
         UdpProcessor {
             conf: conf,
+            stage: HandleStage::Init,
             token: None,
             interest: EventSet::readable(),
             timeout: None,
@@ -66,6 +65,15 @@ impl UdpProcessor {
 
     fn process_failed(&self) -> ProcessResult<Vec<Token>> {
         ProcessResult::Failed(vec![self.token.unwrap()])
+    }
+
+    pub fn reset_timeout(&mut self, event_loop: &mut EventLoop<Relay>) {
+        if self.timeout.is_some() {
+            let timeout = self.timeout.take().unwrap();
+            event_loop.clear_timeout(timeout);
+        }
+        let delay = self.conf["timeout"].as_integer().unwrap() as u64 * 1000;
+        self.timeout = event_loop.timeout_ms(self.get_id(), delay).ok();
     }
 
     fn do_register(&mut self, event_loop: &mut EventLoop<Relay>, is_reregister: bool) -> bool {
@@ -127,6 +135,8 @@ impl UdpProcessor {
                        server_addr: String,
                        server_port: u16) -> ProcessResult<Vec<Token>> {
         debug!("UDP processor stage: init");
+        self.stage = HandleStage::Init;
+        self.reset_timeout(event_loop);
         let request = if cfg!(feature = "sslocal") {
             match self.encryptor.encrypt_udp(&data) {
                 Some(data) => data,
@@ -154,8 +164,10 @@ impl UdpProcessor {
         ProcessResult::Success
     }
 
-    fn on_read(&mut self, _event_loop: &mut EventLoop<Relay>) -> ProcessResult<Vec<Token>> {
+    fn on_read(&mut self, event_loop: &mut EventLoop<Relay>) -> ProcessResult<Vec<Token>> {
         debug!("UDP processor: on_read");
+        self.stage = HandleStage::Stream;
+        self.reset_timeout(event_loop);
         let mut buf = self.receive_buf.take().unwrap();
         new_fat_slice_from_vec!(buf_slice, buf);
 
@@ -219,11 +231,21 @@ impl UdpProcessor {
     }
 
     pub fn destroy(&mut self, event_loop: &mut EventLoop<Relay>) {
-        unimplemented!();
+        if self.timeout.is_some() {
+            let timeout = self.timeout.take().unwrap();
+            event_loop.clear_timeout(timeout);
+        }
+
+        self.dns_resolver.borrow_mut().remove_caller(self.get_id());
+
+        self.token = None;
+        self.interest = EventSet::none();
+        self.receive_buf = None;
+        self.stage = HandleStage::Destroyed;
     }
 
     pub fn is_destroyed(&self) -> bool {
-        unimplemented!();
+        self.stage == HandleStage::Destroyed
     }
 }
 
@@ -238,6 +260,7 @@ impl Caller for UdpProcessor {
                            errmsg: Option<String>)
                            -> ProcessResult<Vec<Token>> {
         debug!("UDP processor stage: DNS resolved");
+        self.stage = HandleStage::DNS;
         if let Some(e) = errmsg {
             error!("UDP processor resolve DNS error: {}", e);
             return self.process_failed();
@@ -266,5 +289,16 @@ impl Caller for UdpProcessor {
     }
 }
 
+const BUF_SIZE: usize = 64 * 1024;
 const CLIENT: bool = true;
 const SERVER: bool = false;
+
+#[derive(Debug, PartialEq)]
+enum HandleStage {
+    // only sslocal: auth METHOD received from local, reply with selection message
+    Init,
+    // DNS resolved, connect to remote
+    DNS,
+    Stream,
+    Destroyed,
+}

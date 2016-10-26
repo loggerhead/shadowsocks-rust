@@ -268,11 +268,11 @@ impl MyHandler for UdpRelay {
         }
     }
 
-    // TODO: finish timeout
     fn timeout(&mut self, event_loop: &mut EventLoop<Relay>, token: Token) {
-        // warn!("{:?} timed out", token);
-        // if !self.processors[token].borrow().is_destroyed() {
-        //     self.processors[token].borrow_mut().destroy(event_loop);
-        // }
+        warn!("{:?} timed out", token);
+        if !self.processors[token].borrow().is_destroyed() {
+            self.processors[token].borrow_mut().destroy(event_loop);
+        }
+        self.remove_processor(token);
     }
 }
