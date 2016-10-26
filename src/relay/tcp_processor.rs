@@ -672,6 +672,8 @@ impl TcpProcessor {
         self.remote_sock = None;
         self.local_token = None;
         self.remote_token = None;
+        self.local_interest = EventSet::none();
+        self.remote_interest = EventSet::none();
         self.stage = HandleStage::Destroyed;
     }
 

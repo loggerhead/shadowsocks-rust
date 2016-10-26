@@ -191,5 +191,6 @@ impl MyHandler for TcpRelay {
         if !self.processors[token].borrow().is_destroyed() {
             self.processors[token].borrow_mut().destroy(event_loop);
         }
+        self.remove_processor(token);
     }
 }
