@@ -1,12 +1,20 @@
 use rand::{Rng, OsRng};
+use crypto::mac::Mac;
 use crypto::md5::Md5;
+use crypto::sha1::Sha1;
+use crypto::hmac::Hmac;
 use crypto::digest::Digest;
 use crypto::aes::{ctr, KeySize};
 use crypto::symmetriccipher::SynchronousStreamCipher;
 
+use network::{NetworkReadBytes, NetworkWriteBytes};
+
+const BUF_SIZE: usize = 64 * 1024;
+
 type Cipher = Box<SynchronousStreamCipher + 'static>;
 
 pub struct Encryptor {
+    ota_helper: Option<OtaHelper>,
     is_iv_sent: bool,
     key: Vec<u8>,
     password: String,
@@ -28,6 +36,7 @@ impl Encryptor {
         let cipher = create_cipher(&key, &cipher_iv);
 
         Encryptor {
+            ota_helper: None,
             is_iv_sent: false,
             key: key,
             password: String::from(password),
@@ -46,36 +55,84 @@ impl Encryptor {
         &self.cipher_iv
     }
 
-    // TODO: use Cow instead
-    fn process(&mut self, data: &[u8], is_encrypt: bool) -> Option<Vec<u8>> {
-        let mut output = vec![0u8; data.len()];
+    #[cfg(feature = "sslocal")]
+    pub fn enable_ota(&mut self, addr_type: u8, header_length: usize, data: &[u8]) -> Option<Vec<u8>> {
+        let mut ota = OtaHelper::new();
+        // OTA header
+        let mut header = Vec::with_capacity(header_length + 10);
+        header.push(addr_type);
+        header.extend_from_slice(&data[1..header_length]);
 
-        let mut cipher = if is_encrypt {
-            self.cipher.take().unwrap()
+        // sha1 of header
+        let mut key = Vec::with_capacity(self.cipher_iv.len() + self.key.len());
+        key.extend_from_slice(&self.cipher_iv);
+        key.extend_from_slice(&self.key);
+        let sha1 = ota.hmac_sha1(&header, &key);
+        header.extend_from_slice(&sha1);
+
+        let data = &data[header_length..];
+        // TODO: refactor after change `pack_chunk` to return `result`
+        if data.is_empty() {
+            self.ota_helper = Some(ota);
+            Some(header)
         } else {
-            self.decipher.take().unwrap()
-        };
+            // OTA chunk
+            let chunk = try_opt!(ota.pack_chunk(data, &self.cipher_iv));
 
-        cipher.process(data, output.as_mut_slice());
+            // OTA request
+            let mut data = Vec::with_capacity(header.len() + chunk.len());
+            data.extend_from_slice(&header);
+            data.extend_from_slice(&chunk);
 
-        if is_encrypt {
-            self.cipher = Some(cipher);
-        } else {
-            self.decipher = Some(cipher);
+            self.ota_helper = Some(ota);
+            Some(data)
+        }
+    }
+
+    #[cfg(not(feature = "sslocal"))]
+    pub fn enable_ota(&mut self, _addr_type: u8, header_length: usize, data: &[u8]) -> Option<Vec<u8>> {
+        let mut ota = OtaHelper::new();
+        // verify OTA header
+        let header = &data[..header_length];
+        let sha1 = &data[header_length..header_length + 10];
+        let mut key = Vec::with_capacity(self.decipher_iv.len() + self.key.len());
+        key.extend_from_slice(&self.decipher_iv);
+        key.extend_from_slice(&self.key);
+        if !ota.verify_sha1(header, &key, sha1) {
+            return None;
         }
 
-        Some(output)
+        // unpack OTA chunks
+        let res = ota.unpack_chunk(&data[header_length + 10..], &self.decipher_iv);
+        self.ota_helper = Some(ota);
+        res
+    }
+
+    fn raw_encrypt(&mut self, data: &[u8]) -> Option<Vec<u8>> {
+        if let Some(ref mut cipher) = self.cipher {
+            let mut output = vec![0u8; data.len()];
+            cipher.process(data, output.as_mut_slice());
+            Some(output)
+        } else {
+            None
+        }
+    }
+
+    fn raw_decrypt(&mut self, data: &[u8]) -> Option<Vec<u8>> {
+        if let Some(ref mut cipher) = self.decipher {
+            let mut output = vec![0u8; data.len()];
+            cipher.process(data, output.as_mut_slice());
+            Some(output)
+        } else {
+            None
+        }
     }
 
     pub fn encrypt(&mut self, data: &[u8]) -> Option<Vec<u8>> {
-        let mut encrypted = self.process(data, true);
-
-        if self.is_iv_sent {
-            encrypted
-        } else {
+        // if first request
+        if !self.is_iv_sent {
             self.is_iv_sent = true;
-
-            match encrypted {
+            match self.raw_encrypt(data) {
                 Some(ref mut encrypted) => {
                     let len = self.cipher_iv.len() + encrypted.len();
                     let mut result = Vec::with_capacity(len);
@@ -86,22 +143,39 @@ impl Encryptor {
                 }
                 _ => None,
             }
+        } else {
+            // if this is a OTA request
+            if cfg!(feature = "sslocal") && self.ota_helper.is_some() {
+                let mut ota = self.ota_helper.take().unwrap();
+                let data = &try_opt!(ota.pack_chunk(data, &self.cipher_iv));
+                self.ota_helper = Some(ota);
+                self.raw_encrypt(data)
+            } else {
+                self.raw_encrypt(data)
+            }
         }
     }
 
     pub fn decrypt(&mut self, data: &[u8]) -> Option<Vec<u8>> {
+        // if first request
         if self.decipher.is_none() {
             if data.len() < 16 {
-                return None;
+                None
+            } else {
+                let offset = self.decipher_iv.len();
+                self.decipher_iv[..].copy_from_slice(&data[..offset]);
+                self.decipher = Some(create_cipher(&self.key, &self.decipher_iv));
+                self.raw_decrypt(&data[offset..])
             }
-
-            let offset = self.decipher_iv.len();
-            self.decipher_iv[..].copy_from_slice(&data[..offset]);
-            self.decipher = Some(create_cipher(&self.key, &self.decipher_iv));
-
-            self.process(&data[offset..], false)
         } else {
-            self.process(data, false)
+            let mut decrypted = try_opt!(self.raw_decrypt(data));
+            // if this is a OTA request
+            if !cfg!(feature = "sslocal") && self.ota_helper.is_some() {
+                let mut ota = self.ota_helper.take().unwrap();
+                decrypted = try_opt!(ota.unpack_chunk(&decrypted, &self.decipher_iv));
+                self.ota_helper = Some(ota);
+            }
+            Some(decrypted)
         }
     }
 
@@ -129,6 +203,101 @@ impl Encryptor {
         decipher.process(&data[iv_len..], decrypted.as_mut_slice());
 
         Some(decrypted)
+    }
+}
+
+struct OtaHelper {
+    index: i64,
+    chunk_sha1: Vec<u8>,
+    chunk_len: u16,
+    chunk_buf: Vec<u8>,
+}
+
+impl OtaHelper {
+    fn new() -> OtaHelper {
+        OtaHelper {
+            index: 0,
+            chunk_sha1: Vec::with_capacity(10),
+            chunk_len: 0,
+            chunk_buf: Vec::with_capacity(BUF_SIZE),
+        }
+    }
+
+    fn hmac_sha1(&self, data: &[u8], key: &[u8]) -> Vec<u8> {
+        let mut hmac = Hmac::new(Sha1::new(), key);
+        let len = hmac.output_bytes();
+        let mut res = Vec::with_capacity(len);
+        unsafe { res.set_len(len); }
+        hmac.input(data);
+        hmac.raw_result(&mut res);
+        unsafe { res.set_len(10); }
+        res
+    }
+
+    fn verify_sha1(&self, data: &[u8], key: &[u8], sha1: &[u8]) -> bool {
+        sha1.eq(&self.hmac_sha1(data, key)[..])
+    }
+
+    fn pack_chunk(&mut self, data: &[u8], cipher_iv: &[u8]) -> Option<Vec<u8>> {
+        let sha1 = self.hmac_sha1(data, cipher_iv);
+        let mut chunk = Vec::with_capacity(12 + data.len());
+        try_opt!(chunk.put_u16(data.len() as u16));
+        chunk.extend_from_slice(&sha1);
+        chunk.extend_from_slice(data);
+        self.index += 1;
+        Some(chunk)
+    }
+
+    // TODO: change to return `Result`
+    fn unpack_chunk(&mut self, mut data: &[u8], decipher_iv: &[u8]) -> Option<Vec<u8>> {
+        let mut unpacked = Vec::with_capacity(data.len());
+
+        while !data.is_empty() {
+            // make sure read a complete header
+            if self.chunk_len == 0 {
+                // wait a complete header
+                if data.len() + self.chunk_buf.len() < 12 {
+                    self.chunk_buf.extend_from_slice(&data);
+                    break;
+                } else {
+                    // split DATA.LEN, HMAC-SHA1 from DATA
+                    let offset = 12 - self.chunk_buf.len();
+                    self.chunk_buf.extend_from_slice(&data[..offset]);
+                    self.chunk_len = try_opt!((&self.chunk_buf[..2]).get_u16());
+                    unsafe { self.chunk_sha1.set_len(0); }
+                    self.chunk_sha1.extend_from_slice(&self.chunk_buf[2..]);
+                    unsafe { self.chunk_buf.set_len(0); }
+                    data = &data[offset..];
+                }
+            }
+
+            if data.len() + self.chunk_buf.len() < self.chunk_len as usize {
+                self.chunk_buf.extend_from_slice(data);
+                break;
+            // if there are one or more chunks
+            } else {
+                let offset = self.chunk_len as usize - self.chunk_buf.len();
+                // make sure there is a chunk data in chunk_buf
+                self.chunk_buf.extend_from_slice(&data[..offset]);
+                data = &data[offset..];
+
+                let mut key = Vec::with_capacity(decipher_iv.len() + 2);
+                key.extend_from_slice(decipher_iv);
+                try_opt!(key.put_i64(self.index));
+
+                if self.verify_sha1(&self.chunk_buf, &key, &self.chunk_sha1) {
+                    unpacked.extend_from_slice(&self.chunk_buf);
+                    self.chunk_len = 0;
+                    unsafe { self.chunk_buf.set_len(0); }
+                } else {
+                    self.chunk_len = 0;
+                    unsafe { self.chunk_buf.set_len(0); }
+                    break;
+                }
+            }
+        }
+
+        Some(unpacked)
     }
 }
 
@@ -179,132 +348,4 @@ fn evp_bytes_to_key(password: &str, key_len: usize, iv_len: usize) -> (Vec<u8>, 
     let iv = Vec::from(&tmp[key_len..key_len + iv_len]);
 
     (key, iv)
-}
-
-#[cfg(test)]
-mod test {
-    use std::str;
-    use std::thread;
-    use std::io::prelude::*;
-    use std::sync::mpsc::channel;
-    use std::net::{TcpListener, TcpStream, Shutdown};
-
-    use encrypt::Encryptor;
-
-    const PASSWORD: &'static str = "foo";
-    const MESSAGES: &'static [&'static str] = &["a", "hi", "foo", "hello", "world"];
-
-    fn encrypt(cryptor: &mut Encryptor, data: &[u8]) -> Vec<u8> {
-        let encrypted = cryptor.encrypt(data);
-        assert!(encrypted.is_some());
-        encrypted.unwrap()
-    }
-
-    fn decrypt(cryptor: &mut Encryptor, data: &[u8]) -> Vec<u8> {
-        let decrypted = cryptor.decrypt(data);
-        assert!(decrypted.is_some());
-        decrypted.unwrap()
-    }
-
-    #[test]
-    fn in_order() {
-        let mut encryptor = Encryptor::new(PASSWORD);
-        for msg in MESSAGES.iter() {
-            let encrypted = encrypt(&mut encryptor, msg.as_bytes());
-            let decrypted = decrypt(&mut encryptor, &encrypted);
-            assert_eq!(msg.as_bytes()[..], decrypted[..]);
-        }
-    }
-
-    #[test]
-    fn chaos() {
-        let mut encryptor = Encryptor::new(PASSWORD);
-        let mut buf_msg = vec![];
-        let mut buf_encrypted = vec![];
-
-        macro_rules! assert_decrypt {
-            () => (
-                let decrypted = decrypt(&mut encryptor, &buf_encrypted);
-                assert_eq!(buf_msg[..], decrypted[..]);
-                buf_msg.clear();
-                buf_encrypted.clear();
-            );
-        }
-
-        for i in 0..MESSAGES.len() {
-            let msg = MESSAGES[i].as_bytes();
-            let encrypted = encrypt(&mut encryptor, msg);
-
-            buf_msg.extend_from_slice(msg);
-            buf_encrypted.extend_from_slice(&encrypted);
-            if i % 2 == 0 {
-                assert_decrypt!();
-            }
-        }
-        assert_decrypt!();
-    }
-
-    #[test]
-    fn tcp_server() {
-        let (tx, rx) = channel();
-
-        fn test_encryptor(mut stream: TcpStream, mut encryptor: Encryptor) {
-            for msg in MESSAGES.iter() {
-                let encrypted = encrypt(&mut encryptor, msg.as_bytes());
-                stream.write(&encrypted).unwrap();
-            }
-            stream.shutdown(Shutdown::Write).unwrap();
-
-            let mut data = vec![];
-            stream.read_to_end(&mut data).unwrap();
-            let decrypted = decrypt(&mut encryptor, &data);
-
-            let mut tmp = vec![];
-            for msg in MESSAGES.iter() {
-                tmp.extend_from_slice(msg.as_bytes());
-            }
-            let messages_bytes = &tmp;
-            assert_eq!(messages_bytes, &decrypted);
-        }
-
-        let t1 = thread::spawn(move || {
-            let encryptor = Encryptor::new(PASSWORD);
-            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-            tx.send(listener.local_addr().unwrap()).unwrap();
-            let stream = listener.incoming().next().unwrap().unwrap();
-            test_encryptor(stream, encryptor);
-        });
-
-        let t2 = thread::spawn(move || {
-            let encryptor = Encryptor::new(PASSWORD);
-            let server_addr = rx.recv().unwrap();
-            let stream = TcpStream::connect(server_addr).unwrap();
-            test_encryptor(stream, encryptor);
-        });
-
-        t1.join().unwrap();
-        t2.join().unwrap();
-    }
-
-    #[test]
-    fn udp() {
-        fn encrypt_udp(cryptor: &mut Encryptor, data: &[u8]) -> Vec<u8> {
-            let encrypted = cryptor.encrypt_udp(data);
-            assert!(encrypted.is_some());
-            encrypted.unwrap()
-        }
-
-        fn decrypt_udp(cryptor: &mut Encryptor, data: &[u8]) -> Vec<u8> {
-            let decrypted = cryptor.decrypt_udp(data);
-            assert!(decrypted.is_some());
-            decrypted.unwrap()
-        }
-
-        let mut encryptor = Encryptor::new(PASSWORD);
-        for msg in MESSAGES.iter() {
-            let encrypted = encrypt_udp(&mut encryptor, msg.as_bytes());
-            let decrypted = decrypt_udp(&mut encryptor, &encrypted);
-            assert_eq!(msg.as_bytes()[..], decrypted[..]);
-        }
-    }
 }

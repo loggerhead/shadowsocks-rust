@@ -5,3 +5,4 @@ listen_port = 8010
 password = "fuckGFW4times!"
 timeout = 300
 encrypt_method = "aes-256-ctr"
+enable_one_time_auth = true
