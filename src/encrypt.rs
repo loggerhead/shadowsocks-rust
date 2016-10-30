@@ -179,30 +179,92 @@ impl Encryptor {
         }
     }
 
-    pub fn encrypt_udp(&self, data: &[u8]) -> Option<Vec<u8>> {
-        let (key, cipher_iv) = gen_key_iv(&self.password);
-        let mut cipher = create_cipher(&key, &cipher_iv);
-
+    fn raw_encrypt_udp(&self, key: &[u8], iv: &[u8], data: &[u8]) -> (Cipher, Vec<u8>) {
+        let mut cipher = create_cipher(key, iv);
         let mut encrypted = vec![0u8; data.len()];
         cipher.process(data, encrypted.as_mut_slice());
 
-        let mut res = Vec::with_capacity(cipher_iv.len() + data.len());
-        res.extend_from_slice(&cipher_iv);
+        let mut res = Vec::with_capacity(iv.len() + data.len());
+        res.extend_from_slice(iv);
         res.extend_from_slice(&encrypted);
 
-        Some(res)
+        (cipher, res)
     }
 
-    pub fn decrypt_udp(&self, data: &[u8]) -> Option<Vec<u8>> {
-        let (key, iv) = gen_key_iv(&self.password);
-        let iv_len = iv.len();
-        let decipher_iv = &data[..iv_len];
+    fn raw_decrypt_udp(&self, iv_len: usize, key: &[u8], data: &[u8]) -> (Vec<u8>, Cipher, Vec<u8>) {
+        let iv = data[..iv_len].to_vec();
 
-        let mut decipher = create_cipher(&key, decipher_iv);
+        let mut decipher = create_cipher(key, &iv);
         let mut decrypted = vec![0u8; data.len() - iv_len];
         decipher.process(&data[iv_len..], decrypted.as_mut_slice());
 
-        Some(decrypted)
+        (iv, decipher, decrypted)
+    }
+
+    pub fn encrypt_udp(&mut self, data: &[u8]) -> Option<Vec<u8>> {
+        let (key, iv) = gen_key_iv(&self.password);
+        let (cipher, data) = self.raw_encrypt_udp(&key, &iv, data);
+        self.key = key;
+        self.cipher_iv = iv;
+        self.cipher = Some(cipher);
+        Some(data)
+    }
+
+    pub fn decrypt_udp(&mut self, data: &[u8]) -> Option<Vec<u8>> {
+        let (key, _iv) = gen_key_iv(&self.password);
+        let (iv, decipher, data) = self.raw_decrypt_udp(_iv.len(), &key, data);
+        self.key = key;
+        self.decipher_iv = iv;
+        self.decipher = Some(decipher);
+        Some(data)
+    }
+
+    pub fn encrypt_udp_ota(&mut self, addr_type: u8, data: &[u8]) -> Option<Vec<u8>> {
+        if self.ota_helper.is_none() {
+            self.ota_helper = Some(OtaHelper::new());
+        }
+        let ota = self.ota_helper.take().unwrap();
+
+        let mut chunk = Vec::with_capacity(data.len() + 10);
+        chunk.push(addr_type);
+        chunk.extend_from_slice(&data[1..]);
+
+        let (key, iv) = gen_key_iv(&self.password);
+        let mut ota_key = Vec::with_capacity(key.len() + iv.len());
+        ota_key.extend_from_slice(&iv);
+        ota_key.extend_from_slice(&key);
+
+        let sha1 = ota.hmac_sha1(&chunk, &ota_key);
+        chunk.extend_from_slice(&sha1);
+
+        self.ota_helper = Some(ota);
+        let (_, data) = self.raw_encrypt_udp(&key, &iv, &chunk);
+        Some(data)
+    }
+
+    pub fn decrypt_udp_ota(&mut self, _addr_type: u8, data: &[u8]) -> Option<Vec<u8>> {
+        if data.len() < 10 {
+            return None;
+        }
+
+        if self.ota_helper.is_none() {
+            self.ota_helper = Some(OtaHelper::new());
+        }
+        let ota = self.ota_helper.take().unwrap();
+
+        let mut ota_key = Vec::with_capacity(self.key.len() + self.decipher_iv.len());
+        ota_key.extend_from_slice(&self.decipher_iv);
+        ota_key.extend_from_slice(&self.key);
+
+        let sha1 = &data[data.len()-10..];
+        let data = &data[..data.len()-10];
+
+        if ota.verify_sha1(data, &ota_key, sha1) {
+            self.ota_helper = Some(ota);
+            Some(data.to_vec())
+        } else {
+            None
+        }
     }
 }
 

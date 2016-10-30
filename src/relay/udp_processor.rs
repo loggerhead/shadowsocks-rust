@@ -7,7 +7,7 @@ use mio::udp::UdpSocket;
 use mio::{EventSet, Token, Timeout, EventLoop, PollOpt};
 
 use collections::Dict;
-use socks5::{parse_header, pack_addr};
+use socks5::{parse_header, pack_addr, addr_type};
 use encrypt::Encryptor;
 use config::Config;
 use network::{str2addr4, NetworkWriteBytes};
@@ -28,16 +28,16 @@ pub struct UdpProcessor {
     relay_sock: Rc<RefCell<UdpSocket>>,
     receive_buf: Option<Vec<u8>>,
     requests: Dict<String, PortRequestMap>,
-    encryptor: Encryptor,
     dns_resolver: Rc<RefCell<DNSResolver>>,
+    encryptor: Rc<RefCell<Encryptor>>,
 }
 
 impl UdpProcessor {
     pub fn new(conf: Config,
                addr: SocketAddr,
                relay_sock: Rc<RefCell<UdpSocket>>,
-               dns_resolver: Rc<RefCell<DNSResolver>>) -> UdpProcessor {
-        let encryptor = Encryptor::new(conf["password"].as_str().unwrap());
+               dns_resolver: Rc<RefCell<DNSResolver>>,
+               encryptor: Rc<RefCell<Encryptor>>) -> UdpProcessor {
         let sock = UdpSocket::v4().unwrap();
 
         UdpProcessor {
@@ -133,36 +133,53 @@ impl UdpProcessor {
     pub fn handle_data(&mut self,
                        event_loop: &mut EventLoop<Relay>,
                        data: &[u8],
+                       addr_type: u8,
                        server_addr: String,
-                       server_port: u16) -> ProcessResult<Vec<Token>> {
+                       server_port: u16,
+                       header_length: usize)
+                       -> ProcessResult<Vec<Token>> {
         trace!("udp processor {:?} stage: init", self);
         self.stage = HandleStage::Init;
         self.reset_timeout(event_loop);
 
         let request = if cfg!(feature = "sslocal") {
-            match self.encryptor.encrypt_udp(data) {
-                Some(data) => data,
-                _ => {
-                    error!("udp processor {:?} encrypt data failed", self);
-                    return self.process_failed();
-                }
+            // if is a OTA session
+            if self.conf.get_bool("enable_one_time_auth") == Some(true) {
+                self.encryptor.borrow_mut().encrypt_udp_ota(addr_type | addr_type::AUTH, data)
+            } else {
+                self.encryptor.borrow_mut().encrypt_udp(data)
             }
         } else {
-            Vec::from(data)
+            // if is a OTA session
+            if addr_type & addr_type::AUTH == addr_type::AUTH {
+                self.encryptor.borrow_mut().decrypt_udp_ota(addr_type, data)
+            } else {
+                // TODO: change to use `Cow`
+                Some(data.to_vec())
+            }
         };
-        self.add_request(server_addr.clone(), server_port, request);
 
+        if let Some(request) = request {
+            if cfg!(feature = "sslocal") {
+                self.add_request(server_addr.clone(), server_port, request);
+            } else {
+                self.add_request(server_addr.clone(), server_port, request[header_length..].to_vec());
+            }
+        } else {
+            if cfg!(feature = "sslocal") {
+                error!("udp processor {:?} encrypt data failed", self);
+            } else {
+                error!("udp processor {:?} decrypt data failed", self);
+            }
+            return self.process_failed();
+        }
 
         let resolved = self.dns_resolver.borrow_mut().resolve(self.token.unwrap(), server_addr);
         match resolved {
-            (None, None) => { }
+            (None, None) => ProcessResult::Success,
             // if address is resolved immediately
-            (hostname_ip, errmsg) => {
-                self.handle_dns_resolved(event_loop, hostname_ip, errmsg);
-            }
+            (hostname_ip, errmsg) => self.handle_dns_resolved(event_loop, hostname_ip, errmsg),
         }
-
-        ProcessResult::Success
     }
 
     fn on_read(&mut self, event_loop: &mut EventLoop<Relay>) -> ProcessResult<Vec<Token>> {
@@ -179,7 +196,7 @@ impl UdpProcessor {
                 unsafe { buf.set_len(nread); }
 
                 if cfg!(feature = "sslocal") {
-                    if let Some(data) = self.encryptor.decrypt_udp(&buf) {
+                    if let Some(data) = self.encryptor.borrow_mut().decrypt_udp(&buf) {
                         if parse_header(&data).is_some() {
                             let mut response = Vec::with_capacity(3 + data.len());
                             response.extend_from_slice(&[0u8; 3]);
@@ -200,7 +217,7 @@ impl UdpProcessor {
                     data.extend_from_slice(&packed_port);
                     data.extend_from_slice(&buf);
 
-                    if let Some(response) = self.encryptor.encrypt_udp(&data) {
+                    if let Some(response) = self.encryptor.borrow_mut().encrypt_udp(&data) {
                         self.send_to(SERVER, &response, &self.addr);
                     } else {
                         warn!("udp processor {:?} encrypt data failed", self);

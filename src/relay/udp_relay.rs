@@ -44,7 +44,7 @@ pub struct UdpRelay {
     dns_resolver: Rc<RefCell<DNSResolver>>,
     cache: Dict<SocketAddr, RcCellUdpProcessor>,
     processors: Holder<RcCellUdpProcessor>,
-    encryptor: Encryptor,
+    encryptor: Rc<RefCell<Encryptor>>,
 }
 
 impl UdpRelay {
@@ -65,7 +65,7 @@ impl UdpRelay {
             error!("udp relay cannot bind address {} because {}", address, e);
             exit(1);
         });
-        let encryptor = Encryptor::new(conf["password"].as_str().unwrap());
+        let encryptor = Rc::new(RefCell::new(Encryptor::new(conf["password"].as_str().unwrap())));
 
         if cfg!(feature = "sslocal") {
             info!("ssclient udp relay listen on {}", address);
@@ -158,7 +158,7 @@ impl UdpRelay {
                                 warn!("drop the udp request since FRAG is not 0");
                             }
                         } else {
-                            let decrypted = self.encryptor.decrypt_udp(&buf);
+                            let decrypted = self.encryptor.borrow_mut().decrypt_udp(&buf);
                             if let Some(data) = decrypted {
                                 self.handle_request(event_loop, addr, &data);
                             } else {
@@ -190,7 +190,7 @@ impl UdpRelay {
                       client_addr: SocketAddr,
                       data: &[u8]) -> ProcessResult<Vec<Token>> {
         // parse socks5 header
-        if let Some((_addr_type, mut server_addr, mut server_port, header_length)) = parse_header(data) {
+        if let Some((addr_type, mut server_addr, mut server_port, header_length)) = parse_header(data) {
             if cfg!(feature = "sslocal") {
                 let (addr, port) = choose_a_server(&self.conf).unwrap();
                 server_addr = addr;
@@ -202,7 +202,8 @@ impl UdpRelay {
                 let p = Rc::new(RefCell::new(UdpProcessor::new(self.conf.clone(),
                                                                client_addr,
                                                                self.listener.clone(),
-                                                               self.dns_resolver.clone())));
+                                                               self.dns_resolver.clone(),
+                                                               self.encryptor.clone())));
                 if let Some(token) = self.add_processor(p.clone()) {
                     debug!("create udp processor for {:?}", client_addr);
                     self.cache.insert(client_addr, p.clone());
@@ -217,13 +218,10 @@ impl UdpRelay {
                 }
             }
 
-            let data = if cfg!(feature = "sslocal") {
-                data
-            } else {
-                &data[header_length..]
-            };
-            let p = &self.cache[&client_addr];
-            p.borrow_mut().handle_data(event_loop, data, server_addr, server_port);
+            if data.len() > 0 {
+                let p = &self.cache[&client_addr];
+                p.borrow_mut().handle_data(event_loop, data, addr_type, server_addr, server_port, header_length);
+            }
         } else {
             warn!("invalid socks5 header");
         }
