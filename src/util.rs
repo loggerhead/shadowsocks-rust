@@ -5,6 +5,11 @@ use std::io::prelude::*;
 use std::rc::Rc;
 use std::cell::RefCell;
 
+macro_rules! io_err {
+    ($desc:expr) => ( io::Error::new(io::ErrorKind::Other, $desc) );
+    ($fmt:expr, $($arg:tt)*) => ( io::Error::new(io::ErrorKind::Other, format!($fmt, $($arg)*)) );
+}
+
 macro_rules! new_fat_slice_from_vec {
     ($name:ident, $v:expr) => (
         use std::slice::from_raw_parts_mut;

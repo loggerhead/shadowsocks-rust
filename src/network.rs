@@ -1,25 +1,15 @@
+use std::io;
 use std::io::Cursor;
 use std::str::FromStr;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, AddrParseError};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 
-use mio::udp::UdpSocket;
 use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt};
 
 #[allow(non_camel_case_types)]
 pub enum AddressFamily {
     AF_INET,
     AF_INET6,
-}
-
-pub fn alloc_udp_socket() -> Option<UdpSocket> {
-    match UdpSocket::v4() {
-        Ok(sock) => Some(sock),
-        Err(e) => {
-            error!("cannot alloc a UDP socket: {}", e);
-            None
-        }
-    }
 }
 
 pub fn get_address_family(address: &str) -> Option<AddressFamily> {
@@ -77,38 +67,38 @@ pub fn str2addr6(ip: &str) -> Option<SocketAddr> {
     Some(SocketAddr::V6(addr))
 }
 
-pub fn pair2socket_addr(ip: &str, port: u16) -> Result<SocketAddr, AddrParseError> {
-    Ipv4Addr::from_str(ip).map(|ip| SocketAddr::new(IpAddr::V4(ip), port))
+pub fn pair2socket_addr(ip: &str, port: u16) -> Option<SocketAddr> {
+    Ipv4Addr::from_str(ip).map(|ip| SocketAddr::new(IpAddr::V4(ip), port)).ok()
 }
 
 
 pub trait NetworkWriteBytes: WriteBytesExt {
-    fn put_u8(&mut self, num: u8) -> Option<()> {
-        self.write_u8(num).ok()
+    fn put_u8(&mut self, num: u8) -> io::Result<()> {
+        self.write_u8(num)
     }
 
-    fn put_u16(&mut self, num: u16) -> Option<()> {
-        self.write_u16::<NetworkEndian>(num).ok()
+    fn put_u16(&mut self, num: u16) -> io::Result<()> {
+        self.write_u16::<NetworkEndian>(num)
     }
 
-    fn put_i32(&mut self, num: i32) -> Option<()> {
-        self.write_i32::<NetworkEndian>(num).ok()
+    fn put_i32(&mut self, num: i32) -> io::Result<()> {
+        self.write_i32::<NetworkEndian>(num)
     }
 }
 
 impl NetworkWriteBytes for Vec<u8> {}
 
 pub trait NetworkReadBytes: ReadBytesExt {
-    fn get_u8(&mut self) -> Option<u8> {
-        self.read_u8().ok()
+    fn get_u8(&mut self) -> io::Result<u8> {
+        self.read_u8()
     }
 
-    fn get_u16(&mut self) -> Option<u16> {
-        self.read_u16::<NetworkEndian>().ok()
+    fn get_u16(&mut self) -> io::Result<u16> {
+        self.read_u16::<NetworkEndian>()
     }
 
-    fn get_u32(&mut self) -> Option<u32> {
-        self.read_u32::<NetworkEndian>().ok()
+    fn get_u32(&mut self) -> io::Result<u32> {
+        self.read_u32::<NetworkEndian>()
     }
 }
 
@@ -116,27 +106,43 @@ impl<'a> NetworkReadBytes for Cursor<&'a [u8]> {}
 impl<'a> NetworkReadBytes for Cursor<&'a Vec<u8>> {}
 
 impl<'a> NetworkReadBytes for &'a [u8] {
-    fn get_u8(&mut self) -> Option<u8> {
-        Cursor::new(self).read_u8().ok()
+    fn get_u8(&mut self) -> io::Result<u8> {
+        Cursor::new(self).read_u8()
     }
 
-    fn get_u16(&mut self) -> Option<u16> {
-        Cursor::new(self).read_u16::<NetworkEndian>().ok()
+    fn get_u16(&mut self) -> io::Result<u16> {
+        Cursor::new(self).read_u16::<NetworkEndian>()
     }
 
-    fn get_u32(&mut self) -> Option<u32> {
-        Cursor::new(self).read_u32::<NetworkEndian>().ok()
+    fn get_u32(&mut self) -> io::Result<u32> {
+        Cursor::new(self).read_u32::<NetworkEndian>()
     }
 }
 
 #[macro_export]
 macro_rules! pack {
-    (u16, $r:expr, $v:expr) => ( try_opt!($r.put_u16($v)); );
-    (u8, $r:expr, $v:expr) => ( try_opt!($r.put_u8($v)); );
+    (i32, $r:expr, $v:expr) => ( try_opt!($r.put_i32($v).ok()); );
+    (u16, $r:expr, $v:expr) => ( try_opt!($r.put_u16($v).ok()); );
+    (u8, $r:expr, $v:expr) => ( try_opt!($r.put_u8($v).ok()); );
 }
 
 #[macro_export]
 macro_rules! unpack {
-    (u16, $r:expr) => ( try_opt!($r.get_u16()); );
-    (u8, $r:expr) => ( try_opt!($r.get_u8()); );
+    (u32, $r:expr) => ( try_opt!($r.get_u32().ok()); );
+    (u16, $r:expr) => ( try_opt!($r.get_u16().ok()); );
+    (u8, $r:expr) => ( try_opt!($r.get_u8().ok()); );
+}
+
+#[macro_export]
+macro_rules! try_pack {
+    (i32, $r:expr, $v:expr) => ( try!($r.put_i32($v)); );
+    (u16, $r:expr, $v:expr) => ( try!($r.put_u16($v)); );
+    (u8, $r:expr, $v:expr) => ( try!($r.put_u8($v)); );
+}
+
+#[macro_export]
+macro_rules! try_unpack {
+    (u32, $r:expr) => ( try!($r.get_u32()); );
+    (u16, $r:expr) => ( try!($r.get_u16()); );
+    (u8, $r:expr) => ( try!($r.get_u8()); );
 }

@@ -26,21 +26,23 @@ fn main() {
 
     let childs = vec![
         {
-            let conf = conf.clone();
+           let conf = conf.clone();
             spawn(|| {
-                TcpRelay::new(conf).run();
+                TcpRelay::new(conf).and_then(|r| r.run())
+                    .unwrap_or_else(|e| error!("{}", e))
             })
         },
         {
             let conf = conf.clone();
             spawn(|| {
-                UdpRelay::new(conf).run();
+                UdpRelay::new(conf).and_then(|r| r.run())
+                    .unwrap_or_else(|e| error!("{}", e))
             })
         },
     ];
 
     for child in childs {
-        child.join().unwrap();
+        let _ = child.join();
     }
 }
 

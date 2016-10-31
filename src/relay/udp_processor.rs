@@ -1,3 +1,5 @@
+use std::io;
+use std::io::Result;
 use std::fmt;
 use std::net::SocketAddr;
 
@@ -10,11 +12,19 @@ use collections::Dict;
 use encrypt::Encryptor;
 use socks5::{parse_header, pack_addr, addr_type};
 use network::{str2addr4, NetworkWriteBytes};
-use asyncdns::{DNSResolver, Caller};
-use super::{Relay, ProcessResult};
+use asyncdns::{Caller, DNSResolver, HostIpPair};
+use super::{Relay};
 
 type Socks5Requests = Vec<Vec<u8>>;
 type PortRequestMap = Dict<u16, Socks5Requests>;
+
+macro_rules! err {
+    (InvalidSocks5Header) => ( io_err!("invalid socks5 header") );
+    (UnknownHost, $host:expr) => ( io_err!("cannot find relevant request of {}", $host) );
+
+    ($($arg:tt)*) => ( processor_err!($($arg)*) );
+}
+
 
 pub struct UdpProcessor {
     conf: Config,
@@ -36,10 +46,11 @@ impl UdpProcessor {
                addr: SocketAddr,
                relay_sock: RcCell<UdpSocket>,
                dns_resolver: RcCell<DNSResolver>,
-               encryptor: RcCell<Encryptor>) -> UdpProcessor {
-        let sock = UdpSocket::v4().unwrap();
+               encryptor: RcCell<Encryptor>)
+               -> Result<UdpProcessor> {
+        let sock = try!(UdpSocket::v4().map_err(|_| err!(InitSocketFailed)));
 
-        UdpProcessor {
+        Ok(UdpProcessor {
             conf: conf,
             stage: HandleStage::Init,
             token: None,
@@ -52,7 +63,7 @@ impl UdpProcessor {
             requests: Dict::default(),
             encryptor: encryptor,
             dns_resolver: dns_resolver,
-        }
+        })
     }
 
     pub fn set_token(&mut self, token: Token) {
@@ -61,10 +72,6 @@ impl UdpProcessor {
 
     pub fn addr(&self) -> &SocketAddr {
         &self.addr
-    }
-
-    fn process_failed(&self) -> ProcessResult<Vec<Token>> {
-        ProcessResult::Failed(vec![self.get_id()])
     }
 
     pub fn reset_timeout(&mut self, event_loop: &mut EventLoop<Relay>) {
@@ -76,7 +83,7 @@ impl UdpProcessor {
         self.timeout = event_loop.timeout_ms(self.get_id(), delay).ok();
     }
 
-    fn do_register(&mut self, event_loop: &mut EventLoop<Relay>, is_reregister: bool) -> bool {
+    fn do_register(&mut self, event_loop: &mut EventLoop<Relay>, is_reregister: bool) -> Result<()> {
         let token = self.get_id();
         let pollopts = PollOpt::edge() | PollOpt::oneshot();
 
@@ -86,19 +93,16 @@ impl UdpProcessor {
             event_loop.register(&self.sock, token, self.interest, pollopts)
         };
 
-        match register_result {
-            Ok(_) => debug!("udp processor {:?} registered events {:?}", self, self.interest),
-            Err(ref e) => error!("udp processor register events {:?} failed: {}", self.interest, e),
-        }
-
-        register_result.is_ok()
+        register_result.map(|_| {
+            debug!("registered {:?} socket with {:?}", self, self.interest);
+        })
     }
 
-    pub fn register(&mut self, event_loop: &mut EventLoop<Relay>) -> bool {
+    pub fn register(&mut self, event_loop: &mut EventLoop<Relay>) -> Result<()> {
         self.do_register(event_loop, false)
     }
 
-    fn reregister(&mut self, event_loop: &mut EventLoop<Relay>) -> bool {
+    fn reregister(&mut self, event_loop: &mut EventLoop<Relay>) -> Result<()> {
         self.do_register(event_loop, true)
     }
 
@@ -114,19 +118,14 @@ impl UdpProcessor {
         port_requests_map.get_mut(&server_port).unwrap().push(data);
     }
 
-    fn send_to(&self, is_send_to_client: bool, data: &[u8], addr: &SocketAddr) -> ProcessResult<Vec<Token>> {
-        if is_send_to_client {
-            if let Err(e) = self.sock.send_to(data, addr) {
-                error!("udp processor {:?} send data to {} failed: {}", self, addr, e);
-                return self.process_failed();
-            }
+    fn send_to(&self, is_send_to_client: bool, data: &[u8], addr: &SocketAddr) -> Result<Option<usize>> {
+        let res = if is_send_to_client {
+            self.sock.send_to(data, addr)
         } else {
-            if let Err(e) = self.relay_sock.borrow().send_to(data, addr) {
-                error!("udp relay send data to {} failed: {}", addr, e);
-                return self.process_failed();
-            }
-        }
-        ProcessResult::Success
+            self.relay_sock.borrow().send_to(data, addr)
+        };
+
+        res.map_err(|e| err!(WriteFailed, e))
     }
 
     pub fn handle_data(&mut self,
@@ -136,8 +135,8 @@ impl UdpProcessor {
                        server_addr: String,
                        server_port: u16,
                        header_length: usize)
-                       -> ProcessResult<Vec<Token>> {
-        trace!("udp processor {:?} stage: init", self);
+                       -> Result<()> {
+        trace!("{:?} handle data", self);
         self.stage = HandleStage::Init;
         self.reset_timeout(event_loop);
 
@@ -155,8 +154,7 @@ impl UdpProcessor {
                 self.encryptor.borrow_mut().decrypt_udp_ota(addr_type, data)
             // if ssserver enabled OTA but client not
             } else if is_ota_enabled {
-                error!("udp processor {:?} is not a OTA session", self);
-                return self.process_failed();
+                return Err(err!(NotOneTimeAuthSession));
             } else {
                 // TODO: change to use `Cow`
                 Some(data.to_vec())
@@ -171,71 +169,73 @@ impl UdpProcessor {
             }
         } else {
             if cfg!(feature = "sslocal") {
-                error!("udp processor {:?} encrypt data failed", self);
+                return Err(err!(EncryptFailed));
             } else {
-                error!("udp processor {:?} decrypt data failed", self);
+                return Err(err!(DecryptFailed));
             }
-            return self.process_failed();
         }
 
         let resolved = self.dns_resolver.borrow_mut().resolve(self.token.unwrap(), server_addr);
         match resolved {
-            (None, None) => ProcessResult::Success,
-            // if address is resolved immediately
-            (hostname_ip, errmsg) => self.handle_dns_resolved(event_loop, hostname_ip, errmsg),
+            Ok(None) => {}
+            // if hostname is resolved immediately
+            res => self.handle_dns_resolved(event_loop, res),
         }
+
+        Ok(())
     }
 
-    fn on_read(&mut self, event_loop: &mut EventLoop<Relay>) -> ProcessResult<Vec<Token>> {
-        trace!("udp processor {:?} stage: stream", self);
+    fn on_read(&mut self, event_loop: &mut EventLoop<Relay>) -> Result<Option<usize>> {
+        trace!("{:?} handle stage stream", self);
         self.stage = HandleStage::Stream;
         self.reset_timeout(event_loop);
 
         let mut buf = self.receive_buf.take().unwrap();
         new_fat_slice_from_vec!(buf_slice, buf);
 
-        match self.sock.recv_from(buf_slice) {
-            Ok(None) => { }
-            Ok(Some((nread, addr))) => {
+        let res = try!(self.sock.recv_from(buf_slice).map_err(|e| {
+            err!(ReadFailed, e)
+        }));
+        let res = match res {
+            None => Ok(None),
+            Some((nread, addr)) => {
                 unsafe { buf.set_len(nread); }
 
                 if cfg!(feature = "sslocal") {
-                    if let Some(data) = self.encryptor.borrow_mut().decrypt_udp(&buf) {
-                        if parse_header(&data).is_some() {
-                            let mut response = Vec::with_capacity(3 + data.len());
-                            response.extend_from_slice(&[0u8; 3]);
-                            response.extend_from_slice(&data);
-                            self.send_to(SERVER, &response, &self.addr);
+                    match self.encryptor.borrow_mut().decrypt_udp(&buf) {
+                        Some(data) => {
+                            if parse_header(&data).is_some() {
+                                let mut response = Vec::with_capacity(3 + data.len());
+                                response.extend_from_slice(&[0u8; 3]);
+                                response.extend_from_slice(&data);
+                                self.send_to(SERVER, &response, &self.addr)
+                            } else {
+                                Err(err!(InvalidSocks5Header))
+                            }
                         }
-                    } else {
-                        warn!("udp processor {:?} decrypt data failed", self);
+                        None => Err(err!(DecryptFailed)),
                     }
                 } else {
                     // construct a socks5 request
                     let packed_addr = pack_addr(addr.ip());
                     let mut packed_port = Vec::<u8>::new();
-                    let _ = packed_port.put_u16(addr.port());
+                    try_pack!(u16, packed_port, addr.port());
 
                     let mut data = Vec::with_capacity(packed_addr.len() + packed_port.len() + buf.len());
                     data.extend_from_slice(&packed_addr);
                     data.extend_from_slice(&packed_port);
                     data.extend_from_slice(&buf);
 
-                    if let Some(response) = self.encryptor.borrow_mut().encrypt_udp(&data) {
-                        self.send_to(SERVER, &response, &self.addr);
-                    } else {
-                        warn!("udp processor {:?} encrypt data failed", self);
+                    match self.encryptor.borrow_mut().encrypt_udp(&data) {
+                        Some(response) => self.send_to(SERVER, &response, &self.addr),
+                        None => Err(err!(EncryptFailed)),
                     }
                 }
             }
-            Err(e) => {
-                error!("udp processor {:?} receive data failed: {}", self, e);
-                return self.process_failed();
-            }
-        }
+        };
 
         self.receive_buf = Some(buf);
-        ProcessResult::Success
+        res
     }
 
     // send to up stream
@@ -243,35 +243,29 @@ impl UdpProcessor {
                    event_loop: &mut EventLoop<Relay>,
                    _token: Token,
                    events: EventSet)
-                   -> ProcessResult<Vec<Token>> {
+                   -> Result<()> {
+        debug!("current handle stage of {:?} is {:?}", self, self.stage);
+
         if events.is_error() {
-            error!("udp processor {:?} got a event error", self);
-            return self.process_failed();
+            error!("{:?} got a events error", self);
+            return Err(err!(EventError));
         }
 
-        try_process!(self.on_read(event_loop));
-        self.reregister(event_loop);
-        ProcessResult::Success
+        try!(self.on_read(event_loop));
+        self.reregister(event_loop)
     }
 
     pub fn destroy(&mut self, event_loop: &mut EventLoop<Relay>) {
-        trace!("destroy udp processor {:?}", self);
+        debug!("destroy {:?}", self);
 
-        if self.timeout.is_some() {
-            let timeout = self.timeout.take().unwrap();
+        if let Some(timeout) = self.timeout.take() {
             event_loop.clear_timeout(timeout);
         }
 
         self.dns_resolver.borrow_mut().remove_caller(self.get_id());
-
-        self.token = None;
         self.interest = EventSet::none();
         self.receive_buf = None;
         self.stage = HandleStage::Destroyed;
-    }
-
-    pub fn is_destroyed(&self) -> bool {
-        self.stage == HandleStage::Destroyed
     }
 }
 
@@ -280,38 +274,36 @@ impl Caller for UdpProcessor {
         self.token.unwrap()
     }
 
-    fn handle_dns_resolved(&mut self,
-                           _event_loop: &mut EventLoop<Relay>,
-                           hostname_ip: Option<(String, String)>,
-                           errmsg: Option<String>)
-                           -> ProcessResult<Vec<Token>> {
-        trace!("udp processor {:?} handle_dns_resolved: {:?}", self, hostname_ip);
+    fn handle_dns_resolved(&mut self, _event_loop: &mut EventLoop<Relay>, res: Result<Option<HostIpPair>>) {
+        debug!("{:?} handle dns resolved: {:?}", self, res);
+        self.stage = HandleStage::Dns;
 
-        self.stage = HandleStage::DNS;
-        if let Some(e) = errmsg {
-            error!("udp processor {:?} got a dns resolve error: {}", self, e);
-            return self.process_failed();
+        macro_rules! my_try {
+            ($r:expr) => (
+                match $r {
+                    Ok(r) => r,
+                    Err(e) => {
+                        self.stage = HandleStage::Error(e);
+                        return;
+                    }
+                }
+            )
         }
 
-        if let Some((hostname, ip)) = hostname_ip {
-            if !self.requests.contains_key(&hostname) {
-                warn!("cannot find relevant request of {}", hostname);
-                return self.process_failed();
-            }
+        if let Some((hostname, ip)) = my_try!(res) {
+            if let Some(port_requests_map) = self.requests.remove(&hostname) {
+                for (port, requests) in &port_requests_map {
+                    let address = format!("{}:{}", ip, port);
+                    let server_addr = my_try!(str2addr4(&address).ok_or(err!(ParseAddrFailed)));
 
-            let port_requests_map = self.requests.remove(&hostname).unwrap();
-            for (port, requests) in &port_requests_map {
-                let ip_port = format!("{}:{}", ip, port);
-                let server_addr = str2addr4(&ip_port).unwrap();
-
-                for request in requests {
-                    self.send_to(CLIENT, request, &server_addr);
+                    for request in requests {
+                        my_try!(self.send_to(CLIENT, request, &server_addr));
+                    }
                 }
+            } else {
+                self.stage = HandleStage::Error(err!(UnknownHost, hostname));
+                return;
             }
-
-            ProcessResult::Success
-        } else {
-            self.process_failed()
         }
     }
 }
@@ -319,7 +311,7 @@ impl Caller for UdpProcessor {
 
 impl fmt::Debug for UdpProcessor {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.get_id().as_usize())
+        write!(f, "{:?}/udp", self.addr)
     }
 }
 
@@ -327,12 +319,13 @@ const BUF_SIZE: usize = 64 * 1024;
 const CLIENT: bool = true;
 const SERVER: bool = false;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 enum HandleStage {
     // only sslocal: auth METHOD received from local, reply with selection message
     Init,
     // DNS resolved, connect to remote
-    DNS,
+    Dns,
     Stream,
     Destroyed,
+    Error(io::Error),
 }

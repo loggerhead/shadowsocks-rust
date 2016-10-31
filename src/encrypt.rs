@@ -71,7 +71,6 @@ impl Encryptor {
         header.extend_from_slice(&sha1);
 
         let data = &data[header_length..];
-        // TODO: refactor after change `pack_chunk` to return `result`
         if data.is_empty() {
             self.ota_helper = Some(ota);
             Some(header)
@@ -303,11 +302,11 @@ impl OtaHelper {
     fn pack_chunk(&mut self, data: &[u8], cipher_iv: &[u8]) -> Option<Vec<u8>> {
         let mut ota_key = Vec::with_capacity(cipher_iv.len() + 4);
         ota_key.extend_from_slice(cipher_iv);
-        try_opt!(ota_key.put_i32(self.index));
+        pack!(i32, ota_key, self.index);
 
         let sha1 = self.hmac_sha1(data, &ota_key);
         let mut chunk = Vec::with_capacity(12 + data.len());
-        try_opt!(chunk.put_u16(data.len() as u16));
+        pack!(u16, chunk, data.len() as u16);
         chunk.extend_from_slice(&sha1);
         chunk.extend_from_slice(data);
 
@@ -315,7 +314,6 @@ impl OtaHelper {
         Some(chunk)
     }
 
-    // TODO: change to return `Result`
     fn unpack_chunk(&mut self, mut data: &[u8], decipher_iv: &[u8]) -> Option<Vec<u8>> {
         let mut unpacked = Vec::with_capacity(data.len());
 
@@ -330,7 +328,7 @@ impl OtaHelper {
                     // split DATA.LEN, HMAC-SHA1 from DATA
                     let offset = 12 - self.chunk_buf.len();
                     self.chunk_buf.extend_from_slice(&data[..offset]);
-                    self.chunk_len = try_opt!((&self.chunk_buf[..2]).get_u16());
+                    self.chunk_len = unpack!(u16, &self.chunk_buf[..2]);
                     unsafe { self.chunk_sha1.set_len(0); }
                     self.chunk_sha1.extend_from_slice(&self.chunk_buf[2..]);
                     unsafe { self.chunk_buf.set_len(0); }
@@ -350,7 +348,7 @@ impl OtaHelper {
 
                 let mut key = Vec::with_capacity(decipher_iv.len() + 4);
                 key.extend_from_slice(decipher_iv);
-                try_opt!(key.put_i32(self.index));
+                pack!(i32, key, self.index);
                 self.index += 1;
 
                 if self.verify_sha1(&self.chunk_buf, &key, &self.chunk_sha1) {

@@ -18,7 +18,8 @@
 // +-------+--------------+
 // | Fixed |   Variable   |
 // +-------+--------------+
-use std::process::exit;
+use std::io;
+use std::io::Result;
 use std::net::SocketAddr;
 
 use mio::udp::UdpSocket;
@@ -31,7 +32,14 @@ use network::str2addr4;
 use encrypt::Encryptor;
 use asyncdns::DNSResolver;
 use collections::{Holder, Dict};
-use super::{choose_a_server, Relay, MyHandler, UdpProcessor, ProcessResult};
+use super::{choose_a_server, Relay, MyHandler, UdpProcessor, RELAY_TOKEN, DNS_RESOLVER_TOKEN};
+
+macro_rules! err {
+    (InvalidSocks5Header) => ( io_err!("invalid socks5 header") );
+    (Socks5Header) => ( io_err!("invalid socks5 header") );
+
+    ($($arg:tt)*) => ( processor_err!($($arg)*) );
+}
 
 pub struct UdpRelay {
     conf: Config,
@@ -45,24 +53,16 @@ pub struct UdpRelay {
 }
 
 impl UdpRelay {
-    pub fn new(conf: Config) -> UdpRelay {
+    pub fn new(conf: Config) -> Result<UdpRelay> {
         let address = format!("{}:{}",
                               conf["listen_address"].as_str().unwrap(),
                               conf["listen_port"].as_integer().unwrap());
-        let dns_resolver = new_rc_cell(DNSResolver::new(None, false));
-        let client_addr = str2addr4(&address).unwrap_or_else(|| {
-            error!("invalid socket address: {}", address);
-            exit(1);
-        });
-
-        let listener = UdpSocket::v4().and_then(|sock| {
-            try!(sock.bind(&client_addr));
+        let dns_resolver = new_rc_cell(try!(DNSResolver::new(None, false)));
+        let socket_addr = try!(str2addr4(&address).ok_or(err!(ParseAddrFailed)));
+        let listener = try!(UdpSocket::v4().and_then(|sock| {
+            try!(sock.bind(&socket_addr));
             Ok(sock)
-        }).unwrap_or_else(|e| {
-            error!("udp relay cannot bind address {} because {}", address, e);
-            exit(1);
-        });
-        let encryptor = new_rc_cell(Encryptor::new(conf["password"].as_str().unwrap()));
+        }).or(Err(err!(BindAddrFailed, address))));;
 
         if cfg!(feature = "sslocal") {
             info!("ssclient udp relay listen on {}", address);
@@ -70,7 +70,9 @@ impl UdpRelay {
             info!("ssserver udp relay listen on {}", address);
         }
 
-        UdpRelay {
+        let encryptor = new_rc_cell(Encryptor::new(conf["password"].as_str().unwrap()));
+
+        Ok(UdpRelay {
             conf: conf,
             interest: EventSet::readable(),
             receive_buf: Some(Vec::with_capacity(BUF_SIZE)),
@@ -79,26 +81,22 @@ impl UdpRelay {
             cache: Dict::default(),
             processors: Holder::new_exclude_from(vec![RELAY_TOKEN, DNS_RESOLVER_TOKEN]),
             encryptor: encryptor,
-        }
+        })
     }
 
-    pub fn run(self) {
-        let mut event_loop = EventLoop::new().unwrap();
-
-        if let Err(e) = event_loop.register(&*self.listener.borrow(),
-                                            RELAY_TOKEN,
-                                            self.interest,
-                                            PollOpt::edge() | PollOpt::oneshot()) {
-            error!("failed to register udp relay: {}", e);
-            exit(1);
-        }
-        if !self.dns_resolver.borrow_mut().register(&mut event_loop, DNS_RESOLVER_TOKEN) {
-            error!("failed to register dns resolver");
-            exit(1);
-        }
+    pub fn run(self) -> Result<()> {
+        let mut event_loop = try!(EventLoop::new());
+        try!(event_loop.register(&*self.listener.borrow(),
+                                 RELAY_TOKEN,
+                                 self.interest,
+                                 PollOpt::edge() | PollOpt::oneshot())
+                       .or(Err(err!(RegisterFailed))));
+        try!(self.dns_resolver.borrow_mut().register(&mut event_loop, DNS_RESOLVER_TOKEN)
+             .or(Err(err!(RegisterFailed))));
 
         let this = new_rc_cell(self);
-        event_loop.run(&mut Relay::Udp(this)).unwrap();
+        try!(event_loop.run(&mut Relay::Udp(this)));
+        Ok(())
     }
 
     fn add_processor(&mut self, processor: RcCell<UdpProcessor>) -> Option<Token> {
@@ -112,157 +110,148 @@ impl UdpRelay {
     }
 
     fn destroy_processor(&mut self, event_loop: &mut EventLoop<Relay>, token: Token) {
-        if !self.processors[token].borrow().is_destroyed() {
-            self.processors[token].borrow_mut().destroy(event_loop);
-        }
+        self.processors[token].borrow_mut().destroy(event_loop);
         self.remove_processor(token);
-    }
-
-    fn process(&mut self,
-               event_loop: &mut EventLoop<Relay>,
-               _token: Token,
-               events: EventSet)
-               -> ProcessResult<Vec<Token>> {
-        if let Err(e) = event_loop.reregister(&*self.listener.borrow(),
-                                              RELAY_TOKEN,
-                                              self.interest,
-                                              PollOpt::edge() | PollOpt::oneshot()) {
-            error!("failed to reregister udp relay: {}", e);
-            // TODO: find a more gentle way to handle this
-            exit(1);
-        }
-
-        if events.is_error() {
-            error!("events error on udp relay");
-        } else {
-            let mut buf = self.receive_buf.take().unwrap();
-            new_fat_slice_from_vec!(buf_slice, buf);
-
-            let result = self.listener.borrow().recv_from(buf_slice);
-            match result {
-                Ok(None) => { }
-                Ok(Some((nwrite, addr))) => {
-                    debug!("received udp request from {}", addr);
-                    if nwrite < 3 {
-                        warn!("handshake header of udp request is too short");
-                    } else {
-                        unsafe { buf.set_len(nwrite); }
-                        if cfg!(feature = "sslocal") {
-                            if buf[2] == 0 {
-                                // skip REV and FRAG fields
-                                self.handle_request(event_loop, addr, &buf[3..]);
-                            } else {
-                                warn!("drop the udp request since FRAG is not 0");
-                            }
-                        } else {
-                            let decrypted = self.encryptor.borrow_mut().decrypt_udp(&buf);
-                            if let Some(data) = decrypted {
-                                self.handle_request(event_loop, addr, &data);
-                            } else {
-                                warn!("decrypt udp data failed");
-                            }
-                        }
-                    }
-                }
-                Err(e) => error!("udp relay receive data failed: {}", e),
-            }
-
-            self.receive_buf = Some(buf);
-        }
-
-        ProcessResult::Success
-    }
-
-    pub fn destroy(&mut self, _event_loop: &mut EventLoop<Relay>) {
-        unimplemented!();
-    }
-
-    pub fn is_destroyed(&self) -> bool {
-        unimplemented!();
     }
 
     // handle data from client or sslocal
     fn handle_request(&mut self,
                       event_loop: &mut EventLoop<Relay>,
                       client_addr: SocketAddr,
-                      data: &[u8]) -> ProcessResult<Vec<Token>> {
+                      data: &[u8])
+                      -> Result<()> {
         // parse socks5 header
-        if let Some((addr_type, mut server_addr, mut server_port, header_length)) = parse_header(data) {
-            if cfg!(feature = "sslocal") {
-                let (addr, port) = choose_a_server(&self.conf).unwrap();
-                server_addr = addr;
-                server_port = port;
-            }
-            debug!("the destination of udp request is {}:{}", server_addr, server_port);
-
-            if !self.cache.contains_key(&client_addr) {
-                let p = new_rc_cell(UdpProcessor::new(self.conf.clone(),
-                                                      client_addr,
-                                                      self.listener.clone(),
-                                                      self.dns_resolver.clone(),
-                                                      self.encryptor.clone()));
-                if let Some(token) = self.add_processor(p.clone()) {
-                    debug!("create udp processor for {:?}", client_addr);
-                    self.cache.insert(client_addr, p.clone());
-                    p.borrow_mut().set_token(token);
-                    self.dns_resolver.borrow_mut().add_caller(p.clone());
-                    if !p.borrow_mut().register(event_loop) {
-                        return ProcessResult::Failed(vec![token]);
-                    }
-                } else {
-                    error!("cannot alloc token for udp processor");
-                    return ProcessResult::Success;
+        match parse_header(data) {
+            Some((addr_type, mut server_addr, mut server_port, header_length)) => {
+                if cfg!(feature = "sslocal") {
+                    let (addr, port) = choose_a_server(&self.conf).unwrap();
+                    server_addr = addr;
+                    server_port = port;
                 }
-            }
+                info!("sending udp request to {}:{}", server_addr, server_port);
 
-            if data.len() > 0 {
-                let p = &self.cache[&client_addr];
-                p.borrow_mut().handle_data(event_loop, data, addr_type, server_addr, server_port, header_length);
+                if !self.cache.contains_key(&client_addr) {
+                    let p = new_rc_cell(try!(UdpProcessor::new(self.conf.clone(),
+                                                               client_addr,
+                                                               self.listener.clone(),
+                                                               self.dns_resolver.clone(),
+                                                               self.encryptor.clone())));
+                    if let Some(token) = self.add_processor(p.clone()) {
+                        debug!("create udp processor for {:?}", client_addr);
+                        self.cache.insert(client_addr, p.clone());
+                        p.borrow_mut().set_token(token);
+                        self.dns_resolver.borrow_mut().add_caller(p.clone());
+                        try!(p.borrow_mut().register(event_loop).map_err(|e| {
+                            self.destroy_processor(event_loop, token);
+                            e
+                        }));
+                    } else {
+                        return Err(err!(AllocTokenFailed));
+                    }
+                }
+
+                if data.len() > 0 {
+                    let p = &self.cache[&client_addr];
+                    try!(p.borrow_mut().handle_data(event_loop, data, addr_type,
+                                                    server_addr, server_port, header_length));
+                }
+                Ok(())
             }
-        } else {
-            warn!("invalid socks5 header");
+            None => {
+                Err(err!(InvalidSocks5Header))
+            }
+        }
+    }
+
+    fn process(&mut self,
+               event_loop: &mut EventLoop<Relay>,
+               _token: Token,
+               events: EventSet)
+               -> Result<()> {
+        try!(event_loop.reregister(&*self.listener.borrow(),
+                                   RELAY_TOKEN,
+                                   self.interest,
+                                   PollOpt::edge() | PollOpt::oneshot()));
+        if events.is_error() {
+            error!("events error on udp relay");
+            return Err(err!(EventError));
         }
 
-        ProcessResult::Success
+        let mut buf = self.receive_buf.take().unwrap();
+        new_fat_slice_from_vec!(buf_slice, buf);
+
+        let mut res = Ok(());
+        let result = self.listener.borrow().recv_from(buf_slice);
+        match result {
+            Ok(None) => { }
+            Ok(Some((nwrite, addr))) => {
+                debug!("received udp request from {}", addr);
+                if nwrite < 3 {
+                    warn!("handshake header of udp request is too short");
+                } else {
+                    unsafe { buf.set_len(nwrite); }
+                    if cfg!(feature = "sslocal") {
+                        if buf[2] == 0 {
+                            // skip REV and FRAG fields
+                            res = self.handle_request(event_loop, addr, &buf[3..]);
+                        } else {
+                            warn!("drop the udp request since FRAG is not 0");
+                        }
+                    } else {
+                        let decrypted = self.encryptor.borrow_mut().decrypt_udp(&buf);
+                        match decrypted {
+                            Some(data) => {
+                                res = self.handle_request(event_loop, addr, &data);
+                            }
+                            None => {
+                                res = Err(err!(DecryptFailed));
+                            }
+                        }
+                    }
+                }
+            }
+            Err(e) => error!("udp relay receive data failed: {}", e),
+        }
+
+        self.receive_buf = Some(buf);
+        res
     }
 
 }
 
 impl MyHandler for UdpRelay {
     fn ready(&mut self, event_loop: &mut EventLoop<Relay>, token: Token, events: EventSet) {
-        let result = match token {
-            RELAY_TOKEN => self.process(event_loop, token, events),
+        match token {
+            RELAY_TOKEN => {
+                self.process(event_loop, token, events).map_err(|e| {
+                    error!("udp relay: {}", e);
+                }).unwrap();
+            }
             DNS_RESOLVER_TOKEN => {
-                self.dns_resolver.borrow_mut().process(event_loop, token, events);
-                ProcessResult::Success
+                self.dns_resolver.borrow_mut().process(event_loop, token, events).map_err(|e| {
+                    error!("dns resolver: {}", e);
+                }).unwrap();
             }
             token => {
-                if let Some(processor) = self.processors.get(token) {
-                    processor.borrow_mut().process(event_loop, token, events)
-                } else {
-                    debug!("got events {:?} for destroyed udp processor {:?}", events, token);
-                    return;
-                }
-            }
-        };
-
-        if let ProcessResult::Failed(tokens) = result {
-            for token in tokens {
-                match token {
-                    RELAY_TOKEN => self.destroy(event_loop),
-                    DNS_RESOLVER_TOKEN => self.dns_resolver.borrow_mut().destroy(event_loop),
-                    _ => self.destroy_processor(event_loop, token),
+                let res = self.processors.get(token).map(|p| {
+                    p.borrow_mut().process(event_loop, token, events)
+                });
+                if let Some(Err(e)) = res {
+                    if e.kind() != io::ErrorKind::ConnectionReset {
+                        error!("{:?}: {}", &self.processors[token].borrow() as &UdpProcessor, e);
+                    }
+                    self.destroy_processor(event_loop, token);
                 }
             }
         }
     }
 
     fn timeout(&mut self, event_loop: &mut EventLoop<Relay>, token: Token) {
-        warn!("udp processor {:?} timed out", token);
+        self.processors.get(token).map(|p| {
+            debug!("{:?} timed out", p);
+        });
         self.destroy_processor(event_loop, token);
     }
 }
 
 const BUF_SIZE: usize = 64 * 1024;
-const RELAY_TOKEN: Token = Token(0);
-const DNS_RESOLVER_TOKEN: Token = Token(1);
