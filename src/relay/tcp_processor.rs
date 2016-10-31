@@ -406,11 +406,14 @@ impl TcpProcessor {
         // parse socks5 header
         match parse_header(data) {
             Some((addr_type, remote_address, remote_port, header_length)) => {
-                let is_ota_session = if cfg!(feature = "sslocal") {
-                    self.conf.get_bool("enable_one_time_auth") == Some(true)
-                } else {
-                    addr_type & addr_type::AUTH == addr_type::AUTH
-                };
+                let is_ota_session = self.conf.get_bool("enable_one_time_auth").unwrap_or(false);
+
+                // if ssserver enabled OTA but client not
+                if !cfg!(feature = "sslocal") && is_ota_session
+                        && (addr_type & addr_type::AUTH != addr_type::AUTH) {
+                    error!("tcp processor {:?} is not a OTA session", self);
+                    return self.process_failed();
+                }
 
                 // handle OTA request
                 let mut data = Cow::Borrowed(data);
@@ -441,7 +444,7 @@ impl TcpProcessor {
                             self.extend_buf(data, REMOTE);
                         }
                         _ => {
-                            error!("{:?} encrypt data failed", self);
+                            error!("tcp processor {:?} encrypt data failed", self);
                             return self.process_failed();
                         }
                     }

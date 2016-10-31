@@ -351,6 +351,7 @@ impl OtaHelper {
                 let mut key = Vec::with_capacity(decipher_iv.len() + 4);
                 key.extend_from_slice(decipher_iv);
                 try_opt!(key.put_i32(self.index));
+                self.index += 1;
 
                 if self.verify_sha1(&self.chunk_buf, &key, &self.chunk_sha1) {
                     unpacked.extend_from_slice(&self.chunk_buf);
