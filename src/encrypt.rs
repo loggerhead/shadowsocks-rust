@@ -162,10 +162,10 @@ impl Encryptor {
             if data.len() < 16 {
                 None
             } else {
-                let offset = self.decipher_iv.len();
-                self.decipher_iv[..].copy_from_slice(&data[..offset]);
+                let iv_len = self.decipher_iv.len();
+                self.decipher_iv[..].copy_from_slice(&data[..iv_len]);
                 self.decipher = Some(create_cipher(&self.key, &self.decipher_iv));
-                self.raw_decrypt(&data[offset..])
+                self.raw_decrypt(&data[iv_len..])
             }
         } else {
             let mut decrypted = try_opt!(self.raw_decrypt(data));
@@ -269,7 +269,7 @@ impl Encryptor {
 }
 
 struct OtaHelper {
-    index: i64,
+    index: i32,
     chunk_sha1: Vec<u8>,
     chunk_len: u16,
     chunk_buf: Vec<u8>,
@@ -301,11 +301,16 @@ impl OtaHelper {
     }
 
     fn pack_chunk(&mut self, data: &[u8], cipher_iv: &[u8]) -> Option<Vec<u8>> {
-        let sha1 = self.hmac_sha1(data, cipher_iv);
+        let mut ota_key = Vec::with_capacity(cipher_iv.len() + 4);
+        ota_key.extend_from_slice(cipher_iv);
+        try_opt!(ota_key.put_i32(self.index));
+
+        let sha1 = self.hmac_sha1(data, &ota_key);
         let mut chunk = Vec::with_capacity(12 + data.len());
         try_opt!(chunk.put_u16(data.len() as u16));
         chunk.extend_from_slice(&sha1);
         chunk.extend_from_slice(data);
+
         self.index += 1;
         Some(chunk)
     }
@@ -343,9 +348,9 @@ impl OtaHelper {
                 self.chunk_buf.extend_from_slice(&data[..offset]);
                 data = &data[offset..];
 
-                let mut key = Vec::with_capacity(decipher_iv.len() + 2);
+                let mut key = Vec::with_capacity(decipher_iv.len() + 4);
                 key.extend_from_slice(decipher_iv);
-                try_opt!(key.put_i64(self.index));
+                try_opt!(key.put_i32(self.index));
 
                 if self.verify_sha1(&self.chunk_buf, &key, &self.chunk_sha1) {
                     unpacked.extend_from_slice(&self.chunk_buf);

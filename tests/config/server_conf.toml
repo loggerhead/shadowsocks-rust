@@ -1,6 +1,6 @@
 listen_address = "127.0.0.1"
 listen_port = 8111
-password = "fuckGFW4times!"
+password = "foo"
 timeout = 300
 encrypt_method = "aes-256-ctr"
 enable_one_time_auth = true

@@ -91,8 +91,8 @@ pub trait NetworkWriteBytes: WriteBytesExt {
         self.write_u16::<NetworkEndian>(num).ok()
     }
 
-    fn put_i64(&mut self, num: i64) -> Option<()> {
-        self.write_i64::<NetworkEndian>(num).ok()
+    fn put_i32(&mut self, num: i32) -> Option<()> {
+        self.write_i32::<NetworkEndian>(num).ok()
     }
 }
 
