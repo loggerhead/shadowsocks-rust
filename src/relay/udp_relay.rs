@@ -18,14 +18,13 @@
 // +-------+--------------+
 // | Fixed |   Variable   |
 // +-------+--------------+
-use std::rc::Rc;
-use std::cell::RefCell;
 use std::process::exit;
 use std::net::SocketAddr;
 
 use mio::udp::UdpSocket;
 use mio::{Token, EventSet, EventLoop, PollOpt};
 
+use util::{RcCell, new_rc_cell};
 use config::Config;
 use socks5::parse_header;
 use network::str2addr4;
@@ -34,17 +33,15 @@ use asyncdns::DNSResolver;
 use collections::{Holder, Dict};
 use super::{choose_a_server, Relay, MyHandler, UdpProcessor, ProcessResult};
 
-type RcCellUdpProcessor = Rc<RefCell<UdpProcessor>>;
-
 pub struct UdpRelay {
     conf: Config,
     interest: EventSet,
-    listener: Rc<RefCell<UdpSocket>>,
+    listener: RcCell<UdpSocket>,
     receive_buf: Option<Vec<u8>>,
-    dns_resolver: Rc<RefCell<DNSResolver>>,
-    cache: Dict<SocketAddr, RcCellUdpProcessor>,
-    processors: Holder<RcCellUdpProcessor>,
-    encryptor: Rc<RefCell<Encryptor>>,
+    dns_resolver: RcCell<DNSResolver>,
+    cache: Dict<SocketAddr, RcCell<UdpProcessor>>,
+    processors: Holder<RcCell<UdpProcessor>>,
+    encryptor: RcCell<Encryptor>,
 }
 
 impl UdpRelay {
@@ -52,7 +49,7 @@ impl UdpRelay {
         let address = format!("{}:{}",
                               conf["listen_address"].as_str().unwrap(),
                               conf["listen_port"].as_integer().unwrap());
-        let dns_resolver = Rc::new(RefCell::new(DNSResolver::new(None, false)));
+        let dns_resolver = new_rc_cell(DNSResolver::new(None, false));
         let client_addr = str2addr4(&address).unwrap_or_else(|| {
             error!("invalid socket address: {}", address);
             exit(1);
@@ -65,7 +62,7 @@ impl UdpRelay {
             error!("udp relay cannot bind address {} because {}", address, e);
             exit(1);
         });
-        let encryptor = Rc::new(RefCell::new(Encryptor::new(conf["password"].as_str().unwrap())));
+        let encryptor = new_rc_cell(Encryptor::new(conf["password"].as_str().unwrap()));
 
         if cfg!(feature = "sslocal") {
             info!("ssclient udp relay listen on {}", address);
@@ -77,7 +74,7 @@ impl UdpRelay {
             conf: conf,
             interest: EventSet::readable(),
             receive_buf: Some(Vec::with_capacity(BUF_SIZE)),
-            listener: Rc::new(RefCell::new(listener)),
+            listener: new_rc_cell(listener),
             dns_resolver: dns_resolver,
             cache: Dict::default(),
             processors: Holder::new_exclude_from(vec![RELAY_TOKEN, DNS_RESOLVER_TOKEN]),
@@ -100,15 +97,15 @@ impl UdpRelay {
             exit(1);
         }
 
-        let this = Rc::new(RefCell::new(self));
+        let this = new_rc_cell(self);
         event_loop.run(&mut Relay::Udp(this)).unwrap();
     }
 
-    fn add_processor(&mut self, processor: RcCellUdpProcessor) -> Option<Token> {
+    fn add_processor(&mut self, processor: RcCell<UdpProcessor>) -> Option<Token> {
         self.processors.insert(processor)
     }
 
-    fn remove_processor(&mut self, token: Token) -> Option<RcCellUdpProcessor> {
+    fn remove_processor(&mut self, token: Token) -> Option<RcCell<UdpProcessor>> {
         let p = try_opt!(self.processors.remove(token));
         let res = self.cache.remove(p.borrow().addr());
         res
@@ -199,11 +196,11 @@ impl UdpRelay {
             debug!("the destination of udp request is {}:{}", server_addr, server_port);
 
             if !self.cache.contains_key(&client_addr) {
-                let p = Rc::new(RefCell::new(UdpProcessor::new(self.conf.clone(),
-                                                               client_addr,
-                                                               self.listener.clone(),
-                                                               self.dns_resolver.clone(),
-                                                               self.encryptor.clone())));
+                let p = new_rc_cell(UdpProcessor::new(self.conf.clone(),
+                                                      client_addr,
+                                                      self.listener.clone(),
+                                                      self.dns_resolver.clone(),
+                                                      self.encryptor.clone()));
                 if let Some(token) = self.add_processor(p.clone()) {
                     debug!("create udp processor for {:?}", client_addr);
                     self.cache.insert(client_addr, p.clone());

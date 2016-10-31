@@ -1,10 +1,9 @@
-use std::rc::Rc;
-use std::cell::RefCell;
 use std::str::FromStr;
 
 use rand::{thread_rng, Rng};
 use mio::{Handler, Token, EventSet, EventLoop};
 
+use util::RcCell;
 use config::Config;
 
 pub use self::tcp_relay::TcpRelay;
@@ -30,8 +29,8 @@ mod udp_processor;
 // TODO: cleanup below codes
 #[derive(Clone)]
 pub enum Relay {
-    Tcp(Rc<RefCell<TcpRelay>>),
-    Udp(Rc<RefCell<UdpRelay>>),
+    Tcp(RcCell<TcpRelay>),
+    Udp(RcCell<UdpRelay>),
 }
 
 impl Handler for Relay {

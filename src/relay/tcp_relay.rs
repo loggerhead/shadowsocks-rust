@@ -1,5 +1,3 @@
-use std::rc::Rc;
-use std::cell::RefCell;
 use std::process::exit;
 
 use mio::tcp::TcpListener;
@@ -9,15 +7,14 @@ use config::Config;
 use network::str2addr4;
 use collections::Holder;
 use asyncdns::DNSResolver;
+use util::{RcCell, new_rc_cell};
 use super::{TcpProcessor, MyHandler, Relay, ProcessResult};
-
-type RcCellTcpProcessor = Rc<RefCell<TcpProcessor>>;
 
 pub struct TcpRelay {
     conf: Config,
     listener: TcpListener,
-    dns_resolver: Rc<RefCell<DNSResolver>>,
-    processors: Holder<RcCellTcpProcessor>,
+    dns_resolver: RcCell<DNSResolver>,
+    processors: Holder<RcCell<TcpProcessor>>,
 }
 
 impl TcpRelay {
@@ -26,7 +23,7 @@ impl TcpRelay {
                               conf["listen_address"].as_str().unwrap(),
                               conf["listen_port"].as_integer().unwrap());
         // TODO: parse prefer_ipv6 from command line
-        let dns_resolver = Rc::new(RefCell::new(DNSResolver::new(None, false)));
+        let dns_resolver = new_rc_cell(DNSResolver::new(None, false));
         // TODO: need resolve DNS here
         let socket_addr = str2addr4(&address).unwrap_or_else(|| {
             error!("invalid socket address: {}", address);
@@ -66,15 +63,15 @@ impl TcpRelay {
             exit(1);
         }
 
-        let this = Rc::new(RefCell::new(self));
+        let this = new_rc_cell(self);
         event_loop.run(&mut Relay::Tcp(this)).unwrap();
     }
 
-    fn add_processor(&mut self, processor: RcCellTcpProcessor) -> Option<Token> {
+    fn add_processor(&mut self, processor: RcCell<TcpProcessor>) -> Option<Token> {
         self.processors.insert(processor)
     }
 
-    fn remove_processor(&mut self, token: Token) -> Option<RcCellTcpProcessor> {
+    fn remove_processor(&mut self, token: Token) -> Option<RcCell<TcpProcessor>> {
         self.processors.remove(token)
     }
 
@@ -107,7 +104,7 @@ impl TcpRelay {
                 Ok(Some((conn, _addr))) => {
                     info!("create tcp processor for {}", _addr);
                     let p = TcpProcessor::new(self.conf.clone(), conn, self.dns_resolver.clone());
-                    let p = Rc::new(RefCell::new(p));
+                    let p = new_rc_cell(p);
                     let tokens = (self.add_processor(p.clone()), self.add_processor(p.clone()));
 
                     // register local socket to event loop

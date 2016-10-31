@@ -2,6 +2,8 @@ use std::str;
 use std::fs::File;
 use std::io::BufReader;
 use std::io::prelude::*;
+use std::rc::Rc;
+use std::cell::RefCell;
 
 macro_rules! new_fat_slice_from_vec {
     ($name:ident, $v:expr) => (
@@ -43,4 +45,10 @@ pub fn shift_vec<T: Clone>(v: &mut Vec<T>, offset: usize) {
         v[i] = v[i + offset].clone();
     }
     unsafe { v.set_len(remain); }
+}
+
+pub type RcCell<T> = Rc<RefCell<T>>;
+
+pub fn new_rc_cell<T>(val: T) -> RcCell<T> {
+    Rc::new(RefCell::new(val))
 }

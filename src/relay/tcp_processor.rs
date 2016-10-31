@@ -1,7 +1,5 @@
 use std::fmt;
-use std::rc::Rc;
 use std::ops::BitAnd;
-use std::cell::RefCell;
 use std::borrow::{Cow, Borrow};
 use std::io::{Read, Write, Result, Error, ErrorKind};
 
@@ -10,18 +8,18 @@ use mio::{EventLoop, Token, Timeout, EventSet, PollOpt};
 
 use socks5;
 use socks5::addr_type;
-use util::shift_vec;
+use util::{RcCell, shift_vec};
 use config::Config;
 use encrypt::Encryptor;
-use network::{pair2socket_addr, NetworkWriteBytes};
 use asyncdns::{Caller, DNSResolver};
+use network::{pair2socket_addr, NetworkWriteBytes};
 use socks5::{pack_addr, parse_header, check_auth_method, CheckAuthResult};
 use super::{choose_a_server, Relay, ProcessResult};
 
 pub struct TcpProcessor {
     conf: Config,
     stage: HandleStage,
-    dns_resolver: Rc<RefCell<DNSResolver>>,
+    dns_resolver: RcCell<DNSResolver>,
     timeout: Option<Timeout>,
     local_token: Option<Token>,
     local_sock: Option<TcpStream>,
@@ -39,7 +37,7 @@ pub struct TcpProcessor {
 }
 
 impl TcpProcessor {
-    pub fn new(conf: Config, local_sock: TcpStream, dns_resolver: Rc<RefCell<DNSResolver>>) -> TcpProcessor {
+    pub fn new(conf: Config, local_sock: TcpStream, dns_resolver: RcCell<DNSResolver>) -> TcpProcessor {
         let encryptor = Encryptor::new(conf["password"].as_str().unwrap());
         let stage = if cfg!(feature = "sslocal") {
             HandleStage::Init

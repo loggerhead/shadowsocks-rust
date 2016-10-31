@@ -1,7 +1,5 @@
 use std::fmt;
-use std::rc::Rc;
 use std::io::Cursor;
-use std::cell::RefCell;
 use std::time::Duration;
 use std::{thread, time};
 
@@ -15,7 +13,7 @@ use collections::{Set, Dict};
 use relay::{Relay, ProcessResult};
 use network::{NetworkWriteBytes, NetworkReadBytes};
 use network::{is_ip, slice2ip4, slice2ip6, str2addr4, alloc_udp_socket};
-use util::{handle_every_line, slice2string, slice2str};
+use util::{RcCell, handle_every_line, slice2string, slice2str};
 
 // All communications inside of the domain protocol are carried in a single
 // format called a message.  The top level format of message is divided
@@ -113,7 +111,7 @@ pub struct DNSResolver {
     token: Option<Token>,
     hosts: Dict<String, String>,
     cache: LruCache<String, String>,
-    callers: Dict<Token, Rc<RefCell<Caller>>>,
+    callers: Dict<Token, RcCell<Caller>>,
     hostname_status: Dict<String, HostnameStatus>,
     token_to_hostname: Dict<Token, String>,
     hostname_to_tokens: Dict<String, Set<Token>>,
@@ -153,7 +151,7 @@ impl DNSResolver {
         }
     }
 
-    pub fn add_caller(&mut self, caller: Rc<RefCell<Caller>>) {
+    pub fn add_caller(&mut self, caller: RcCell<Caller>) {
         let token = caller.borrow().get_id();
         self.callers.insert(token, caller);
     }

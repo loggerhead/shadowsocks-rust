@@ -1,15 +1,14 @@
 use std::fmt;
-use std::rc::Rc;
-use std::cell::RefCell;
 use std::net::SocketAddr;
 
 use mio::udp::UdpSocket;
 use mio::{EventSet, Token, Timeout, EventLoop, PollOpt};
 
-use collections::Dict;
-use socks5::{parse_header, pack_addr, addr_type};
-use encrypt::Encryptor;
+use util::RcCell;
 use config::Config;
+use collections::Dict;
+use encrypt::Encryptor;
+use socks5::{parse_header, pack_addr, addr_type};
 use network::{str2addr4, NetworkWriteBytes};
 use asyncdns::{DNSResolver, Caller};
 use super::{Relay, ProcessResult};
@@ -25,19 +24,19 @@ pub struct UdpProcessor {
     timeout: Option<Timeout>,
     addr: SocketAddr,
     sock: UdpSocket,
-    relay_sock: Rc<RefCell<UdpSocket>>,
+    relay_sock: RcCell<UdpSocket>,
     receive_buf: Option<Vec<u8>>,
     requests: Dict<String, PortRequestMap>,
-    dns_resolver: Rc<RefCell<DNSResolver>>,
-    encryptor: Rc<RefCell<Encryptor>>,
+    dns_resolver: RcCell<DNSResolver>,
+    encryptor: RcCell<Encryptor>,
 }
 
 impl UdpProcessor {
     pub fn new(conf: Config,
                addr: SocketAddr,
-               relay_sock: Rc<RefCell<UdpSocket>>,
-               dns_resolver: Rc<RefCell<DNSResolver>>,
-               encryptor: Rc<RefCell<Encryptor>>) -> UdpProcessor {
+               relay_sock: RcCell<UdpSocket>,
+               dns_resolver: RcCell<DNSResolver>,
+               encryptor: RcCell<Encryptor>) -> UdpProcessor {
         let sock = UdpSocket::v4().unwrap();
 
         UdpProcessor {
