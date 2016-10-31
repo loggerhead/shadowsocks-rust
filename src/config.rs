@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use clap::{Arg, App, ArgMatches};
 use toml::{Parser, Value, Table, Array};
 
+#[derive(Debug)]
 pub struct Config {
     values: Arc<Table>,
 }
@@ -127,11 +128,6 @@ pub fn gen_config() -> Result<Config, ConfigError> {
             .short("q")
             .multiple(true)
             .help("quiet mode, only show warnings/errors"))
-        .arg(Arg::with_name("daemon")
-            .short("d")
-            .help("daemon mode")
-            .takes_value(true)
-            .possible_values(&["start", "stop", "restart"]))
         .arg(Arg::with_name("pid_file")
             .long("pid-file")
             .value_name("pid_file")
@@ -151,7 +147,20 @@ pub fn gen_config() -> Result<Config, ConfigError> {
             .short("p")
             .value_name("port")
             .help("local port")
-            .default_value(DEFAULT_VALUE["listen_port"]));
+            .default_value(DEFAULT_VALUE["listen_port"]))
+        .arg(Arg::with_name("one_time_auth")
+            .short("a")
+            .long("one-time-auth")
+            .help("enable one time auth"));
+
+    if cfg!(target_family = "unix") {
+        args = args.arg(Arg::with_name("daemon")
+            .short("d")
+            .help("daemon mode")
+            .takes_value(true)
+            .possible_values(&["start", "stop", "restart"]));
+    }
+
     if cfg!(feature = "sslocal") {
         args = args.arg(Arg::with_name("server")
             .short("s")
@@ -242,8 +251,11 @@ fn check_config(matches: ArgMatches, mut config: Table) -> Result<Config, Config
         );
         ($key:expr, bool) => (
             let k = $key.to_string();
-            let v = matches.is_present(&k);
-            config.entry(k).or_insert(Value::Boolean(v));
+            if matches.is_present(&k) {
+                config.insert(k, Value::Boolean(true));
+            } else {
+                config.entry(k).or_insert(Value::Boolean(false));
+            }
         );
         ($key:expr, $parse_val:ident) => (
             let k = $key.to_string();
@@ -289,6 +301,7 @@ fn check_config(matches: ArgMatches, mut config: Table) -> Result<Config, Config
     try_set_config!("encryption_method", check);
 
     try_set_config!("fast_open", bool);
+    try_set_config!("one_time_auth", bool);
 
     try_set_config!("daemon");
     try_set_config!("pid_file");
