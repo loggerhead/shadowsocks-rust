@@ -406,11 +406,14 @@ impl TcpProcessor {
         // parse socks5 header
         match parse_header(data) {
             Some((addr_type, remote_address, remote_port, header_length)) => {
-                let is_ota_session = self.conf.get_bool("enable_one_time_auth").unwrap_or(false);
-
+                let is_enabled_ota = self.conf.get_bool("one_time_auth").unwrap_or(false);
+                let is_ota_session = if cfg!(feature = "sslocal") {
+                    is_enabled_ota
+                } else {
+                    addr_type & addr_type::AUTH == addr_type::AUTH
+                };
                 // if ssserver enabled OTA but client not
-                if !cfg!(feature = "sslocal") && is_ota_session
-                        && (addr_type & addr_type::AUTH != addr_type::AUTH) {
+                if !cfg!(feature = "sslocal") && is_enabled_ota && !is_ota_session {
                     error!("tcp processor {:?} is not a OTA session", self);
                     return self.process_failed();
                 }

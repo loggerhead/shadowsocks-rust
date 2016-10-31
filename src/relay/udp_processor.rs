@@ -142,9 +142,10 @@ impl UdpProcessor {
         self.stage = HandleStage::Init;
         self.reset_timeout(event_loop);
 
+        let is_ota_session = self.conf.get_bool("one_time_auth").unwrap_or(false);
         let request = if cfg!(feature = "sslocal") {
             // if is a OTA session
-            if self.conf.get_bool("enable_one_time_auth") == Some(true) {
+            if is_ota_session {
                 self.encryptor.borrow_mut().encrypt_udp_ota(addr_type | addr_type::AUTH, data)
             } else {
                 self.encryptor.borrow_mut().encrypt_udp(data)
@@ -153,6 +154,10 @@ impl UdpProcessor {
             // if is a OTA session
             if addr_type & addr_type::AUTH == addr_type::AUTH {
                 self.encryptor.borrow_mut().decrypt_udp_ota(addr_type, data)
+            // if ssserver enabled OTA but client not
+            } else if is_ota_session {
+                error!("udp processor {:?} is not a OTA session", self);
+                return self.process_failed();
             } else {
                 // TODO: change to use `Cow`
                 Some(data.to_vec())

@@ -1,6 +1,6 @@
 listen_address = "127.0.0.1"
 listen_port = 8111
 password = "foo"
-timeout = 300
+timeout = 60
 encrypt_method = "aes-256-ctr"
-enable_one_time_auth = true
+one_time_auth = false
