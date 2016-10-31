@@ -29,11 +29,9 @@
 - [x] Running as daemon
 - [x] UDP support
 - [x] OTA encrypt method support
-- [ ] TCP fast open
 - [ ] Multiple encrypt methods support
+- [ ] TCP fast open (wait a new computer)
 
 #Test sites
 * http://www.bilibili.com/
 * http://www.panda.tv/
-* https://html.spec.whatwg.org/
-* https://facebook.com/
