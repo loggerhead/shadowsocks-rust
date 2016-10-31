@@ -90,6 +90,10 @@ pub trait NetworkWriteBytes: WriteBytesExt {
     fn put_u16(&mut self, num: u16) -> Option<()> {
         self.write_u16::<NetworkEndian>(num).ok()
     }
+
+    fn put_i32(&mut self, num: i32) -> Option<()> {
+        self.write_i32::<NetworkEndian>(num).ok()
+    }
 }
 
 impl NetworkWriteBytes for Vec<u8> {}
