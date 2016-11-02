@@ -15,11 +15,11 @@ readme = "README.md"
 # [[bin]]
 # name = "sslocal"
 # path = "src/main.rs"
+# required-features = ["sslocal"]
 
 # [[bin]]
 # name = "ssserver"
 # path = "src/main.rs"
-# required-features = ["sslocal"]
 
 [dependencies]
 mio = "0.5"
