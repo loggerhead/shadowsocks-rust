@@ -6,6 +6,7 @@ use std::net::SocketAddr;
 use mio::udp::UdpSocket;
 use mio::{EventSet, Token, Timeout, EventLoop, PollOpt};
 
+use mode::ServerChooser;
 use util::RcCell;
 use config::Config;
 use collections::Dict;
@@ -38,6 +39,7 @@ pub struct UdpProcessor {
     receive_buf: Option<Vec<u8>>,
     requests: Dict<String, PortRequestMap>,
     dns_resolver: RcCell<DNSResolver>,
+    server_chooser: RcCell<ServerChooser>,
     encryptor: RcCell<Encryptor>,
 }
 
@@ -47,6 +49,7 @@ impl UdpProcessor {
                addr: SocketAddr,
                relay_sock: RcCell<UdpSocket>,
                dns_resolver: RcCell<DNSResolver>,
+               server_chooser: RcCell<ServerChooser>,
                encryptor: RcCell<Encryptor>)
                -> Result<UdpProcessor> {
         let sock = try!(UdpSocket::v4().map_err(|_| err!(InitSocketFailed)));
@@ -64,6 +67,7 @@ impl UdpProcessor {
             requests: Dict::default(),
             encryptor: encryptor,
             dns_resolver: dns_resolver,
+            server_chooser: server_chooser,
         })
     }
 
@@ -208,6 +212,7 @@ impl UdpProcessor {
                 }
 
                 if cfg!(feature = "sslocal") {
+                    self.server_chooser.borrow_mut().update(self.get_id());
                     match self.encryptor.borrow_mut().decrypt_udp(&buf) {
                         Some(data) => {
                             if parse_header(&data).is_some() {

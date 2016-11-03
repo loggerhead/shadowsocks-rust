@@ -419,7 +419,7 @@ impl TcpProcessor {
                         None => return Err(err!(EncryptFailed)),
                     }
 
-                    self.server_address = self.server_chooser.borrow_mut().choose();
+                    self.server_address = self.server_chooser.borrow_mut().choose(self.get_id());
                     // buffer data
                 } else {
                     if is_ota_session {
@@ -481,13 +481,14 @@ impl TcpProcessor {
         let data = try!(self.receive_data(REMOTE));
         self.reset_timeout(event_loop);
 
-        let data = if !cfg!(feature = "sslocal") {
+        let data = if cfg!(feature = "sslocal") {
+            self.server_chooser.borrow_mut().update(self.get_id());
+            data
+        } else {
             match self.encryptor.encrypt(&data) {
                 Some(encrypted) => encrypted,
                 None => return Err(err!(EncryptFailed)),
             }
-        } else {
-            data
         };
 
         // buffer unfinished bytes

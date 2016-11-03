@@ -31,7 +31,8 @@ use config::Config;
 use socks5::parse_header;
 use network::str2addr4;
 use encrypt::Encryptor;
-use asyncdns::DNSResolver;
+// TODO: rename DNSResolver
+use asyncdns::{DNSResolver, Caller};
 use collections::{Holder, Dict};
 use super::{Relay, MyHandler, UdpProcessor};
 
@@ -136,6 +137,7 @@ impl UdpRelay {
                                                    client_addr,
                                                    self.listener.clone(),
                                                    self.dns_resolver.clone(),
+                                                   self.server_chooser.clone(),
                                                    self.encryptor.clone())));
         self.processors.insert_with(token, p.clone());
         self.cache.insert(client_addr, p.clone());
@@ -156,14 +158,7 @@ impl UdpRelay {
         // parse socks5 header
         match parse_header(data) {
             Some((addr_type, mut server_addr, mut server_port, header_length)) => {
-                if cfg!(feature = "sslocal") {
-                    // TODO: change `unwrap` to return `Result`
-                    let (addr, port) = self.server_chooser.borrow_mut().choose().unwrap();
-                    server_addr = addr;
-                    server_port = port;
-                }
                 info!("sending udp request to {}:{}", server_addr, server_port);
-
                 if !self.cache.contains_key(&client_addr) {
                     debug!("create udp processor for {:?}", client_addr);
                     let token = try!(self.processors.alloc_token().ok_or(err!(AllocTokenFailed)));
@@ -172,6 +167,15 @@ impl UdpRelay {
 
                 if data.len() > 0 {
                     let p = &self.cache[&client_addr];
+
+                    if cfg!(feature = "sslocal") {
+                        let token = p.borrow().get_id();
+                        // TODO: change `unwrap` to return `Result`
+                        let (addr, port) = self.server_chooser.borrow_mut().choose(token).unwrap();
+                        server_addr = addr;
+                        server_port = port;
+                    }
+
                     try!(p.borrow_mut().handle_data(event_loop,
                                                     data,
                                                     addr_type,
