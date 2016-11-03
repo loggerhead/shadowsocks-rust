@@ -12,11 +12,19 @@ matrix:
     - rust: beta
 
 sudo: false
+cache: cargo
 before_script:
-  - pip install 'travis-cargo<0.2' --user && export PATH=$HOME/.local/bin:$PATH
+  - pip install 'travis-cargo<0.2' --user
+  - export PATH=$HOME/.local/bin:~/.cargo/bin:$PATH
+  - (cargo install rustfmt || true)
 script:
-  - cargo build
-  - cargo build --features sslocal
+  - cargo fmt -- --write-mode=diff
+  - cargo test encrypt
+  - cargo test asyncdns
+  - ./run.sh s -d start
+  - ./run.sh c -d start
+  - ./tests/test_tcp.py
+  - ./tests/test_udp.py
 
 notifications:
   email:
