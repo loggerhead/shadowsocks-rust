@@ -12,9 +12,11 @@ matrix:
     - rust: beta
 
 sudo: false
-cache: cargo
+cache:
+  - cargo
+  - pip
 before_script:
-  - pip install 'travis-cargo<0.2' --user
+  - pip install --user PySocks
   - export PATH=$HOME/.local/bin:~/.cargo/bin:$PATH
   - (cargo install rustfmt || true)
 script:
