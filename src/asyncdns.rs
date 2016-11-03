@@ -79,7 +79,9 @@ macro_rules! err {
 
 pub trait Caller {
     fn get_id(&self) -> Token;
-    fn handle_dns_resolved(&mut self, event_loop: &mut EventLoop<Relay>, res: Result<Option<HostIpPair>>);
+    fn handle_dns_resolved(&mut self,
+                           event_loop: &mut EventLoop<Relay>,
+                           res: Result<Option<HostIpPair>>);
 }
 
 struct DNSResponse {
@@ -126,7 +128,10 @@ pub struct DNSResolver {
 }
 
 impl DNSResolver {
-    pub fn new(token: Token, server_list: Option<Vec<String>>, prefer_ipv6: bool) -> Result<DNSResolver> {
+    pub fn new(token: Token,
+               server_list: Option<Vec<String>>,
+               prefer_ipv6: bool)
+               -> Result<DNSResolver> {
         let sock = try!(UdpSocket::v4().map_err(|_| err!(InitSocketFailed)));
         // pre-define DNS server list
         let servers = match server_list {
@@ -185,9 +190,8 @@ impl DNSResolver {
         for server in &self.servers {
             let server = format!("{}:53", server);
             let addr = str2addr4(&server).unwrap();
-            try!(build_request(&hostname, qtype).map_or(Err(err!(BuildRequestFailed)), |req| {
-                self.sock.send_to(&req, &addr)
-            }));
+            try!(build_request(&hostname, qtype).map_or(Err(err!(BuildRequestFailed)),
+                                                        |req| self.sock.send_to(&req, &addr)));
         }
         Ok(())
     }
@@ -198,10 +202,10 @@ impl DNSResolver {
 
         new_fat_slice_from_vec!(buf_slice, buf);
         match self.sock.recv_from(buf_slice) {
-            Ok(None) => {},
-            Ok(Some((nread, _addr))) => {
-                unsafe { buf.set_len(nread); }
-            }
+            Ok(None) => {}
+            Ok(Some((nread, _addr))) => unsafe {
+                buf.set_len(nread);
+            },
             Err(e) => res = Err(e),
         }
         self.receive_buf = Some(buf);
@@ -249,7 +253,7 @@ impl DNSResolver {
                 }
                 Ok(None)
             }
-            res => res
+            res => res,
         }
     }
 
@@ -268,7 +272,7 @@ impl DNSResolver {
                 try!(self.send_request(hostname, self.qtypes[0]));
                 Ok(None)
             }
-            res => res
+            res => res,
         }
     }
 
@@ -280,12 +284,11 @@ impl DNSResolver {
 
                 let caller = self.callers.get_mut(token).unwrap();
                 if ip.is_empty() {
-                    caller.borrow_mut().handle_dns_resolved(event_loop,
-                                                            Err(err!(UnknownHost, hostname)));
+                    caller.borrow_mut()
+                        .handle_dns_resolved(event_loop, Err(err!(UnknownHost, hostname)));
                 } else {
                     let hostname_ip = (hostname.clone(), ip.clone());
-                    caller.borrow_mut().handle_dns_resolved(event_loop,
-                                                            Ok(Some(hostname_ip)));
+                    caller.borrow_mut().handle_dns_resolved(event_loop, Ok(Some(hostname_ip)));
                 }
             }
         }
@@ -340,7 +343,10 @@ impl DNSResolver {
         res
     }
 
-    fn do_register(&mut self, event_loop: &mut EventLoop<Relay>, is_reregister: bool) -> Result<()> {
+    fn do_register(&mut self,
+                   event_loop: &mut EventLoop<Relay>,
+                   is_reregister: bool)
+                   -> Result<()> {
         let events = EventSet::readable();
         let pollopts = PollOpt::edge() | PollOpt::oneshot();
 
@@ -359,10 +365,7 @@ impl DNSResolver {
         self.do_register(event_loop, true)
     }
 
-    pub fn process(&mut self,
-                   event_loop: &mut EventLoop<Relay>,
-                   events: EventSet)
-                   -> Result<()> {
+    pub fn process(&mut self, event_loop: &mut EventLoop<Relay>, events: EventSet) -> Result<()> {
         if events.is_error() {
             error!("events error on DNS socket");
             let _ = event_loop.deregister(&self.sock);
@@ -730,7 +733,7 @@ mod test {
     #[test]
     fn block_resolve() {
         let tests = vec![
-            ("114.114.114.114", "114.114.114.114"),
+            ("8.8.8.8", "8.8.8.8"),
             ("localhost", "127.0.0.1"),
             ("localhost.loggerhead.me", "127.0.0.1"),
         ];
@@ -738,8 +741,9 @@ mod test {
         let mut resolver = asyncdns::DNSResolver::new(Token(0), None, false).unwrap();
         for (hostname, ip) in tests {
             resolver.block_resolve(hostname.to_string()).ok().map_or_else(|| {
-                assert!(false);
-            }, |r| {
+                                                                              assert!(false);
+                                                                          },
+                                                                          |r| {
                 assert!(r.is_some());
                 let (_hostname, resolved_ip) = r.unwrap();
                 assert!(resolved_ip == ip);

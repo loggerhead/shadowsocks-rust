@@ -56,7 +56,11 @@ impl Encryptor {
     }
 
     #[cfg(feature = "sslocal")]
-    pub fn enable_ota(&mut self, addr_type: u8, header_length: usize, data: &[u8]) -> Option<Vec<u8>> {
+    pub fn enable_ota(&mut self,
+                      addr_type: u8,
+                      header_length: usize,
+                      data: &[u8])
+                      -> Option<Vec<u8>> {
         let mut ota = OtaHelper::new();
         // OTA header
         let mut header = Vec::with_capacity(header_length + 10);
@@ -89,7 +93,11 @@ impl Encryptor {
     }
 
     #[cfg(not(feature = "sslocal"))]
-    pub fn enable_ota(&mut self, _addr_type: u8, header_length: usize, data: &[u8]) -> Option<Vec<u8>> {
+    pub fn enable_ota(&mut self,
+                      _addr_type: u8,
+                      header_length: usize,
+                      data: &[u8])
+                      -> Option<Vec<u8>> {
         let mut ota = OtaHelper::new();
         // verify OTA header
         let header = &data[..header_length];
@@ -190,7 +198,11 @@ impl Encryptor {
         (cipher, res)
     }
 
-    fn raw_decrypt_udp(&self, iv_len: usize, key: &[u8], data: &[u8]) -> (Vec<u8>, Cipher, Vec<u8>) {
+    fn raw_decrypt_udp(&self,
+                       iv_len: usize,
+                       key: &[u8],
+                       data: &[u8])
+                       -> (Vec<u8>, Cipher, Vec<u8>) {
         let iv = data[..iv_len].to_vec();
 
         let mut decipher = create_cipher(key, &iv);
@@ -255,8 +267,8 @@ impl Encryptor {
         ota_key.extend_from_slice(&self.decipher_iv);
         ota_key.extend_from_slice(&self.key);
 
-        let sha1 = &data[data.len()-10..];
-        let data = &data[..data.len()-10];
+        let sha1 = &data[data.len() - 10..];
+        let data = &data[..data.len() - 10];
 
         if ota.verify_sha1(data, &ota_key, sha1) {
             self.ota_helper = Some(ota);
@@ -288,10 +300,14 @@ impl OtaHelper {
         let mut hmac = Hmac::new(Sha1::new(), key);
         let len = hmac.output_bytes();
         let mut res = Vec::with_capacity(len);
-        unsafe { res.set_len(len); }
+        unsafe {
+            res.set_len(len);
+        }
         hmac.input(data);
         hmac.raw_result(&mut res);
-        unsafe { res.set_len(10); }
+        unsafe {
+            res.set_len(10);
+        }
         res
     }
 
@@ -329,9 +345,13 @@ impl OtaHelper {
                     let offset = 12 - self.chunk_buf.len();
                     self.chunk_buf.extend_from_slice(&data[..offset]);
                     self.chunk_len = unpack!(u16, &self.chunk_buf[..2]);
-                    unsafe { self.chunk_sha1.set_len(0); }
+                    unsafe {
+                        self.chunk_sha1.set_len(0);
+                    }
                     self.chunk_sha1.extend_from_slice(&self.chunk_buf[2..]);
-                    unsafe { self.chunk_buf.set_len(0); }
+                    unsafe {
+                        self.chunk_buf.set_len(0);
+                    }
                     data = &data[offset..];
                 }
             }
@@ -339,7 +359,7 @@ impl OtaHelper {
             if data.len() + self.chunk_buf.len() < self.chunk_len as usize {
                 self.chunk_buf.extend_from_slice(data);
                 break;
-            // if there are one or more chunks
+                // if there are one or more chunks
             } else {
                 let offset = self.chunk_len as usize - self.chunk_buf.len();
                 // make sure there is a chunk data in chunk_buf
@@ -354,10 +374,14 @@ impl OtaHelper {
                 if self.verify_sha1(&self.chunk_buf, &key, &self.chunk_sha1) {
                     unpacked.extend_from_slice(&self.chunk_buf);
                     self.chunk_len = 0;
-                    unsafe { self.chunk_buf.set_len(0); }
+                    unsafe {
+                        self.chunk_buf.set_len(0);
+                    }
                 } else {
                     self.chunk_len = 0;
-                    unsafe { self.chunk_buf.set_len(0); }
+                    unsafe {
+                        self.chunk_buf.set_len(0);
+                    }
                     break;
                 }
             }
@@ -375,7 +399,9 @@ fn create_cipher(key: &[u8], iv: &[u8]) -> Cipher {
 fn gen_key_iv(password: &str) -> (Vec<u8>, Vec<u8>) {
     let (key, _iv) = evp_bytes_to_key(password, 32, 16);
     let mut cipher_iv = Vec::with_capacity(16);
-    unsafe { cipher_iv.set_len(16); }
+    unsafe {
+        cipher_iv.set_len(16);
+    }
     let _ = OsRng::new().map(|mut rng| rng.fill_bytes(&mut cipher_iv));
     (key, cipher_iv)
 }
@@ -389,7 +415,9 @@ fn evp_bytes_to_key(password: &str, key_len: usize, iv_len: usize) -> (Vec<u8>, 
     let mut cnt = 0;
 
     while cnt < key_len + iv_len {
-        unsafe { data.set_len(0); }
+        unsafe {
+            data.set_len(0);
+        }
         if i > 0 {
             data.extend_from_slice(&*m[i - 1]);
         }

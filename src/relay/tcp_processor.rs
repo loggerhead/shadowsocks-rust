@@ -71,9 +71,8 @@ impl TcpProcessor {
         };
         let encryptor = Encryptor::new(conf["password"].as_str().unwrap());
 
-        let client_address = try!(local_sock.peer_addr().map(|addr| {
-            (addr.ip().to_string(), addr.port())
-        }));
+        let client_address = try!(local_sock.peer_addr()
+            .map(|addr| (addr.ip().to_string(), addr.port())));
         try!(local_sock.set_nodelay(true));
 
         Ok(TcpProcessor {
@@ -227,11 +226,17 @@ impl TcpProcessor {
         };
 
         register_result.map(|_| {
-            debug!("registered {:?} {:?} socket with {:?}", self, self.sock_desc(is_local_sock), events);
+            debug!("registered {:?} {:?} socket with {:?}",
+                   self,
+                   self.sock_desc(is_local_sock),
+                   events);
         })
     }
 
-    pub fn register(&mut self, event_loop: &mut EventLoop<Relay>, is_local_sock: bool) -> Result<()> {
+    pub fn register(&mut self,
+                    event_loop: &mut EventLoop<Relay>,
+                    is_local_sock: bool)
+                    -> Result<()> {
         if is_local_sock {
             self.local_interest = EventSet::readable();
         } else {
@@ -252,7 +257,9 @@ impl TcpProcessor {
         {
             let mut sock = self.get_sock(is_local_sock);
             match sock.read(buf_slice) {
-                Ok(nread) => unsafe { buf.set_len(nread); },
+                Ok(nread) => unsafe {
+                    buf.set_len(nread);
+                },
                 Err(e) => return Err(err!(ReadFailed, e)),
             }
 
@@ -262,8 +269,8 @@ impl TcpProcessor {
             }
         }
 
-        if (cfg!(feature = "sslocal") && !is_local_sock)
-                || (!cfg!(feature = "sslocal") && is_local_sock) {
+        if (cfg!(feature = "sslocal") && !is_local_sock) ||
+           (!cfg!(feature = "sslocal") && is_local_sock) {
             self.encryptor.decrypt(&buf).ok_or(err!(DecryptFailed))
         } else {
             Ok(buf)
@@ -379,7 +386,8 @@ impl TcpProcessor {
                 info!("connecting to {}:{}", remote_address, remote_port);
                 let is_ota_session = try!(self.check_one_time_auth(addr_type));
                 let data = if is_ota_session {
-                    match self.encryptor.enable_ota(addr_type | addr_type::AUTH, header_length, &data) {
+                    match self.encryptor
+                        .enable_ota(addr_type | addr_type::AUTH, header_length, &data) {
                         Some(ota_data) => Cow::Owned(ota_data),
                         None => return Err(err!(EnableOneTimeAuthFailed)),
                     }
@@ -391,11 +399,18 @@ impl TcpProcessor {
                 self.stage = HandleStage::Dns;
                 // send socks5 response to client
                 if cfg!(feature = "sslocal") {
-                    let response = &[0x05, 0x00, 0x00, 0x01,
+                    let response = &[0x05,
+                                     0x00,
+                                     0x00,
+                                     0x01,
                                      // fake ip
-                                     0x00, 0x00, 0x00, 0x00,
+                                     0x00,
+                                     0x00,
+                                     0x00,
+                                     0x00,
                                      // fake port
-                                     0x00, 0x00];
+                                     0x00,
+                                     0x00];
                     try!(self.write_to_sock(response, LOCAL));
                     self.update_stream(StreamDirection::Down, StreamStatus::WaitReading);
 
@@ -405,7 +420,7 @@ impl TcpProcessor {
                     }
 
                     self.server_address = self.server_chooser.borrow_mut().choose();
-                // buffer data
+                    // buffer data
                 } else {
                     if is_ota_session {
                         self.extend_buf(&data, REMOTE);
@@ -426,9 +441,7 @@ impl TcpProcessor {
                 }
                 Ok(())
             }
-            None => {
-                Err(err!(InvalidSocks5Header))
-            }
+            None => Err(err!(InvalidSocks5Header)),
         }
     }
 
@@ -459,7 +472,7 @@ impl TcpProcessor {
             HandleStage::Addr => self.handle_stage_addr(event_loop, &data),
             HandleStage::Connecting => self.handle_stage_connecting(event_loop, &data),
             HandleStage::Stream => self.handle_stage_stream(event_loop, &data),
-            _ => Ok(())
+            _ => Ok(()),
         }
     }
 
@@ -513,12 +526,13 @@ impl TcpProcessor {
     }
 
     fn create_connection(&mut self, ip: &str, port: u16) -> Result<TcpStream> {
-        pair2socket_addr(ip, port).ok_or(err!(ParseAddrFailed)).and_then(|addr| {
-            TcpStream::connect(&addr)
-        })
+        pair2socket_addr(ip, port)
+            .ok_or(err!(ParseAddrFailed))
+            .and_then(|addr| TcpStream::connect(&addr))
     }
 
-    pub fn process(&mut self, event_loop: &mut EventLoop<Relay>,
+    pub fn process(&mut self,
+                   event_loop: &mut EventLoop<Relay>,
                    token: Token,
                    events: EventSet)
                    -> Result<()> {
@@ -608,7 +622,9 @@ impl Caller for TcpProcessor {
         self.remote_token
     }
 
-    fn handle_dns_resolved(&mut self, event_loop: &mut EventLoop<Relay>, res: Result<Option<HostIpPair>>) {
+    fn handle_dns_resolved(&mut self,
+                           event_loop: &mut EventLoop<Relay>,
+                           res: Result<Option<HostIpPair>>) {
         debug!("{:?} handle dns resolved: {:?}", self, res);
 
         macro_rules! my_try {
@@ -625,9 +641,10 @@ impl Caller for TcpProcessor {
 
         if let Some((_hostname, ip)) = my_try!(res) {
             self.stage = HandleStage::Connecting;
-            let port = self.server_address.as_ref().map(|addr| {
-                addr.1
-            }).unwrap();
+            let port = self.server_address
+                .as_ref()
+                .map(|addr| addr.1)
+                .unwrap();
 
             let sock = my_try!(self.create_connection(&ip, port));
             self.remote_sock = Some(sock);
@@ -680,7 +697,7 @@ enum HandleStage {
 #[derive(Debug, PartialEq)]
 enum StreamDirection {
     Down,
-    Up
+    Up,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

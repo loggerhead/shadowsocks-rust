@@ -49,7 +49,9 @@ pub fn shift_vec<T: Clone>(v: &mut Vec<T>, offset: usize) {
     for i in 0..remain {
         v[i] = v[i + offset].clone();
     }
-    unsafe { v.set_len(remain); }
+    unsafe {
+        v.set_len(remain);
+    }
 }
 
 pub type RcCell<T> = Rc<RefCell<T>>;

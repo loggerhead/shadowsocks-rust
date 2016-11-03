@@ -164,14 +164,14 @@ pub fn gen_config() -> Result<Config, ConfigError> {
 
     if cfg!(feature = "sslocal") {
         args = args.arg(Arg::with_name("server")
-                        .short("s")
-                        .value_name("ip:port")
-                        .help("server address and port")
-                        .takes_value(true))
-                   .arg(Arg::with_name("mode")
-                        .long("mode")
-                        .help("the way to choose server")
-                        .default_value(DEFAULT_VALUE["mode"]));
+                .short("s")
+                .value_name("ip:port")
+                .help("server address and port")
+                .takes_value(true))
+            .arg(Arg::with_name("mode")
+                .long("mode")
+                .help("the way to choose server")
+                .default_value(DEFAULT_VALUE["mode"]));
     }
 
     let matches = args.get_matches();

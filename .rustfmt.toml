@@ -1,0 +1,4 @@
+fn_empty_single_line = false
+closure_block_indent_threshould = 0
+# TODO: change to `true` when stable
+use_try_shorthand = false

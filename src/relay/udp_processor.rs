@@ -13,7 +13,7 @@ use encrypt::Encryptor;
 use socks5::{parse_header, pack_addr, addr_type};
 use network::{str2addr4, NetworkWriteBytes};
 use asyncdns::{Caller, DNSResolver, HostIpPair};
-use super::{Relay};
+use super::Relay;
 
 type Socks5Requests = Vec<Vec<u8>>;
 type PortRequestMap = Dict<u16, Socks5Requests>;
@@ -80,7 +80,10 @@ impl UdpProcessor {
         self.timeout = event_loop.timeout_ms(self.get_id(), delay).ok();
     }
 
-    fn do_register(&mut self, event_loop: &mut EventLoop<Relay>, is_reregister: bool) -> Result<()> {
+    fn do_register(&mut self,
+                   event_loop: &mut EventLoop<Relay>,
+                   is_reregister: bool)
+                   -> Result<()> {
         let token = self.get_id();
         let pollopts = PollOpt::edge() | PollOpt::oneshot();
 
@@ -115,7 +118,11 @@ impl UdpProcessor {
         port_requests_map.get_mut(&server_port).unwrap().push(data);
     }
 
-    fn send_to(&self, is_send_to_client: bool, data: &[u8], addr: &SocketAddr) -> Result<Option<usize>> {
+    fn send_to(&self,
+               is_send_to_client: bool,
+               data: &[u8],
+               addr: &SocketAddr)
+               -> Result<Option<usize>> {
         let res = if is_send_to_client {
             self.sock.send_to(data, addr)
         } else {
@@ -149,7 +156,7 @@ impl UdpProcessor {
             // if is a OTA session
             if addr_type & addr_type::AUTH == addr_type::AUTH {
                 self.encryptor.borrow_mut().decrypt_udp_ota(addr_type, data)
-            // if ssserver enabled OTA but client not
+                // if ssserver enabled OTA but client not
             } else if is_ota_enabled {
                 return Err(err!(NotOneTimeAuthSession));
             } else {
@@ -162,7 +169,9 @@ impl UdpProcessor {
             if cfg!(feature = "sslocal") {
                 self.add_request(server_addr.clone(), server_port, request);
             } else {
-                self.add_request(server_addr.clone(), server_port, request[header_length..].to_vec());
+                self.add_request(server_addr.clone(),
+                                 server_port,
+                                 request[header_length..].to_vec());
             }
         } else {
             if cfg!(feature = "sslocal") {
@@ -190,13 +199,13 @@ impl UdpProcessor {
         let mut buf = self.receive_buf.take().unwrap();
         new_fat_slice_from_vec!(buf_slice, buf);
 
-        let res = try!(self.sock.recv_from(buf_slice).map_err(|e| {
-            err!(ReadFailed, e)
-        }));
+        let res = try!(self.sock.recv_from(buf_slice).map_err(|e| err!(ReadFailed, e)));
         let res = match res {
             None => Ok(None),
             Some((nread, addr)) => {
-                unsafe { buf.set_len(nread); }
+                unsafe {
+                    buf.set_len(nread);
+                }
 
                 if cfg!(feature = "sslocal") {
                     match self.encryptor.borrow_mut().decrypt_udp(&buf) {
@@ -218,7 +227,8 @@ impl UdpProcessor {
                     let mut packed_port = Vec::<u8>::new();
                     try_pack!(u16, packed_port, addr.port());
 
-                    let mut data = Vec::with_capacity(packed_addr.len() + packed_port.len() + buf.len());
+                    let mut data = Vec::with_capacity(packed_addr.len() + packed_port.len() +
+                                                      buf.len());
                     data.extend_from_slice(&packed_addr);
                     data.extend_from_slice(&packed_port);
                     data.extend_from_slice(&buf);
@@ -271,7 +281,9 @@ impl Caller for UdpProcessor {
         self.token
     }
 
-    fn handle_dns_resolved(&mut self, _event_loop: &mut EventLoop<Relay>, res: Result<Option<HostIpPair>>) {
+    fn handle_dns_resolved(&mut self,
+                           _event_loop: &mut EventLoop<Relay>,
+                           res: Result<Option<HostIpPair>>) {
         debug!("{:?} handle dns resolved: {:?}", self, res);
         self.stage = HandleStage::Dns;
 

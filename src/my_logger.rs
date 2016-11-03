@@ -60,9 +60,9 @@ pub fn init(conf: &Config) -> Result<(), LoggerInitError> {
             }
         }
     } else {
-        let drain = slog_term::StreamerBuilder::new().use_custom_timestamp(move |io| {
-            write!(io, "{}", now!())
-        }).build();
+        let drain = slog_term::StreamerBuilder::new()
+            .use_custom_timestamp(move |io| write!(io, "{}", now!()))
+            .build();
         setup_global_logger!(log_level, drain);
     }
 

@@ -95,6 +95,5 @@ impl RttRecord {
     }
 
     fn update(&mut self) {
-
     }
 }
