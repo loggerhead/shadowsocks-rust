@@ -226,7 +226,6 @@ impl DNSResolver {
         }
     }
 
-    // TODO: change to &str
     pub fn block_resolve(&mut self, hostname: String) -> Result<Option<HostIpPair>> {
         match self.local_resolve(&hostname) {
             Ok(None) => {
@@ -254,7 +253,7 @@ impl DNSResolver {
         }
     }
 
-    // TODO: change to &str
+    // TODO: change to `&str` (wait `lru_time_cache` release the new version)
     pub fn resolve(&mut self, token: Token, hostname: String) -> Result<Option<HostIpPair>> {
         match self.local_resolve(&hostname) {
             Ok(None) => {
