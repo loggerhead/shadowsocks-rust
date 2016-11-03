@@ -57,12 +57,12 @@ macro_rules! base_err {
     (WriteFailed, $e:expr) => ( io_err!("write data to socket failed ({})", $e) );
     (BindAddrFailed, $addr:expr) => ( io_err!("bind socket to address {} failed", $addr) );
     (AllocTokenFailed) => ( io_err!("alloc token failed") );
+    (DnsResolveFailed, $e:expr) => ( io_err!("dns resolve failed ({})", $e) );
 }
 
 macro_rules! processor_err {
     (EnableOneTimeAuthFailed) => ( io_err!("enable one time auth failed") );
     (NotOneTimeAuthSession) => ( io_err!("current connection is not a one time auth session") );
-    (DnsResolveFailed, $e:expr) => ( io_err!("dns resolve failed ({})", $e) );
     (ConnectFailed, $e:expr) => ( io_err!("connect to server failed ({})", $e) );
     (EncryptFailed) => ( io_err!("encrypt data failed") );
     (DecryptFailed) => ( io_err!("decrypt data failed") );

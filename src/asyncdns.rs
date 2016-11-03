@@ -70,7 +70,6 @@ macro_rules! err {
     (NoPreferredResponse) => ( io_err!("no preferred response") );
     (InvalidResponse) => ( io_err!("invalid response") );
     (BufferEmpty) => ( io_err!("no buffered data available") );
-
     (ParseAddrFailed) => ( io_err!("parse socket address from string failed") );
     (InitSocketFailed) => ( io_err!("initialize socket failed") );
 

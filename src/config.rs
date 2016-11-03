@@ -152,7 +152,10 @@ pub fn gen_config() -> Result<Config, ConfigError> {
         .arg(Arg::with_name("one_time_auth")
             .short("a")
             .long("one-time-auth")
-            .help("enable one time auth"));
+            .help("enable one time auth"))
+        .arg(Arg::with_name("prefer_ipv6")
+            .long("prefer-ipv6")
+            .help("priority use IPv6"));
 
     if cfg!(target_family = "unix") {
         args = args.arg(Arg::with_name("daemon")
@@ -316,6 +319,7 @@ fn check_config(matches: ArgMatches, mut config: Table) -> Result<Config, Config
 
     try_set_config!("fast_open", bool);
     try_set_config!("one_time_auth", bool);
+    try_set_config!("prefer_ipv6", bool);
 
     try_set_config!("daemon");
     try_set_config!("pid_file");
