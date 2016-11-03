@@ -21,8 +21,8 @@ script:
   - cargo fmt -- --write-mode=diff
   - cargo test encrypt
   - cargo test asyncdns
-  - ./run.sh s -d start
-  - ./run.sh c -d start
+  - ./run.sh s -d start --log-file ssserver.log --pid-file ssserver.pid
+  - ./run.sh c -d start --log-file sslocal.log --pid-file sslocal.pid
   - ./tests/test_tcp.py
   - ./tests/test_udp.py
 
