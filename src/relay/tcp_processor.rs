@@ -39,9 +39,9 @@ pub struct TcpProcessor {
     stage: HandleStage,
     dns_resolver: RcCell<DNSResolver>,
     timeout: Option<Timeout>,
-    local_token: Option<Token>,
+    local_token: Token,
     local_sock: Option<TcpStream>,
-    remote_token: Option<Token>,
+    remote_token: Token,
     remote_sock: Option<TcpStream>,
     local_interest: EventSet,
     remote_interest: EventSet,
@@ -55,7 +55,12 @@ pub struct TcpProcessor {
 }
 
 impl TcpProcessor {
-    pub fn new(conf: Config, local_sock: TcpStream, dns_resolver: RcCell<DNSResolver>) -> Result<TcpProcessor> {
+    pub fn new(local_token: Token,
+               remote_token: Token,
+               conf: Config,
+               local_sock: TcpStream,
+               dns_resolver: RcCell<DNSResolver>)
+               -> Result<TcpProcessor> {
         let stage = if cfg!(feature = "sslocal") {
             HandleStage::Init
         } else {
@@ -73,9 +78,9 @@ impl TcpProcessor {
             stage: stage,
             dns_resolver: dns_resolver,
             timeout: None,
-            local_token: None,
+            local_token: local_token,
             local_sock: Some(local_sock),
-            remote_token: None,
+            remote_token: remote_token,
             remote_sock: None,
             local_buf: None,
             remote_buf: None,
@@ -95,17 +100,9 @@ impl TcpProcessor {
 
     fn get_token(&self, is_local_sock: bool) -> Token {
         if is_local_sock {
-            self.local_token.unwrap()
+            self.local_token
         } else {
-            self.remote_token.unwrap()
-        }
-    }
-
-    pub fn set_token(&mut self, token: Token, is_local_sock: bool) {
-        if is_local_sock {
-            self.local_token = Some(token);
-        } else {
-            self.remote_token = Some(token);
+            self.remote_token
         }
     }
 
@@ -537,7 +534,7 @@ impl TcpProcessor {
                    -> Result<()> {
         debug!("current handle stage of {:?} is {:?}", self, self.stage);
 
-        if Some(token) == self.local_token {
+        if token == self.local_token {
             if events.is_error() {
                 let e = self.local_sock.take().unwrap().take_socket_error().unwrap_err();
                 if e.kind() != io::ErrorKind::ConnectionReset {
@@ -556,7 +553,7 @@ impl TcpProcessor {
                 try!(self.on_local_write(event_loop));
             }
             self.reregister(event_loop, LOCAL)
-        } else if Some(token) == self.remote_token {
+        } else if token == self.remote_token {
             if events.is_error() {
                 let e = self.remote_sock.take().unwrap().take_socket_error().unwrap_err();
                 if e.kind() != io::ErrorKind::ConnectionReset {
@@ -580,7 +577,7 @@ impl TcpProcessor {
         }
     }
 
-    pub fn destroy(&mut self, event_loop: &mut EventLoop<Relay>) -> (Option<Token>, Option<Token>) {
+    pub fn destroy(&mut self, event_loop: &mut EventLoop<Relay>) -> (Token, Token) {
         debug!("destroy {:?}", self);
 
         if let Some(sock) = self.local_sock.take() {
@@ -606,7 +603,7 @@ impl TcpProcessor {
         self.local_interest = EventSet::none();
         self.remote_interest = EventSet::none();
         self.stage = HandleStage::Destroyed;
-        (self.local_token.take(), self.remote_token.take())
+        (self.local_token, self.remote_token)
     }
 
     pub fn fetch_error(&self) -> Result<()> {
@@ -619,7 +616,7 @@ impl TcpProcessor {
 
 impl Caller for TcpProcessor {
     fn get_id(&self) -> Token {
-        self.remote_token.unwrap()
+        self.remote_token
     }
 
     fn handle_dns_resolved(&mut self, event_loop: &mut EventLoop<Relay>, res: Result<Option<HostIpPair>>) {

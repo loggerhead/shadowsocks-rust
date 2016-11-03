@@ -27,9 +27,9 @@ macro_rules! err {
 
 
 pub struct UdpProcessor {
+    token: Token,
     conf: Config,
     stage: HandleStage,
-    token: Option<Token>,
     interest: EventSet,
     timeout: Option<Timeout>,
     addr: SocketAddr,
@@ -42,7 +42,8 @@ pub struct UdpProcessor {
 }
 
 impl UdpProcessor {
-    pub fn new(conf: Config,
+    pub fn new(token: Token,
+               conf: Config,
                addr: SocketAddr,
                relay_sock: RcCell<UdpSocket>,
                dns_resolver: RcCell<DNSResolver>,
@@ -51,9 +52,9 @@ impl UdpProcessor {
         let sock = try!(UdpSocket::v4().map_err(|_| err!(InitSocketFailed)));
 
         Ok(UdpProcessor {
+            token: token,
             conf: conf,
             stage: HandleStage::Init,
-            token: None,
             interest: EventSet::readable(),
             timeout: None,
             addr: addr,
@@ -64,10 +65,6 @@ impl UdpProcessor {
             encryptor: encryptor,
             dns_resolver: dns_resolver,
         })
-    }
-
-    pub fn set_token(&mut self, token: Token) {
-        self.token = Some(token);
     }
 
     pub fn addr(&self) -> &SocketAddr {
@@ -175,7 +172,7 @@ impl UdpProcessor {
             }
         }
 
-        let resolved = self.dns_resolver.borrow_mut().resolve(self.token.unwrap(), server_addr);
+        let resolved = self.dns_resolver.borrow_mut().resolve(self.token, server_addr);
         match resolved {
             Ok(None) => {}
             // if hostname is resolved immediately
@@ -271,7 +268,7 @@ impl UdpProcessor {
 
 impl Caller for UdpProcessor {
     fn get_id(&self) -> Token {
-        self.token.unwrap()
+        self.token
     }
 
     fn handle_dns_resolved(&mut self, _event_loop: &mut EventLoop<Relay>, res: Result<Option<HostIpPair>>) {

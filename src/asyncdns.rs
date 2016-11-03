@@ -112,7 +112,7 @@ enum HostnameStatus {
 }
 
 pub struct DNSResolver {
-    token: Option<Token>,
+    token: Token,
     hosts: Dict<String, String>,
     cache: LruCache<String, String>,
     callers: Dict<Token, RcCell<Caller>>,
@@ -126,7 +126,7 @@ pub struct DNSResolver {
 }
 
 impl DNSResolver {
-    pub fn new(server_list: Option<Vec<String>>, prefer_ipv6: bool) -> Result<DNSResolver> {
+    pub fn new(token: Token, server_list: Option<Vec<String>>, prefer_ipv6: bool) -> Result<DNSResolver> {
         let sock = try!(UdpSocket::v4().map_err(|_| err!(InitSocketFailed)));
         // pre-define DNS server list
         let servers = match server_list {
@@ -142,7 +142,7 @@ impl DNSResolver {
         let cache_timeout = Duration::new(600, 0);
 
         Ok(DNSResolver {
-            token: None,
+            token: token,
             servers: servers,
             hosts: hosts,
             cache: LruCache::with_expiry_duration(cache_timeout),
@@ -342,19 +342,17 @@ impl DNSResolver {
     }
 
     fn do_register(&mut self, event_loop: &mut EventLoop<Relay>, is_reregister: bool) -> Result<()> {
-        let token = self.token.unwrap();
         let events = EventSet::readable();
         let pollopts = PollOpt::edge() | PollOpt::oneshot();
 
         if is_reregister {
-            event_loop.reregister(&self.sock, token, events, pollopts)
+            event_loop.reregister(&self.sock, self.token, events, pollopts)
         } else {
-            event_loop.register(&self.sock, token, events, pollopts)
+            event_loop.register(&self.sock, self.token, events, pollopts)
         }
     }
 
-    pub fn register(&mut self, event_loop: &mut EventLoop<Relay>, token: Token) -> Result<()> {
-        self.token = Some(token);
+    pub fn register(&mut self, event_loop: &mut EventLoop<Relay>) -> Result<()> {
         self.do_register(event_loop, false)
     }
 
@@ -364,13 +362,12 @@ impl DNSResolver {
 
     pub fn process(&mut self,
                    event_loop: &mut EventLoop<Relay>,
-                   token: Token,
                    events: EventSet)
                    -> Result<()> {
         if events.is_error() {
             error!("events error on DNS socket");
             let _ = event_loop.deregister(&self.sock);
-            try!(self.register(event_loop, token));
+            try!(self.register(event_loop));
 
             for caller in self.callers.values() {
                 caller.borrow_mut().handle_dns_resolved(event_loop, Err(err!(EventError)));

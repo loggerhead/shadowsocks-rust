@@ -29,6 +29,21 @@ impl<T> Holder<T> {
         }
     }
 
+    pub fn alloc_token(&mut self) -> Option<Token> {
+        let mut i = 0;
+        let mut token = Token(random::<usize>());
+        while self.exclusions.contains(&token) {
+            token = Token(random::<usize>());
+
+            i += 1;
+            if i > MAX_RAND_RETRY_TIMES {
+                return None;
+            }
+        }
+        self.exclusions.insert(token);
+        Some(token)
+    }
+
     pub fn contains(&self, token: Token) -> bool {
         self.items.contains_key(&token)
     }
@@ -42,20 +57,14 @@ impl<T> Holder<T> {
     }
 
     pub fn insert(&mut self, v: T) -> Option<Token> {
-        let mut i = 0;
-        let mut token = Token(random::<usize>());
-        while self.exclusions.contains(&token) {
-            token = Token(random::<usize>());
-
-            i += 1;
-            if i > MAX_RAND_RETRY_TIMES {
-                return None;
-            }
-        }
-
+        let token = try_opt!(self.alloc_token());
         self.items.insert(token, v);
-        self.exclusions.insert(token);
         Some(token)
+    }
+
+    pub fn insert_with(&mut self, token: Token, v: T) {
+        self.exclusions.insert(token);
+        self.items.insert(token, v);
     }
 
     pub fn remove(&mut self, token: Token) -> Option<T> {

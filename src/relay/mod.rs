@@ -12,9 +12,6 @@ pub use self::tcp_processor::TcpProcessor;
 pub use self::udp_processor::UdpProcessor;
 
 
-pub const RELAY_TOKEN: Token = Token(0);
-pub const DNS_RESOLVER_TOKEN: Token = Token(1);
-
 #[derive(Clone)]
 pub enum Relay {
     Tcp(RcCell<TcpRelay>),
