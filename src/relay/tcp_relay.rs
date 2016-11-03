@@ -4,6 +4,7 @@ use std::io::Result;
 use mio::tcp::{TcpListener, TcpStream};
 use mio::{Token, EventSet, EventLoop, PollOpt};
 
+use mode::ServerChooser;
 use config::Config;
 use network::str2addr4;
 use collections::Holder;
@@ -22,6 +23,7 @@ pub struct TcpRelay {
     listener: TcpListener,
     dns_token: Token,
     dns_resolver: RcCell<DNSResolver>,
+    server_chooser: RcCell<ServerChooser>,
     processors: Holder<RcCell<TcpProcessor>>,
 }
 
@@ -40,6 +42,8 @@ impl TcpRelay {
         let socket_addr = try!(str2addr4(&address).ok_or(err!(ParseAddrFailed)));
         let listener = try!(TcpListener::bind(&socket_addr).or(Err(err!(BindAddrFailed, address))));
 
+        let server_chooser = new_rc_cell(try!(ServerChooser::new(&conf)));
+
         if cfg!(feature = "sslocal") {
             info!("ssclient tcp relay listen on {}", address);
         } else {
@@ -52,6 +56,7 @@ impl TcpRelay {
             listener: listener,
             dns_token: dns_token,
             dns_resolver: dns_resolver,
+            server_chooser: server_chooser,
             processors: processors,
         })
     }
@@ -86,7 +91,8 @@ impl TcpRelay {
                                        remote_token,
                                        self.conf.clone(),
                                        conn,
-                                       self.dns_resolver.clone()));
+                                       self.dns_resolver.clone(),
+                                       self.server_chooser.clone()));
         let p = new_rc_cell(p);
         self.processors.insert_with(local_token, p.clone());
         self.processors.insert_with(remote_token, p.clone());

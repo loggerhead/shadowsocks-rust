@@ -25,6 +25,7 @@ use std::net::SocketAddr;
 use mio::udp::UdpSocket;
 use mio::{Token, EventSet, EventLoop, PollOpt};
 
+use mode::ServerChooser;
 use util::{RcCell, new_rc_cell};
 use config::Config;
 use socks5::parse_header;
@@ -32,7 +33,7 @@ use network::str2addr4;
 use encrypt::Encryptor;
 use asyncdns::DNSResolver;
 use collections::{Holder, Dict};
-use super::{choose_a_server, Relay, MyHandler, UdpProcessor};
+use super::{Relay, MyHandler, UdpProcessor};
 
 macro_rules! err {
     (InvalidSocks5Header) => ( io_err!("invalid socks5 header") );
@@ -49,6 +50,7 @@ pub struct UdpRelay {
     receive_buf: Option<Vec<u8>>,
     dns_token: Token,
     dns_resolver: RcCell<DNSResolver>,
+    server_chooser: RcCell<ServerChooser>,
     cache: Dict<SocketAddr, RcCell<UdpProcessor>>,
     processors: Holder<RcCell<UdpProcessor>>,
     encryptor: RcCell<Encryptor>,
@@ -77,6 +79,7 @@ impl UdpRelay {
         }
 
         let encryptor = new_rc_cell(Encryptor::new(conf["password"].as_str().unwrap()));
+        let server_chooser = new_rc_cell(try!(ServerChooser::new(&conf)));
 
         Ok(UdpRelay {
             token: token,
@@ -86,6 +89,7 @@ impl UdpRelay {
             listener: new_rc_cell(listener),
             dns_token: dns_token,
             dns_resolver: dns_resolver,
+            server_chooser: server_chooser,
             cache: Dict::default(),
             processors: processors,
             encryptor: encryptor,
@@ -149,7 +153,8 @@ impl UdpRelay {
         match parse_header(data) {
             Some((addr_type, mut server_addr, mut server_port, header_length)) => {
                 if cfg!(feature = "sslocal") {
-                    let (addr, port) = choose_a_server(&self.conf).unwrap();
+                    // TODO: change `unwrap` to return `Result`
+                    let (addr, port) = self.server_chooser.borrow_mut().choose().unwrap();
                     server_addr = addr;
                     server_port = port;
                 }

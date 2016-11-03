@@ -85,6 +85,7 @@ lazy_static! {
         if cfg!(feature = "sslocal") {
             m.insert("listen_address", "127.0.0.1");
             m.insert("listen_port", "8010");
+            m.insert("mode", "balance");
         } else {
             m.insert("listen_address", "0.0.0.0");
             m.insert("listen_port", "8111");
@@ -163,10 +164,14 @@ pub fn gen_config() -> Result<Config, ConfigError> {
 
     if cfg!(feature = "sslocal") {
         args = args.arg(Arg::with_name("server")
-            .short("s")
-            .value_name("ip:port")
-            .help("server address and port")
-            .takes_value(true));
+                        .short("s")
+                        .value_name("ip:port")
+                        .help("server address and port")
+                        .takes_value(true))
+                   .arg(Arg::with_name("mode")
+                        .long("mode")
+                        .help("the way to choose server")
+                        .default_value(DEFAULT_VALUE["mode"]));
     }
 
     let matches = args.get_matches();
@@ -208,6 +213,7 @@ fn read_config(config_path: &str) -> Result<Table, ConfigError> {
     }
 }
 
+/// `matches` is from command line, `config` is from toml configuration.
 fn check_config(matches: ArgMatches, mut config: Table) -> Result<Config, ConfigError> {
     macro_rules! check_config {
         ($key:expr) => (
@@ -288,6 +294,14 @@ fn check_config(matches: ArgMatches, mut config: Table) -> Result<Config, Config
             config.insert("servers".to_string(), Value::Array(servers));
         } else if !config.contains_key("servers") {
             return Err(ConfigError::new("ssserver address is missing".to_string()));
+        }
+
+        if !config.contains_key("mode") {
+            if let Some(mode) = matches.value_of("mode") {
+                config.insert("mode".to_string(), Value::String(mode.to_string()));
+            } else {
+                unreachable!();
+            }
         }
     }
 

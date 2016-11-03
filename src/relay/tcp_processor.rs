@@ -7,6 +7,7 @@ use std::io::{Read, Write, Result};
 use mio::tcp::{TcpStream, Shutdown};
 use mio::{EventLoop, Token, Timeout, EventSet, PollOpt};
 
+use mode::ServerChooser;
 use socks5;
 use socks5::addr_type;
 use util::{RcCell, shift_vec};
@@ -15,7 +16,7 @@ use encrypt::Encryptor;
 use asyncdns::{Caller, DNSResolver, HostIpPair};
 use network::{pair2socket_addr, NetworkWriteBytes};
 use socks5::{pack_addr, parse_header, check_auth_method, CheckAuthResult};
-use super::{choose_a_server, Relay};
+use super::Relay;
 
 macro_rules! err {
     (CheckSocks5AuthFailed, $r:expr) => (
@@ -38,6 +39,7 @@ pub struct TcpProcessor {
     conf: Config,
     stage: HandleStage,
     dns_resolver: RcCell<DNSResolver>,
+    server_chooser: RcCell<ServerChooser>,
     timeout: Option<Timeout>,
     local_token: Token,
     local_sock: TcpStream,
@@ -59,7 +61,8 @@ impl TcpProcessor {
                remote_token: Token,
                conf: Config,
                local_sock: TcpStream,
-               dns_resolver: RcCell<DNSResolver>)
+               dns_resolver: RcCell<DNSResolver>,
+               server_chooser: RcCell<ServerChooser>)
                -> Result<TcpProcessor> {
         let stage = if cfg!(feature = "sslocal") {
             HandleStage::Init
@@ -77,6 +80,7 @@ impl TcpProcessor {
             conf: conf,
             stage: stage,
             dns_resolver: dns_resolver,
+            server_chooser: server_chooser,
             timeout: None,
             local_token: local_token,
             local_sock: local_sock,
@@ -400,7 +404,7 @@ impl TcpProcessor {
                         None => return Err(err!(EncryptFailed)),
                     }
 
-                    self.server_address = choose_a_server(&self.conf);
+                    self.server_address = self.server_chooser.borrow_mut().choose();
                 // buffer data
                 } else {
                     if is_ota_session {

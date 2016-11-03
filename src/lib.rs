@@ -32,6 +32,7 @@ pub mod util;
 pub mod network;
 #[macro_use]
 pub mod relay;
+pub mod mode;
 pub mod config;
 pub mod socks5;
 pub mod encrypt;

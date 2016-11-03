@@ -1,10 +1,6 @@
-use std::str::FromStr;
-
-use rand::{thread_rng, Rng};
 use mio::{Handler, Token, EventSet, EventLoop};
 
 use util::RcCell;
-use config::Config;
 
 pub use self::tcp_relay::TcpRelay;
 pub use self::udp_relay::UdpRelay;
@@ -50,17 +46,6 @@ impl Handler for Relay {
 pub trait MyHandler {
     fn ready(&mut self, event_loop: &mut EventLoop<Relay>, token: Token, events: EventSet);
     fn timeout(&mut self, event_loop: &mut EventLoop<Relay>, token: Token);
-}
-
-pub fn choose_a_server(conf: &Config) -> Option<(String, u16)> {
-    let servers = conf["servers"].as_slice().unwrap();
-    let mut rng = thread_rng();
-    let server = rng.choose(servers).unwrap().as_str().unwrap();
-    let parts: Vec<&str> = server.splitn(2, ':').collect();
-    let addr = parts[0].to_string();
-    let port = u16::from_str(parts[1]).unwrap();
-
-    Some((addr, port))
 }
 
 macro_rules! base_err {
