@@ -40,7 +40,7 @@ pub struct TcpProcessor {
     dns_resolver: RcCell<DNSResolver>,
     timeout: Option<Timeout>,
     local_token: Token,
-    local_sock: Option<TcpStream>,
+    local_sock: TcpStream,
     remote_token: Token,
     remote_sock: Option<TcpStream>,
     local_interest: EventSet,
@@ -79,7 +79,7 @@ impl TcpProcessor {
             dns_resolver: dns_resolver,
             timeout: None,
             local_token: local_token,
-            local_sock: Some(local_sock),
+            local_sock: local_sock,
             remote_token: remote_token,
             remote_sock: None,
             local_buf: None,
@@ -106,19 +106,11 @@ impl TcpProcessor {
         }
     }
 
-    fn get_sock(&mut self, is_local_sock: bool) -> TcpStream {
+    fn get_sock(&mut self, is_local_sock: bool) -> &mut TcpStream {
         if is_local_sock {
-            self.local_sock.take().unwrap()
+            &mut self.local_sock
         } else {
-            self.remote_sock.take().unwrap()
-        }
-    }
-
-    pub fn set_sock(&mut self, sock: TcpStream, is_local_sock: bool) {
-        if is_local_sock {
-            self.local_sock = Some(sock);
-        } else {
-            self.remote_sock = Some(sock);
+            self.remote_sock.as_mut().unwrap()
         }
     }
 
@@ -181,14 +173,12 @@ impl TcpProcessor {
             StreamDirection::Up => self.upstream_status = status,
         }
 
-        if self.local_sock.is_some() {
-            self.local_interest = EventSet::none();
-            if self.downstream_status & StreamStatus::WaitWriting {
-                self.local_interest = self.local_interest | EventSet::writable();
-            }
-            if self.upstream_status & StreamStatus::WaitReading {
-                self.local_interest = self.local_interest | EventSet::readable();
-            }
+        self.local_interest = EventSet::none();
+        if self.downstream_status & StreamStatus::WaitWriting {
+            self.local_interest = self.local_interest | EventSet::writable();
+        }
+        if self.upstream_status & StreamStatus::WaitReading {
+            self.local_interest = self.local_interest | EventSet::readable();
         }
 
         if self.remote_sock.is_some() {
@@ -222,17 +212,15 @@ impl TcpProcessor {
                    is_local_sock: bool,
                    is_reregister: bool)
                    -> Result<()> {
-        let sock = self.get_sock(is_local_sock);
         let token = self.get_token(is_local_sock);
         let events = self.get_interest(is_local_sock);
         let pollopts = PollOpt::edge() | PollOpt::oneshot();
 
         let register_result = if is_reregister {
-            event_loop.reregister(&sock, token, events, pollopts)
+            event_loop.reregister(self.get_sock(is_local_sock), token, events, pollopts)
         } else {
-            event_loop.register(&sock, token, events, pollopts)
+            event_loop.register(self.get_sock(is_local_sock), token, events, pollopts)
         };
-        self.set_sock(sock, is_local_sock);
 
         register_result.map(|_| {
             debug!("registered {:?} {:?} socket with {:?}", self, self.sock_desc(is_local_sock), events);
@@ -253,19 +241,21 @@ impl TcpProcessor {
     }
 
     fn receive_data(&mut self, is_local_sock: bool) -> Result<Vec<u8>> {
-        let mut sock = self.get_sock(is_local_sock);
         let mut buf = Vec::with_capacity(BUF_SIZE);
         new_fat_slice_from_vec!(buf_slice, buf);
 
-        match sock.read(buf_slice) {
-            Ok(nread) => unsafe { buf.set_len(nread); },
-            Err(e) => return Err(err!(ReadFailed, e)),
-        }
-        self.set_sock(sock, is_local_sock);
+        // to avoid the stupid borrow error
+        {
+            let mut sock = self.get_sock(is_local_sock);
+            match sock.read(buf_slice) {
+                Ok(nread) => unsafe { buf.set_len(nread); },
+                Err(e) => return Err(err!(ReadFailed, e)),
+            }
 
-        // no read received which means client closed
-        if buf.is_empty() {
-            return Err(err!(ConnectionClosed));
+            // no read received which means client closed
+            if buf.is_empty() {
+                return Err(err!(ConnectionClosed));
+            }
         }
 
         if (cfg!(feature = "sslocal") && !is_local_sock)
@@ -277,10 +267,8 @@ impl TcpProcessor {
     }
 
     fn write_to_sock(&mut self, data: &[u8], is_local_sock: bool) -> Result<usize> {
-        let mut sock = self.get_sock(is_local_sock);
-        let res = sock.write(data).map_err(|e| err!(WriteFailed, e));
-        self.set_sock(sock, is_local_sock);
-        res
+        let sock = self.get_sock(is_local_sock);
+        sock.write(data).map_err(|e| err!(WriteFailed, e))
     }
 
     // data => remote_sock => ssserver/server
@@ -334,8 +322,7 @@ impl TcpProcessor {
         trace!("udp associate handshake");
         self.stage = HandleStage::UDPAssoc;
 
-        let mut sock = self.local_sock.take().unwrap();
-        let addr = try!(sock.local_addr());
+        let addr = try!(self.local_sock.local_addr());
         let packed_addr = pack_addr(addr.ip());
         let mut packed_port = Vec::<u8>::new();
         try_pack!(u16, packed_port, addr.port());
@@ -346,8 +333,7 @@ impl TcpProcessor {
         header.extend_from_slice(&packed_addr);
         header.extend_from_slice(&packed_port);
 
-        try!(sock.write_all(&header));
-        self.local_sock = Some(sock);
+        try!(self.local_sock.write_all(&header));
 
         Ok(())
     }
@@ -536,7 +522,7 @@ impl TcpProcessor {
 
         if token == self.local_token {
             if events.is_error() {
-                let e = self.local_sock.take().unwrap().take_socket_error().unwrap_err();
+                let e = self.local_sock.take_socket_error().unwrap_err();
                 if e.kind() != io::ErrorKind::ConnectionReset {
                     error!("events error on local socket of {:?}: {}", self, e);
                     return Err(err!(EventError));
@@ -580,13 +566,12 @@ impl TcpProcessor {
     pub fn destroy(&mut self, event_loop: &mut EventLoop<Relay>) -> (Token, Token) {
         debug!("destroy {:?}", self);
 
-        if let Some(sock) = self.local_sock.take() {
-            if let Err(e) = sock.shutdown(Shutdown::Both) {
-                if e.kind() != io::ErrorKind::NotConnected {
-                    error!("shutdown local socket {:?} failed: {}", self, e);
-                }
+        if let Err(e) = self.local_sock.shutdown(Shutdown::Both) {
+            if e.kind() != io::ErrorKind::NotConnected {
+                error!("shutdown local socket {:?} failed: {}", self, e);
             }
         }
+
         if let Some(sock) = self.remote_sock.take() {
             if let Err(e) = sock.shutdown(Shutdown::Both) {
                 if e.kind() != io::ErrorKind::NotConnected {
