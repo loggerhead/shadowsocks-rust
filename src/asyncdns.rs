@@ -704,6 +704,8 @@ mod QClass {
 
 #[cfg(test)]
 mod test {
+    use mio::Token;
+
     use asyncdns;
 
     #[test]
@@ -734,7 +736,7 @@ mod test {
             ("localhost.loggerhead.me", "127.0.0.1"),
         ];
 
-        let mut resolver = asyncdns::DNSResolver::new(None, false).unwrap();
+        let mut resolver = asyncdns::DNSResolver::new(Token(0), None, false).unwrap();
         for (hostname, ip) in tests {
             resolver.block_resolve(hostname.to_string()).ok().map_or_else(|| {
                 assert!(false);
