@@ -625,6 +625,7 @@ fn parse_response(data: &[u8]) -> Option<DNSResponse> {
     })
 }
 
+// TODO: make compatible with windows
 fn parse_resolv() -> Vec<String> {
     let mut servers = vec![];
 

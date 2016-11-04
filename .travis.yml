@@ -25,6 +25,7 @@ script:
   - cargo test asyncdns
   - ./run.sh s -d start --log-file ssserver.log --pid-file ssserver.pid
   - ./run.sh c -d start --log-file sslocal.log --pid-file sslocal.pid
+  - sleep 1
   - ./tests/test_tcp.py
   - ./tests/test_udp.py
 
