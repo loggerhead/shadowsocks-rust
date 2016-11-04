@@ -1,15 +1,27 @@
+build: false
+
 environment:
+  PYTHON: "C:\\Python27"
+  PYTHON_VERSION: "2.7.12"
+  PYTHON_ARCH: "32"
+
   matrix:
-  - TARGET: x86_64-pc-windows-msvc
+    - TARGET: x86_64-pc-windows-msvc
+
 install:
   - curl -sSf -o rustup-init.exe https://win.rustup.rs/
   - rustup-init.exe -y --default-host %TARGET%
-  - set PATH=%PATH%;C:\Users\appveyor\.cargo\bin
+  - set PATH=%PATH%;C:\Users\appveyor\.cargo\bin;%PYTHON%/Scripts/
   - rustc -V
   - cargo -V
-
-build: false
+  - "pip.exe install PySocks"
 
 test_script:
-  - cargo build
-  - cargo build --features sslocal
+  - cargo test --test encrypt
+  - cargo test asyncdns
+  - cargo run -- -h
+  - ps: Start-Process cargo run -- -c tests\config\server_conf.toml --log-file ssserver.log
+  - cargo run --features sslocal -- -h
+  - ps: Start-Process cargo run --features sslocal -- -c tests\config\client_conf.toml --log-file sslocal.log
+  - python tests\test_tcp.py
+  - python tests\test_udp.py

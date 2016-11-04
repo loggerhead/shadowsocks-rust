@@ -129,11 +129,6 @@ pub fn gen_config() -> Result<Config, ConfigError> {
             .short("q")
             .multiple(true)
             .help("quiet mode, only show warnings/errors"))
-        .arg(Arg::with_name("pid_file")
-            .long("pid-file")
-            .value_name("pid_file")
-            .help("pid file for daemon mode")
-            .takes_value(true))
         .arg(Arg::with_name("log_file")
             .long("log-file")
             .value_name("log_file")
@@ -159,10 +154,15 @@ pub fn gen_config() -> Result<Config, ConfigError> {
 
     if cfg!(target_family = "unix") {
         args = args.arg(Arg::with_name("daemon")
-            .short("d")
-            .help("daemon mode")
-            .takes_value(true)
-            .possible_values(&["start", "stop", "restart"]));
+                .short("d")
+                .help("daemon mode")
+                .takes_value(true)
+                .possible_values(&["start", "stop", "restart"]))
+            .arg(Arg::with_name("pid_file")
+                .long("pid-file")
+                .value_name("pid_file")
+                .help("pid file for daemon mode")
+                .takes_value(true));
     }
 
     if cfg!(feature = "sslocal") {
