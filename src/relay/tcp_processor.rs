@@ -643,12 +643,7 @@ impl TcpProcessor {
         }
 
         if cfg!(feature = "sslocal") {
-            match (self.server_address.take(), self.remote_hostname.take()) {
-                (Some(server), Some(hostname)) => {
-                    self.server_chooser.borrow_mut().punish(self.get_id(), server, &hostname);
-                }
-                _ => {}
-            }
+            self.server_chooser.borrow_mut().punish(self.get_id());
         }
 
         self.dns_resolver.borrow_mut().remove_caller(self.get_id());

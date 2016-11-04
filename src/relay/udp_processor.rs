@@ -312,6 +312,10 @@ impl UdpProcessor {
             event_loop.clear_timeout(timeout);
         }
 
+        if cfg!(feature = "sslocal") {
+            self.server_chooser.borrow_mut().punish(self.get_id());
+        }
+
         self.dns_resolver.borrow_mut().remove_caller(self.get_id());
         self.interest = EventSet::none();
         self.receive_buf = None;

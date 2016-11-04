@@ -33,9 +33,10 @@ enum Mode {
 pub struct ServerChooser {
     rng: ThreadRng,
     mode: Mode,
-    host_to_servers: LruCache<String, Servers>,
     servers: Servers,
+    host_to_servers: LruCache<String, Servers>,
     activities: Dict<Activity, VecDeque<SystemTime>>,
+    token_to_pair: Dict<Token, (Server, String)>,
 }
 
 impl ServerChooser {
@@ -66,9 +67,10 @@ impl ServerChooser {
         Ok(ServerChooser {
             rng: thread_rng(),
             mode: mode,
-            host_to_servers: host_to_servers,
             servers: servers,
+            host_to_servers: host_to_servers,
             activities: Dict::default(),
+            token_to_pair: Dict::default(),
         })
     }
 
@@ -131,6 +133,7 @@ impl ServerChooser {
     pub fn record(&mut self, token: Token, server: Server, hostname: &str) {
         match self.mode {
             Mode::Fast => {
+                self.token_to_pair.insert(token, (server.clone(), hostname.to_string()));
                 let host = self.get_host(hostname);
                 let times = self.activities.entry((token, server, host)).or_insert(VecDeque::new());
                 times.push_back(SystemTime::now());
@@ -161,17 +164,19 @@ impl ServerChooser {
         }
     }
 
-    pub fn punish(&mut self, token: Token, server: Server, hostname: &str) {
+    pub fn punish(&mut self, token: Token) {
         match self.mode {
             Mode::Fast => {
-                let host = self.get_host(hostname);
-                let tsh = (token, server, host);
-                self.activities.remove(&tsh);
-                self.host_to_servers.get_mut(&tsh.2).map(|servers| {
-                    servers.get_mut(&tsh.1).map(|record| {
-                        record.punish();
+                if let Some(&(ref server, ref hostname)) = self.token_to_pair.get(&token) {
+                    let host = self.get_host(hostname);
+                    let tsh = (token, server.clone(), host);
+                    self.activities.remove(&tsh);
+                    self.host_to_servers.get_mut(&tsh.2).map(|servers| {
+                        servers.get_mut(&tsh.1).map(|record| {
+                            record.punish();
+                        });
                     });
-                });
+                }
             }
             _ => {}
         }
