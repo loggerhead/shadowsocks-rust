@@ -66,6 +66,7 @@ macro_rules! processor_err {
     (ConnectFailed, $e:expr) => ( io_err!("connect to server failed ({})", $e) );
     (EncryptFailed) => ( io_err!("encrypt data failed") );
     (DecryptFailed) => ( io_err!("decrypt data failed") );
+    (NoServerAvailable) => ( io_err!("no ssserver available") );
 
     ($($arg:tt)*) => ( base_err!($($arg)*) );
 }

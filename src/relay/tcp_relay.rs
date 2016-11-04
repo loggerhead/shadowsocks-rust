@@ -44,10 +44,11 @@ impl TcpRelay {
         let address = format!("{}:{}", ip, port);
 
         let socket_addr = try!(if prefer_ipv6 {
-            str2addr6(&address)
-        } else {
-            str2addr4(&address)
-        }.ok_or(err!(ParseAddrFailed)));
+                str2addr6(&address)
+            } else {
+                str2addr4(&address)
+            }
+            .ok_or(err!(ParseAddrFailed)));
         let listener = try!(TcpListener::bind(&socket_addr).or(Err(err!(BindAddrFailed, address))));
 
 

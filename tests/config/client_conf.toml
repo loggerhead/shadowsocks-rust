@@ -3,7 +3,7 @@ servers = [
 ]
 listen_port = 8010
 password = "foo"
-timeout = 60
+timeout = 10
 encrypt_method = "aes-256-ctr"
 one_time_auth = true
 mode = "fast"

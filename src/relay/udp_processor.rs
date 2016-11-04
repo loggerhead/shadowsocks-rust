@@ -1,8 +1,10 @@
 use std::io;
 use std::io::Result;
 use std::fmt;
-use std::net::SocketAddr;
+use std::time::Duration;
+use std::net::{SocketAddr, IpAddr};
 
+use lru_time_cache::LruCache;
 use mio::udp::UdpSocket;
 use mio::{EventSet, Token, Timeout, EventLoop, PollOpt};
 
@@ -41,6 +43,8 @@ pub struct UdpProcessor {
     dns_resolver: RcCell<DNSResolver>,
     server_chooser: RcCell<ServerChooser>,
     encryptor: RcCell<Encryptor>,
+    hostname_to_server: LruCache<String, (String, u16)>,
+    ip_to_hostname: LruCache<IpAddr, String>,
 }
 
 impl UdpProcessor {
@@ -53,6 +57,7 @@ impl UdpProcessor {
                encryptor: RcCell<Encryptor>)
                -> Result<UdpProcessor> {
         let sock = try!(UdpSocket::v4().map_err(|_| err!(InitSocketFailed)));
+        let cache_timeout = Duration::new(600, 0);
 
         Ok(UdpProcessor {
             token: token,
@@ -68,6 +73,8 @@ impl UdpProcessor {
             encryptor: encryptor,
             dns_resolver: dns_resolver,
             server_chooser: server_chooser,
+            hostname_to_server: LruCache::with_expiry_duration(cache_timeout.clone()),
+            ip_to_hostname: LruCache::with_expiry_duration(cache_timeout),
         })
     }
 
@@ -110,6 +117,33 @@ impl UdpProcessor {
         self.do_register(event_loop, true)
     }
 
+    fn record_activity(&mut self, server_address: (String, u16), remote_hostname: &str) {
+        match self.stage {
+            HandleStage::Addr | HandleStage::Stream => {
+                self.hostname_to_server.insert(remote_hostname.to_string(), server_address.clone());
+                self.server_chooser
+                    .borrow_mut()
+                    .record(self.token, server_address, remote_hostname);
+            }
+            _ => {}
+        }
+    }
+
+    fn update_activity(&mut self, ip: &IpAddr) {
+        match self.stage {
+            HandleStage::Addr | HandleStage::Stream => {
+                if let Some(hostname) = self.ip_to_hostname.get(ip) {
+                    if let Some(server) = self.hostname_to_server.get(hostname) {
+                        self.server_chooser
+                            .borrow_mut()
+                            .update(self.token, server.clone(), hostname);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn add_request(&mut self, server_addr: String, server_port: u16, data: Vec<u8>) {
         if !self.requests.contains_key(&server_addr) {
             self.requests.insert(server_addr.clone(), Dict::default());
@@ -136,16 +170,14 @@ impl UdpProcessor {
         res.map_err(|e| err!(WriteFailed, e))
     }
 
-    pub fn handle_data(&mut self,
-                       event_loop: &mut EventLoop<Relay>,
-                       data: &[u8],
-                       addr_type: u8,
-                       server_addr: String,
-                       server_port: u16,
-                       header_length: usize)
-                       -> Result<()> {
-        trace!("{:?} handle data", self);
-        self.stage = HandleStage::Init;
+    pub fn handle_request(&mut self,
+                          event_loop: &mut EventLoop<Relay>,
+                          data: &[u8],
+                          header: (u8, String, u16, usize))
+                          -> Result<()> {
+        let (addr_type, remote_address, remote_port, header_length) = header;
+        info!("sending udp request to {}:{}", remote_address, remote_port);
+        self.stage = HandleStage::Addr;
         self.reset_timeout(event_loop);
 
         let is_ota_enabled = self.conf.get_bool("one_time_auth").unwrap_or(false);
@@ -170,32 +202,38 @@ impl UdpProcessor {
         };
 
         if let Some(request) = request {
-            if cfg!(feature = "sslocal") {
+            let server_addr = if cfg!(feature = "sslocal") {
+                // TODO: change `unwrap` to return `Result`
+                let (server_addr, server_port) =
+                    self.server_chooser.borrow_mut().choose(&remote_address).unwrap();
+                self.record_activity((server_addr.clone(), server_port), &remote_address);
                 self.add_request(server_addr.clone(), server_port, request);
+                server_addr
             } else {
-                self.add_request(server_addr.clone(),
-                                 server_port,
+                self.add_request(remote_address.clone(),
+                                 remote_port,
                                  request[header_length..].to_vec());
+                remote_address
+            };
+
+            let resolved = self.dns_resolver.borrow_mut().resolve(self.token, server_addr);
+            match resolved {
+                Ok(None) => {}
+                // if hostname is resolved immediately
+                res => self.handle_dns_resolved(event_loop, res),
             }
+
+            Ok(())
         } else {
             if cfg!(feature = "sslocal") {
-                return Err(err!(EncryptFailed));
+                Err(err!(EncryptFailed))
             } else {
-                return Err(err!(DecryptFailed));
+                Err(err!(DecryptFailed))
             }
         }
-
-        let resolved = self.dns_resolver.borrow_mut().resolve(self.token, server_addr);
-        match resolved {
-            Ok(None) => {}
-            // if hostname is resolved immediately
-            res => self.handle_dns_resolved(event_loop, res),
-        }
-
-        Ok(())
     }
 
-    fn on_read(&mut self, event_loop: &mut EventLoop<Relay>) -> Result<Option<usize>> {
+    fn on_remote_read(&mut self, event_loop: &mut EventLoop<Relay>) -> Result<Option<usize>> {
         trace!("{:?} handle stage stream", self);
         self.stage = HandleStage::Stream;
         self.reset_timeout(event_loop);
@@ -212,7 +250,7 @@ impl UdpProcessor {
                 }
 
                 if cfg!(feature = "sslocal") {
-                    self.server_chooser.borrow_mut().update(self.get_id());
+                    self.update_activity(&addr.ip());
                     match self.encryptor.borrow_mut().decrypt_udp(&buf) {
                         Some(data) => {
                             if parse_header(&data).is_some() {
@@ -263,7 +301,7 @@ impl UdpProcessor {
             return Err(err!(EventError));
         }
 
-        try!(self.on_read(event_loop));
+        try!(self.on_remote_read(event_loop));
         self.reregister(event_loop)
     }
 
@@ -305,6 +343,12 @@ impl Caller for UdpProcessor {
         }
 
         if let Some((hostname, ip)) = my_try!(res) {
+            if cfg!(feature = "sslocal") {
+                let address = format!("{}:0", ip);
+                let ip_addr = my_try!(str2addr4(&address).ok_or(err!(ParseAddrFailed))).ip();
+                self.ip_to_hostname.insert(ip_addr, hostname.clone());
+            }
+
             if let Some(port_requests_map) = self.requests.remove(&hostname) {
                 for (port, requests) in &port_requests_map {
                     let address = format!("{}:{}", ip, port);
@@ -335,8 +379,9 @@ const SERVER: bool = false;
 
 #[derive(Debug)]
 enum HandleStage {
-    // only sslocal: auth METHOD received from local, reply with selection message
     Init,
+    // only sslocal: auth METHOD received from local, reply with selection message
+    Addr,
     // DNS resolved, connect to remote
     Dns,
     Stream,

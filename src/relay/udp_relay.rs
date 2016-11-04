@@ -31,8 +31,8 @@ use config::Config;
 use socks5::parse_header;
 use network::{str2addr4, str2addr6};
 use encrypt::Encryptor;
-// TODO: rename DNSResolver
-use asyncdns::{DNSResolver, Caller};
+// TODO: rename `DNSResolver` to `DnsResolver`
+use asyncdns::DNSResolver;
 use collections::{Holder, Dict};
 use super::{Relay, MyHandler, UdpProcessor};
 
@@ -43,6 +43,8 @@ macro_rules! err {
     ($($arg:tt)*) => ( processor_err!($($arg)*) );
 }
 
+// only receive data from client/sslocal,
+// and relay the data to `UdpProcessor`
 pub struct UdpRelay {
     token: Token,
     conf: Config,
@@ -70,20 +72,21 @@ impl UdpRelay {
         let host = conf["listen_address"].as_str().unwrap().to_string();
         let port = conf["listen_port"].as_integer().unwrap();
         let (_host, ip) = try!(dns_resolver.block_resolve(host)
-                               .and_then(|h| h.ok_or(err!(DnsResolveFailed, "timeout"))));
+            .and_then(|h| h.ok_or(err!(DnsResolveFailed, "timeout"))));
         let address = format!("{}:{}", ip, port);
 
         let socket_addr = try!(if prefer_ipv6 {
-            str2addr6(&address)
-        } else {
-            str2addr4(&address)
-        }.ok_or(err!(ParseAddrFailed)));
+                str2addr6(&address)
+            } else {
+                str2addr4(&address)
+            }
+            .ok_or(err!(ParseAddrFailed)));
         let listener = try!(UdpSocket::v4()
-                            .and_then(|sock| {
-                                try!(sock.bind(&socket_addr));
-                                Ok(sock)
-                            })
-                            .or(Err(err!(BindAddrFailed, address))));
+            .and_then(|sock| {
+                try!(sock.bind(&socket_addr));
+                Ok(sock)
+            })
+            .or(Err(err!(BindAddrFailed, address))));
 
         let encryptor = new_rc_cell(Encryptor::new(conf["password"].as_str().unwrap()));
 
@@ -166,8 +169,7 @@ impl UdpRelay {
                       -> Result<()> {
         // parse socks5 header
         match parse_header(data) {
-            Some((addr_type, mut server_addr, mut server_port, header_length)) => {
-                info!("sending udp request to {}:{}", server_addr, server_port);
+            Some(header) => {
                 if !self.cache.contains_key(&client_addr) {
                     debug!("create udp processor for {:?}", client_addr);
                     let token = try!(self.processors.alloc_token().ok_or(err!(AllocTokenFailed)));
@@ -176,21 +178,7 @@ impl UdpRelay {
 
                 if data.len() > 0 {
                     let p = &self.cache[&client_addr];
-
-                    if cfg!(feature = "sslocal") {
-                        let token = p.borrow().get_id();
-                        // TODO: change `unwrap` to return `Result`
-                        let (addr, port) = self.server_chooser.borrow_mut().choose(token).unwrap();
-                        server_addr = addr;
-                        server_port = port;
-                    }
-
-                    try!(p.borrow_mut().handle_data(event_loop,
-                                                    data,
-                                                    addr_type,
-                                                    server_addr,
-                                                    server_port,
-                                                    header_length));
+                    try!(p.borrow_mut().handle_request(event_loop, data, header));
                 }
                 Ok(())
             }

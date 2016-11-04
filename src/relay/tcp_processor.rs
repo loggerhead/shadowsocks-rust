@@ -51,6 +51,7 @@ pub struct TcpProcessor {
     remote_buf: Option<Vec<u8>>,
     client_address: (String, u16),
     server_address: Option<(String, u16)>,
+    remote_hostname: Option<String>,
     encryptor: Encryptor,
     downstream_status: StreamStatus,
     upstream_status: StreamStatus,
@@ -89,6 +90,7 @@ impl TcpProcessor {
             remote_buf: None,
             client_address: client_address,
             server_address: None,
+            remote_hostname: None,
             encryptor: encryptor,
             local_interest: EventSet::none(),
             remote_interest: EventSet::none(),
@@ -249,17 +251,44 @@ impl TcpProcessor {
         self.do_register(event_loop, is_local_sock, LOCAL)
     }
 
+    fn record_activity(&self) {
+        match self.stage {
+            HandleStage::Addr | HandleStage::Connecting | HandleStage::Stream => {
+                self.server_chooser.borrow_mut().record(self.get_id(),
+                                                        self.server_address.clone().unwrap(),
+                                                        self.remote_hostname.as_ref().unwrap());
+            }
+            _ => {}
+        }
+    }
+
+    fn update_activity(&self) {
+        match self.stage {
+            HandleStage::Addr | HandleStage::Connecting | HandleStage::Stream => {
+                self.server_chooser.borrow_mut().update(self.get_id(),
+                                                        self.server_address.clone().unwrap(),
+                                                        self.remote_hostname.as_ref().unwrap());
+            }
+            _ => {}
+        }
+    }
+
     fn receive_data(&mut self, is_local_sock: bool) -> Result<Vec<u8>> {
         let mut buf = Vec::with_capacity(BUF_SIZE);
         new_fat_slice_from_vec!(buf_slice, buf);
 
         // to avoid the stupid borrow error
         {
-            let mut sock = self.get_sock(is_local_sock);
-            match sock.read(buf_slice) {
-                Ok(nread) => unsafe {
-                    buf.set_len(nread);
-                },
+            let res = self.get_sock(is_local_sock).read(buf_slice);
+            match res {
+                Ok(nread) => {
+                    if cfg!(feature = "sslocal") && !is_local_sock {
+                        self.update_activity();
+                    }
+                    unsafe {
+                        buf.set_len(nread);
+                    }
+                }
                 Err(e) => return Err(err!(ReadFailed, e)),
             }
 
@@ -278,8 +307,12 @@ impl TcpProcessor {
     }
 
     fn write_to_sock(&mut self, data: &[u8], is_local_sock: bool) -> Result<usize> {
-        let sock = self.get_sock(is_local_sock);
-        sock.write(data).map_err(|e| err!(WriteFailed, e))
+        let nwrite =
+            try!(self.get_sock(is_local_sock).write(data).map_err(|e| err!(WriteFailed, e)));
+        if cfg!(feature = "sslocal") && !is_local_sock {
+            self.record_activity();
+        }
+        Ok(nwrite)
     }
 
     // data => remote_sock => ssserver/server
@@ -419,9 +452,16 @@ impl TcpProcessor {
                         None => return Err(err!(EncryptFailed)),
                     }
 
-                    self.server_address = self.server_chooser.borrow_mut().choose(self.get_id());
-                    // buffer data
+                    let server_address = self.server_chooser.borrow_mut().choose(&remote_address);
+                    match server_address {
+                        Some(address) => {
+                            self.remote_hostname = Some(remote_address);
+                            self.server_address = Some(address);
+                        }
+                        None => return Err(err!(NoServerAvailable)),
+                    }
                 } else {
+                    // buffer data
                     if is_ota_session {
                         self.extend_buf(&data, REMOTE);
                     } else if data.len() > header_length {
@@ -482,7 +522,6 @@ impl TcpProcessor {
         self.reset_timeout(event_loop);
 
         let data = if cfg!(feature = "sslocal") {
-            self.server_chooser.borrow_mut().update(self.get_id());
             data
         } else {
             match self.encryptor.encrypt(&data) {
@@ -601,6 +640,15 @@ impl TcpProcessor {
 
         if let Some(timeout) = self.timeout.take() {
             event_loop.clear_timeout(timeout);
+        }
+
+        if cfg!(feature = "sslocal") {
+            match (self.server_address.take(), self.remote_hostname.take()) {
+                (Some(server), Some(hostname)) => {
+                    self.server_chooser.borrow_mut().punish(self.get_id(), server, &hostname);
+                }
+                _ => {}
+            }
         }
 
         self.dns_resolver.borrow_mut().remove_caller(self.get_id());

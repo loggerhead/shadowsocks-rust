@@ -15,7 +15,7 @@
 - [x] Running as daemon
 - [x] UDP support
 - [x] OTA encrypt method support
-- [ ] add mode support (`fast` and `balance`)
+- [x] add mode support (`fast` and `balance`)
 - [ ] Multiple encrypt methods support (wait a stable crypto library)
 - [ ] TCP fast open (wait a new computer)
 
