@@ -102,7 +102,7 @@ impl ServerChooser {
                     rtt = Some(r1);
                 }
                 Some(r2) => {
-                    if r1 > r2 {
+                    if r1 < r2 {
                         server = Some(s);
                         rtt = Some(r1);
                     }
@@ -262,9 +262,8 @@ impl ServerChooser {
 
 #[derive(Eq, Debug, Copy, Clone)]
 struct RttRecord {
-    // lower is prefer
-    weight: u64,
-    estimated: u32,
+    rto: u64,
+    rtt: u32,
     dev: u32,
     last_activity: SystemTime,
 }
@@ -272,15 +271,15 @@ struct RttRecord {
 impl RttRecord {
     fn new() -> RttRecord {
         RttRecord {
-            weight: 0,
-            estimated: 0,
+            rto: 0,
+            rtt: 0,
             dev: 0,
             last_activity: SystemTime::now(),
         }
     }
 
-    fn update_weight(&mut self) {
-        self.weight = self.estimated as u64 + 4 * self.dev as u64;
+    fn update_rto(&mut self) {
+        self.rto = self.rtt as u64 + 4 * self.dev as u64;
     }
 
     fn update(&mut self, last_activity: &SystemTime) {
@@ -289,15 +288,15 @@ impl RttRecord {
             .map(|d| d.as_secs() as u32 * 1000 + d.subsec_nanos() / 1000000);
 
         if let Ok(elapsed_ms) = dt {
-            let mut estimated = self.estimated as f32;
+            let mut rtt = self.rtt as f32;
             let mut dev = self.dev as f32;
 
-            estimated = 0.875 * estimated + 0.125 * elapsed_ms as f32;
-            dev = 0.75 * dev + 0.25 * (elapsed_ms as f32 - estimated).abs();
+            rtt = 0.875 * rtt + 0.125 * elapsed_ms as f32;
+            dev = 0.75 * dev + 0.25 * (elapsed_ms as f32 - rtt).abs();
 
-            self.estimated = estimated as u32;
+            self.rtt = rtt as u32;
             self.dev = dev as u32;
-            self.update_weight();
+            self.update_rto();
         }
     }
 
@@ -316,14 +315,14 @@ impl RttRecord {
                 Some(dev) => self.dev = dev,
                 None => self.dev = u32::max_value(),
             }
-            self.update_weight();
+            self.update_rto();
         }
     }
 }
 
 impl Ord for RttRecord {
     fn cmp(&self, other: &RttRecord) -> Ordering {
-        self.weight.cmp(&other.weight)
+        self.rto.cmp(&other.rto)
     }
 }
 
@@ -335,6 +334,6 @@ impl PartialOrd for RttRecord {
 
 impl PartialEq for RttRecord {
     fn eq(&self, other: &RttRecord) -> bool {
-        self.weight == other.weight
+        self.rto == other.rto
     }
 }
