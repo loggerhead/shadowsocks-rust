@@ -289,7 +289,7 @@ impl UdpProcessor {
     }
 
     // send to up stream
-    pub fn process(&mut self,
+    pub fn handle_events(&mut self,
                    event_loop: &mut EventLoop<Relay>,
                    _token: Token,
                    events: EventSet)

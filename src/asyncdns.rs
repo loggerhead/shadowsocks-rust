@@ -364,7 +364,7 @@ impl DNSResolver {
         self.do_register(event_loop, true)
     }
 
-    pub fn process(&mut self, event_loop: &mut EventLoop<Relay>, events: EventSet) -> Result<()> {
+    pub fn handle_events(&mut self, event_loop: &mut EventLoop<Relay>, events: EventSet) -> Result<()> {
         if events.is_error() {
             error!("events error on DNS socket");
             let _ = event_loop.deregister(&self.sock);

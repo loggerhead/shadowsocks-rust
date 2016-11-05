@@ -571,7 +571,7 @@ impl TcpProcessor {
             .and_then(|addr| TcpStream::connect(&addr))
     }
 
-    pub fn process(&mut self,
+    pub fn handle_events(&mut self,
                    event_loop: &mut EventLoop<Relay>,
                    token: Token,
                    events: EventSet)

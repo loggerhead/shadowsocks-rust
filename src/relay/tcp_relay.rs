@@ -119,7 +119,7 @@ impl TcpRelay {
         }
     }
 
-    fn process(&mut self, event_loop: &mut EventLoop<Relay>, events: EventSet) -> Result<()> {
+    fn handle_events(&mut self, event_loop: &mut EventLoop<Relay>, events: EventSet) -> Result<()> {
         try!(event_loop.reregister(&self.listener,
                                    self.token,
                                    EventSet::readable(),
@@ -158,7 +158,7 @@ impl TcpRelay {
 impl MyHandler for TcpRelay {
     fn ready(&mut self, event_loop: &mut EventLoop<Relay>, token: Token, events: EventSet) {
         if token == self.token {
-            self.process(event_loop, events)
+            self.handle_events(event_loop, events)
                 .map_err(|e| {
                     error!("tcp relay: {}", e);
                 })
@@ -166,7 +166,7 @@ impl MyHandler for TcpRelay {
         } else if token == self.dns_token {
             self.dns_resolver
                 .borrow_mut()
-                .process(event_loop, events)
+                .handle_events(event_loop, events)
                 .map_err(|e| {
                     error!("dns resolver: {}", e);
                 })
@@ -174,7 +174,7 @@ impl MyHandler for TcpRelay {
         } else {
             let res = self.processors.get(token).map(|p| {
                 try!(p.borrow().fetch_error());
-                p.borrow_mut().process(event_loop, token, events)
+                p.borrow_mut().handle_events(event_loop, token, events)
             });
             if let Some(Err(e)) = res {
                 if e.kind() != io::ErrorKind::ConnectionReset {
