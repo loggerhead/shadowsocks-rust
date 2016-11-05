@@ -6,11 +6,10 @@ use mio::{Token, EventSet, EventLoop, PollOpt};
 
 use mode::ServerChooser;
 use config::Config;
-use network::{str2addr4, str2addr6};
 use collections::Holder;
 use asyncdns::DNSResolver;
 use util::{RcCell, new_rc_cell};
-use super::{TcpProcessor, MyHandler, Relay};
+use super::{init_relay, TcpProcessor, MyHandler, Relay};
 use super::tcp_processor::LOCAL;
 
 macro_rules! err {
@@ -29,43 +28,32 @@ pub struct TcpRelay {
 
 impl TcpRelay {
     pub fn new(conf: Config) -> Result<TcpRelay> {
-        let mut processors = Holder::new();
-        let token = try!(processors.alloc_token().ok_or(err!(AllocTokenFailed)));
-        let dns_token = try!(processors.alloc_token().ok_or(err!(AllocTokenFailed)));
+        init_relay(conf, |conf,
+                    token,
+                    dns_token,
+                    dns_resolver,
+                    server_chooser,
+                    processors,
+                    socket_addr| {
+            let address = format!("{}:{}", socket_addr.ip(), socket_addr.port());
+            let listener = try!(TcpListener::bind(&socket_addr)
+                .or(Err(err!(BindAddrFailed, address))));
 
-        let prefer_ipv6 = conf["prefer_ipv6"].as_bool().unwrap();
-        let mut dns_resolver = try!(DNSResolver::new(dns_token, None, prefer_ipv6));
-        let server_chooser = try!(ServerChooser::new(&conf));
-
-        let host = conf["listen_address"].as_str().unwrap().to_string();
-        let port = conf["listen_port"].as_integer().unwrap();
-        let (_host, ip) = try!(dns_resolver.block_resolve(host)
-            .and_then(|h| h.ok_or(err!(DnsResolveFailed, "timeout"))));
-        let address = format!("{}:{}", ip, port);
-
-        let socket_addr = try!(if prefer_ipv6 {
-                str2addr6(&address)
+            if cfg!(feature = "sslocal") {
+                info!("ssclient tcp relay listen on {}", address);
             } else {
-                str2addr4(&address)
+                info!("ssserver tcp relay listen on {}", address);
             }
-            .ok_or(err!(ParseAddrFailed)));
-        let listener = try!(TcpListener::bind(&socket_addr).or(Err(err!(BindAddrFailed, address))));
 
-
-        if cfg!(feature = "sslocal") {
-            info!("ssclient tcp relay listen on {}", address);
-        } else {
-            info!("ssserver tcp relay listen on {}", address);
-        }
-
-        Ok(TcpRelay {
-            token: token,
-            conf: conf,
-            listener: listener,
-            dns_token: dns_token,
-            dns_resolver: new_rc_cell(dns_resolver),
-            server_chooser: new_rc_cell(server_chooser),
-            processors: processors,
+            Ok(TcpRelay {
+                token: token,
+                conf: conf,
+                listener: listener,
+                dns_token: dns_token,
+                dns_resolver: dns_resolver,
+                server_chooser: server_chooser,
+                processors: processors,
+            })
         })
     }
 

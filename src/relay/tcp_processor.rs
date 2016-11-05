@@ -572,10 +572,10 @@ impl TcpProcessor {
     }
 
     pub fn handle_events(&mut self,
-                   event_loop: &mut EventLoop<Relay>,
-                   token: Token,
-                   events: EventSet)
-                   -> Result<()> {
+                         event_loop: &mut EventLoop<Relay>,
+                         token: Token,
+                         events: EventSet)
+                         -> Result<()> {
         debug!("current handle stage of {:?} is {:?}", self, self.stage);
 
         if token == self.local_token {

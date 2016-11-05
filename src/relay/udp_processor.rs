@@ -290,10 +290,10 @@ impl UdpProcessor {
 
     // send to up stream
     pub fn handle_events(&mut self,
-                   event_loop: &mut EventLoop<Relay>,
-                   _token: Token,
-                   events: EventSet)
-                   -> Result<()> {
+                         event_loop: &mut EventLoop<Relay>,
+                         _token: Token,
+                         events: EventSet)
+                         -> Result<()> {
         debug!("current handle stage of {:?} is {:?}", self, self.stage);
 
         if events.is_error() {

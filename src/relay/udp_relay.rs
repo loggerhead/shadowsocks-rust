@@ -29,12 +29,11 @@ use mode::ServerChooser;
 use util::{RcCell, new_rc_cell};
 use config::Config;
 use socks5::parse_header;
-use network::{str2addr4, str2addr6};
 use encrypt::Encryptor;
 // TODO: rename `DNSResolver` to `DnsResolver`
 use asyncdns::DNSResolver;
 use collections::{Holder, Dict};
-use super::{Relay, MyHandler, UdpProcessor};
+use super::{init_relay, Relay, MyHandler, UdpProcessor};
 
 macro_rules! err {
     (InvalidSocks5Header) => ( io_err!("invalid socks5 header") );
@@ -61,53 +60,41 @@ pub struct UdpRelay {
 
 impl UdpRelay {
     pub fn new(conf: Config) -> Result<UdpRelay> {
-        let mut processors = Holder::new();
-        let token = try!(processors.alloc_token().ok_or(err!(AllocTokenFailed)));
-        let dns_token = try!(processors.alloc_token().ok_or(err!(AllocTokenFailed)));
+        init_relay(conf, |conf,
+                    token,
+                    dns_token,
+                    dns_resolver,
+                    server_chooser,
+                    processors,
+                    socket_addr| {
+            let encryptor = new_rc_cell(Encryptor::new(conf["password"].as_str().unwrap()));
+            let address = format!("{}:{}", socket_addr.ip(), socket_addr.port());
+            let listener = try!(UdpSocket::v4()
+                .and_then(|sock| {
+                    try!(sock.bind(&socket_addr));
+                    Ok(sock)
+                })
+                .or(Err(err!(BindAddrFailed, address))));
 
-        let prefer_ipv6 = conf["prefer_ipv6"].as_bool().unwrap();
-        let mut dns_resolver = try!(DNSResolver::new(dns_token, None, prefer_ipv6));
-        let server_chooser = try!(ServerChooser::new(&conf));
-
-        let host = conf["listen_address"].as_str().unwrap().to_string();
-        let port = conf["listen_port"].as_integer().unwrap();
-        let (_host, ip) = try!(dns_resolver.block_resolve(host)
-            .and_then(|h| h.ok_or(err!(DnsResolveFailed, "timeout"))));
-        let address = format!("{}:{}", ip, port);
-
-        let socket_addr = try!(if prefer_ipv6 {
-                str2addr6(&address)
+            if cfg!(feature = "sslocal") {
+                info!("ssclient udp relay listen on {}", address);
             } else {
-                str2addr4(&address)
+                info!("ssserver udp relay listen on {}", address);
             }
-            .ok_or(err!(ParseAddrFailed)));
-        let listener = try!(UdpSocket::v4()
-            .and_then(|sock| {
-                try!(sock.bind(&socket_addr));
-                Ok(sock)
+
+            Ok(UdpRelay {
+                token: token,
+                conf: conf,
+                interest: EventSet::readable(),
+                receive_buf: Some(Vec::with_capacity(BUF_SIZE)),
+                listener: new_rc_cell(listener),
+                dns_token: dns_token,
+                dns_resolver: dns_resolver,
+                server_chooser: server_chooser,
+                cache: Dict::default(),
+                processors: processors,
+                encryptor: encryptor,
             })
-            .or(Err(err!(BindAddrFailed, address))));
-
-        let encryptor = new_rc_cell(Encryptor::new(conf["password"].as_str().unwrap()));
-
-        if cfg!(feature = "sslocal") {
-            info!("ssclient udp relay listen on {}", address);
-        } else {
-            info!("ssserver udp relay listen on {}", address);
-        }
-
-        Ok(UdpRelay {
-            token: token,
-            conf: conf,
-            interest: EventSet::readable(),
-            receive_buf: Some(Vec::with_capacity(BUF_SIZE)),
-            listener: new_rc_cell(listener),
-            dns_token: dns_token,
-            dns_resolver: new_rc_cell(dns_resolver),
-            server_chooser: new_rc_cell(server_chooser),
-            cache: Dict::default(),
-            processors: processors,
-            encryptor: encryptor,
         })
     }
 
