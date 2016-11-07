@@ -13,7 +13,7 @@ use mio::{Token, EventSet, EventLoop, PollOpt};
 use relay::Relay;
 use collections::{Set, Dict};
 use network::{NetworkWriteBytes, NetworkReadBytes};
-use network::{is_ip, slice2ip4, slice2ip6, str2addr4};
+use network::{is_ip, slice2ip4, slice2ip6, pair2addr4, pair2addr6};
 use util::{RcCell, handle_every_line, slice2string, slice2str};
 
 // All communications inside of the domain protocol are carried in a single
@@ -131,18 +131,17 @@ impl DNSResolver {
                server_list: Option<Vec<String>>,
                prefer_ipv6: bool)
                -> Result<DNSResolver> {
-        let sock = try!(UdpSocket::v4().map_err(|_| err!(InitSocketFailed)));
         // pre-define DNS server list
         let servers = match server_list {
             Some(servers) => servers,
-            None => parse_resolv(),
+            None => parse_resolv(prefer_ipv6),
         };
-        let qtypes = if prefer_ipv6 {
-            vec![QType::AAAA, QType::A]
+        let (qtypes, sock) = if prefer_ipv6 {
+            (vec![QType::AAAA, QType::A], try!(UdpSocket::v6().map_err(|_| err!(InitSocketFailed))))
         } else {
-            vec![QType::A, QType::AAAA]
+            (vec![QType::A, QType::AAAA], try!(UdpSocket::v4().map_err(|_| err!(InitSocketFailed))))
         };
-        let hosts = parse_hosts();
+        let hosts = parse_hosts(prefer_ipv6);
         let cache_timeout = Duration::new(600, 0);
 
         Ok(DNSResolver {
@@ -187,8 +186,15 @@ impl DNSResolver {
     fn send_request(&self, hostname: String, qtype: u16) -> Result<()> {
         debug!("send dns query of {}", &hostname);
         for server in &self.servers {
-            let server = format!("{}:53", server);
-            let addr = str2addr4(&server).unwrap();
+            let addr = match qtype {
+                QType::A => {
+                    try!(pair2addr4(&server, 53).ok_or(err!(ParseAddrFailed)))
+                }
+                QType::AAAA => {
+                    try!(pair2addr6(&server, 53).ok_or(err!(ParseAddrFailed)))
+                }
+                _ => return Err(err!(BuildRequestFailed)),
+            };
             try!(build_request(&hostname, qtype).map_or(Err(err!(BuildRequestFailed)),
                                                         |req| self.sock.send_to(&req, &addr)));
         }
@@ -629,7 +635,7 @@ fn parse_response(data: &[u8]) -> Option<DNSResponse> {
 }
 
 // TODO: make compatible with windows
-fn parse_resolv() -> Vec<String> {
+fn parse_resolv(prefer_ipv6: bool) -> Vec<String> {
     let mut servers = vec![];
 
     handle_every_line("/etc/resolv.conf",
@@ -644,13 +650,18 @@ fn parse_resolv() -> Vec<String> {
     });
 
     if servers.is_empty() {
-        servers = vec!["8.8.4.4".to_string(), "8.8.8.8".to_string()];
+        servers = if prefer_ipv6 {
+            vec!["2001:4860:4860::8888".to_string(), "2001:4860:4860::8844".to_string()]
+        } else {
+            vec!["8.8.8.8".to_string(), "8.8.4.4".to_string()]
+        };
     }
 
     servers
 }
 
-fn parse_hosts() -> Dict<String, String> {
+// TODO: make compatible with windows
+fn parse_hosts(prefer_ipv6: bool) -> Dict<String, String> {
     let mut hosts = Dict::default();
 
     handle_every_line("/etc/hosts",
@@ -668,7 +679,11 @@ fn parse_hosts() -> Dict<String, String> {
         }
     });
 
-    hosts.insert("localhost".to_string(), "127.0.0.1".to_string());
+    if prefer_ipv6 {
+        hosts.insert("localhost".to_string(), "::1".to_string());
+    } else {
+        hosts.insert("localhost".to_string(), "127.0.0.1".to_string());
+    }
 
     hosts
 }
@@ -713,6 +728,18 @@ mod test {
 
     use asyncdns;
 
+    const IPV4_TESTS: [(&'static str, &'static str); 3] = [
+        ("8.8.8.8", "8.8.8.8"),
+        ("localhost", "127.0.0.1"),
+        ("localhost.loggerhead.me", "127.0.0.1"),
+    ];
+
+    const IPV6_TESTS: [(&'static str, &'static str); 3] = [
+        ("2001:4860:4860::8888", "2001:4860:4860::8888"),
+        ("localhost", "::1"),
+        ("localhost.loggerhead.me", "::1"),
+    ];
+
     #[test]
     fn parse_response() {
         let data: &[u8] =
@@ -733,16 +760,14 @@ mod test {
         assert!(asyncdns::parse_response(data).is_some());
     }
 
-    #[test]
-    fn block_resolve() {
-        let tests = vec![
-            ("8.8.8.8", "8.8.8.8"),
-            ("localhost", "127.0.0.1"),
-            ("localhost.loggerhead.me", "127.0.0.1"),
-        ];
-
-        let mut resolver = asyncdns::DNSResolver::new(Token(0), None, false).unwrap();
-        for (hostname, ip) in tests {
+    fn test_block_resolve(ipv6: bool) {
+        let tests = if ipv6 {
+            IPV6_TESTS
+        } else {
+            IPV4_TESTS
+        };
+        let mut resolver = asyncdns::DNSResolver::new(Token(0), None, ipv6).unwrap();
+        for &(hostname, ip) in &tests {
             resolver.block_resolve(hostname.to_string()).ok().map_or_else(|| {
                                                                               assert!(false);
                                                                           },
@@ -752,5 +777,15 @@ mod test {
                 assert!(resolved_ip == ip);
             });
         }
+    }
+
+    #[test]
+    fn ipv4_block_resolve() {
+        test_block_resolve(false);
+    }
+
+    #[test]
+    fn ipv6_block_resolve() {
+        test_block_resolve(true);
     }
 }

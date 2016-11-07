@@ -56,6 +56,7 @@ pub struct UdpRelay {
     cache: Dict<SocketAddr, RcCell<UdpProcessor>>,
     processors: Holder<RcCell<UdpProcessor>>,
     encryptor: RcCell<Encryptor>,
+    prefer_ipv6: bool,
 }
 
 impl UdpRelay {
@@ -66,20 +67,21 @@ impl UdpRelay {
                     dns_resolver,
                     server_chooser,
                     processors,
-                    socket_addr| {
+                    socket_addr,
+                    prefer_ipv6| {
             let encryptor = new_rc_cell(Encryptor::new(conf["password"].as_str().unwrap()));
-            let address = format!("{}:{}", socket_addr.ip(), socket_addr.port());
-            let listener = try!(UdpSocket::v4()
-                .and_then(|sock| {
-                    try!(sock.bind(&socket_addr));
-                    Ok(sock)
-                })
-                .or(Err(err!(BindAddrFailed, address))));
+            let listener = try!(if prefer_ipv6 {
+                UdpSocket::v6()
+            } else {
+                UdpSocket::v4()
+            }.or(Err(err!(InitSocketFailed))));
+
+            try!(listener.bind(&socket_addr).or(Err(err!(BindAddrFailed, socket_addr))));
 
             if cfg!(feature = "sslocal") {
-                info!("ssclient udp relay listen on {}", address);
+                info!("ssclient udp relay listen on {}", socket_addr);
             } else {
-                info!("ssserver udp relay listen on {}", address);
+                info!("ssserver udp relay listen on {}", socket_addr);
             }
 
             Ok(UdpRelay {
@@ -94,6 +96,7 @@ impl UdpRelay {
                 cache: Dict::default(),
                 processors: processors,
                 encryptor: encryptor,
+                prefer_ipv6: prefer_ipv6,
             })
         })
     }
@@ -137,7 +140,8 @@ impl UdpRelay {
                                                    self.listener.clone(),
                                                    self.dns_resolver.clone(),
                                                    self.server_chooser.clone(),
-                                                   self.encryptor.clone())));
+                                                   self.encryptor.clone(),
+                                                   self.prefer_ipv6)));
         self.processors.insert_with(token, p.clone());
         self.cache.insert(client_addr, p.clone());
         self.dns_resolver.borrow_mut().add_caller(p.clone());

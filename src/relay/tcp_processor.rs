@@ -14,7 +14,7 @@ use util::{RcCell, shift_vec};
 use config::Config;
 use encrypt::Encryptor;
 use asyncdns::{Caller, DNSResolver, HostIpPair};
-use network::{pair2socket_addr, NetworkWriteBytes};
+use network::{pair2addr, NetworkWriteBytes};
 use socks5::{pack_addr, parse_header, check_auth_method, CheckAuthResult};
 use super::Relay;
 
@@ -432,18 +432,11 @@ impl TcpProcessor {
                 self.stage = HandleStage::Dns;
                 // send socks5 response to client
                 if cfg!(feature = "sslocal") {
-                    let response = &[0x05,
-                                     0x00,
-                                     0x00,
-                                     0x01,
+                    let response = &[0x05, 0x00, 0x00, 0x01,
                                      // fake ip
-                                     0x00,
-                                     0x00,
-                                     0x00,
-                                     0x00,
+                                     0x00, 0x00, 0x00, 0x00,
                                      // fake port
-                                     0x00,
-                                     0x00];
+                                     0x00, 0x00];
                     try!(self.write_to_sock(response, LOCAL));
                     self.update_stream(StreamDirection::Down, StreamStatus::WaitReading);
 
@@ -566,8 +559,7 @@ impl TcpProcessor {
     }
 
     fn create_connection(&mut self, ip: &str, port: u16) -> Result<TcpStream> {
-        pair2socket_addr(ip, port)
-            .ok_or(err!(ParseAddrFailed))
+        pair2addr(&ip, port).ok_or(base_err!(ParseAddrFailed))
             .and_then(|addr| TcpStream::connect(&addr))
     }
 

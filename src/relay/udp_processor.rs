@@ -14,7 +14,7 @@ use config::Config;
 use collections::Dict;
 use encrypt::Encryptor;
 use socks5::{parse_header, pack_addr, addr_type};
-use network::{str2addr4, NetworkWriteBytes};
+use network::{pair2addr, NetworkWriteBytes};
 use asyncdns::{Caller, DNSResolver, HostIpPair};
 use super::Relay;
 
@@ -54,9 +54,14 @@ impl UdpProcessor {
                relay_sock: RcCell<UdpSocket>,
                dns_resolver: RcCell<DNSResolver>,
                server_chooser: RcCell<ServerChooser>,
-               encryptor: RcCell<Encryptor>)
+               encryptor: RcCell<Encryptor>,
+               prefer_ipv6: bool)
                -> Result<UdpProcessor> {
-        let sock = try!(UdpSocket::v4().map_err(|_| err!(InitSocketFailed)));
+        let sock = try!(if prefer_ipv6 {
+            UdpSocket::v6()
+        } else {
+            UdpSocket::v4()
+        }.or(Err(err!(InitSocketFailed))));
         let cache_timeout = Duration::new(600, 0);
 
         Ok(UdpProcessor {
@@ -348,15 +353,13 @@ impl Caller for UdpProcessor {
 
         if let Some((hostname, ip)) = my_try!(res) {
             if cfg!(feature = "sslocal") {
-                let address = format!("{}:0", ip);
-                let ip_addr = my_try!(str2addr4(&address).ok_or(err!(ParseAddrFailed))).ip();
+                let ip_addr = my_try!(pair2addr(&ip, 0).ok_or(err!(ParseAddrFailed))).ip();
                 self.ip_to_hostname.insert(ip_addr, hostname.clone());
             }
 
             if let Some(port_requests_map) = self.requests.remove(&hostname) {
                 for (port, requests) in &port_requests_map {
-                    let address = format!("{}:{}", ip, port);
-                    let server_addr = my_try!(str2addr4(&address).ok_or(err!(ParseAddrFailed)));
+                    let server_addr = my_try!(pair2addr(&ip, port.clone()).ok_or(err!(ParseAddrFailed)));
 
                     for request in requests {
                         my_try!(self.send_to(CLIENT, request, &server_addr));

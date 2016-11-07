@@ -6,7 +6,7 @@ use mio::{Handler, Token, EventSet, EventLoop};
 
 use mode::ServerChooser;
 use config::Config;
-use network::{str2addr4, str2addr6};
+use network::pair2addr;
 use collections::Holder;
 use asyncdns::{DNSResolver, Caller};
 use util::{RcCell, new_rc_cell};
@@ -87,7 +87,8 @@ fn init_relay<T: MyHandler, P: Caller, F>(conf: Config, f: F) -> Result<T>
                     RcCell<DNSResolver>,
                     RcCell<ServerChooser>,
                     Holder<RcCell<P>>,
-                    SocketAddr)
+                    SocketAddr,
+                    bool)
                     -> Result<T>
 {
     let mut processors = Holder::new();
@@ -99,17 +100,11 @@ fn init_relay<T: MyHandler, P: Caller, F>(conf: Config, f: F) -> Result<T>
     let server_chooser = try!(ServerChooser::new(&conf));
 
     let host = conf["listen_address"].as_str().unwrap().to_string();
-    let port = conf["listen_port"].as_integer().unwrap();
+    let port = conf["listen_port"].as_integer().unwrap() as u16;
     let (_host, ip) = try!(dns_resolver.block_resolve(host)
         .and_then(|h| h.ok_or(base_err!(DnsResolveFailed, "timeout"))));
-    let address = format!("{}:{}", ip, port);
 
-    let socket_addr = try!(if prefer_ipv6 {
-            str2addr6(&address)
-        } else {
-            str2addr4(&address)
-        }
-        .ok_or(base_err!(ParseAddrFailed)));
+    let socket_addr = try!(pair2addr(&ip, port).ok_or(base_err!(ParseAddrFailed)));
 
     f(conf,
       token,
@@ -117,7 +112,8 @@ fn init_relay<T: MyHandler, P: Caller, F>(conf: Config, f: F) -> Result<T>
       new_rc_cell(dns_resolver),
       new_rc_cell(server_chooser),
       processors,
-      socket_addr)
+      socket_addr,
+      prefer_ipv6)
 }
 
 mod tcp_relay;

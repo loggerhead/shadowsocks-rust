@@ -1,8 +1,7 @@
 use std::io;
 use std::io::Cursor;
 use std::str::FromStr;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt};
 
@@ -12,15 +11,13 @@ pub enum AddressFamily {
     AF_INET6,
 }
 
-pub fn get_address_family(address: &str) -> Option<AddressFamily> {
-    if str2addr4(&format!("{}:0", address)).is_some() {
+pub fn get_address_family(ip: &str) -> Option<AddressFamily> {
+    if Ipv4Addr::from_str(ip).is_ok() {
         return Some(AddressFamily::AF_INET);
     }
-
-    if str2addr6(address).is_some() {
+    if Ipv6Addr::from_str(ip).is_ok() {
         return Some(AddressFamily::AF_INET6);
     }
-
     None
 }
 
@@ -57,20 +54,21 @@ pub fn slice2ip6(data: &[u8]) -> Option<String> {
     }
 }
 
-pub fn str2addr4(ip: &str) -> Option<SocketAddr> {
-    let addr = try_opt!(SocketAddrV4::from_str(ip).ok());
-    Some(SocketAddr::V4(addr))
-}
-
-pub fn str2addr6(ip: &str) -> Option<SocketAddr> {
-    let addr = try_opt!(SocketAddrV6::from_str(ip).ok());
-    Some(SocketAddr::V6(addr))
-}
-
-pub fn pair2socket_addr(ip: &str, port: u16) -> Option<SocketAddr> {
+pub fn pair2addr4(ip: &str, port: u16) -> Option<SocketAddr> {
     Ipv4Addr::from_str(ip).map(|ip| SocketAddr::new(IpAddr::V4(ip), port)).ok()
 }
 
+pub fn pair2addr6(ip: &str, port: u16) -> Option<SocketAddr> {
+    Ipv6Addr::from_str(ip).map(|ip| SocketAddr::new(IpAddr::V6(ip), port)).ok()
+}
+
+pub fn pair2addr(ip: &str, port: u16) -> Option<SocketAddr> {
+    let res = pair2addr4(ip, port);
+    match res {
+        None => pair2addr6(ip, port),
+        _ => res,
+    }
+}
 
 pub trait NetworkWriteBytes: WriteBytesExt {
     fn put_u8(&mut self, num: u8) -> io::Result<()> {

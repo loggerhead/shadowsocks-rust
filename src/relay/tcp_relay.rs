@@ -34,15 +34,15 @@ impl TcpRelay {
                     dns_resolver,
                     server_chooser,
                     processors,
-                    socket_addr| {
-            let address = format!("{}:{}", socket_addr.ip(), socket_addr.port());
+                    socket_addr,
+                    _prefer_ipv6| {
             let listener = try!(TcpListener::bind(&socket_addr)
-                .or(Err(err!(BindAddrFailed, address))));
+                .or(Err(err!(BindAddrFailed, socket_addr))));
 
             if cfg!(feature = "sslocal") {
-                info!("ssclient tcp relay listen on {}", address);
+                info!("ssclient tcp relay listen on {}", socket_addr);
             } else {
-                info!("ssserver tcp relay listen on {}", address);
+                info!("ssserver tcp relay listen on {}", socket_addr);
             }
 
             Ok(TcpRelay {
