@@ -786,6 +786,7 @@ mod test {
 
     // this test may failed if your computer is not a ipv6 host
     #[test]
+    #[ignore]
     fn ipv6_block_resolve() {
         test_block_resolve(true);
     }
