@@ -3,6 +3,7 @@ use std::io::Result;
 use std::fmt;
 use std::time::Duration;
 use std::net::{SocketAddr, IpAddr};
+use std::borrow::Cow;
 
 use lru_time_cache::LruCache;
 use mio::udp::UdpSocket;
@@ -189,54 +190,44 @@ impl UdpProcessor {
         let is_ota_enabled = self.conf.get_bool("one_time_auth").unwrap_or(false);
         let request = if cfg!(feature = "sslocal") {
             // if is a OTA session
-            if is_ota_enabled {
+            Cow::Owned(try!(if is_ota_enabled {
                 self.encryptor.borrow_mut().encrypt_udp_ota(addr_type | addr_type::AUTH, data)
             } else {
                 self.encryptor.borrow_mut().encrypt_udp(data)
-            }
+            }.ok_or(err!(EncryptFailed))))
         } else {
             // if is a OTA session
             if addr_type & addr_type::AUTH == addr_type::AUTH {
-                self.encryptor.borrow_mut().decrypt_udp_ota(addr_type, data)
+                Cow::Owned(try!(self.encryptor.borrow_mut().decrypt_udp_ota(addr_type, data)
+                                .ok_or(err!(DecryptFailed))))
                 // if ssserver enabled OTA but client not
             } else if is_ota_enabled {
                 return Err(err!(NotOneTimeAuthSession));
             } else {
-                // TODO: change to use `Cow`
-                Some(data.to_vec())
+                Cow::Borrowed(data)
             }
         };
 
-        if let Some(request) = request {
-            let server_addr = if cfg!(feature = "sslocal") {
-                // TODO: change `unwrap` to return `Result`
-                let (server_addr, server_port) =
-                    self.server_chooser.borrow_mut().choose(&remote_address).unwrap();
-                self.record_activity((server_addr.clone(), server_port), &remote_address);
-                self.add_request(server_addr.clone(), server_port, request);
-                server_addr
-            } else {
-                self.add_request(remote_address.clone(),
-                                 remote_port,
-                                 request[header_length..].to_vec());
-                remote_address
-            };
-
-            let resolved = self.dns_resolver.borrow_mut().resolve(self.token, server_addr);
-            match resolved {
-                Ok(None) => {}
-                // if hostname is resolved immediately
-                res => self.handle_dns_resolved(event_loop, res),
-            }
-
-            Ok(())
+        let server_addr = if cfg!(feature = "sslocal") {
+            // TODO: change `unwrap` to return `Result`
+            let (server_addr, server_port) =
+                self.server_chooser.borrow_mut().choose(&remote_address).unwrap();
+            self.record_activity((server_addr.clone(), server_port), &remote_address);
+            self.add_request(server_addr.clone(), server_port, request.into_owned());
+            server_addr
         } else {
-            if cfg!(feature = "sslocal") {
-                Err(err!(EncryptFailed))
-            } else {
-                Err(err!(DecryptFailed))
-            }
+            let request = request[header_length..].to_vec();
+            self.add_request(remote_address.clone(), remote_port, request);
+            remote_address
+        };
+
+        let resolved = self.dns_resolver.borrow_mut().resolve(self.token, server_addr);
+        match resolved {
+            Ok(None) => {}
+            // if hostname is resolved immediately
+            res => self.handle_dns_resolved(event_loop, res),
         }
+        Ok(())
     }
 
     fn on_remote_read(&mut self, event_loop: &mut EventLoop<Relay>) -> Result<Option<usize>> {
