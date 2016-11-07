@@ -9,12 +9,12 @@ use lru_time_cache::LruCache;
 use mio::udp::UdpSocket;
 use mio::{EventSet, Token, Timeout, EventLoop, PollOpt};
 
-use mode::ServerChooser;
+use mode::{ServerChooser, Address};
 use util::RcCell;
 use config::Config;
 use collections::Dict;
 use encrypt::Encryptor;
-use socks5::{parse_header, pack_addr, addr_type};
+use socks5::{parse_header, pack_addr, addr_type, Socks5Header};
 use network::{pair2addr, NetworkWriteBytes};
 use asyncdns::{Caller, DNSResolver, HostIpPair};
 use super::Relay;
@@ -44,7 +44,7 @@ pub struct UdpProcessor {
     dns_resolver: RcCell<DNSResolver>,
     server_chooser: RcCell<ServerChooser>,
     encryptor: RcCell<Encryptor>,
-    hostname_to_server: LruCache<String, (String, u16)>,
+    hostname_to_server: LruCache<String, Address>,
     ip_to_hostname: LruCache<IpAddr, String>,
 }
 
@@ -124,7 +124,7 @@ impl UdpProcessor {
         self.do_register(event_loop, true)
     }
 
-    fn record_activity(&mut self, server_address: (String, u16), remote_hostname: &str) {
+    fn record_activity(&mut self, server_address: Address, remote_hostname: &str) {
         match self.stage {
             HandleStage::Addr | HandleStage::Stream => {
                 self.hostname_to_server.insert(remote_hostname.to_string(), server_address.clone());
@@ -180,9 +180,9 @@ impl UdpProcessor {
     pub fn handle_request(&mut self,
                           event_loop: &mut EventLoop<Relay>,
                           data: &[u8],
-                          header: (u8, String, u16, usize))
+                          header: Socks5Header)
                           -> Result<()> {
-        let (addr_type, remote_address, remote_port, header_length) = header;
+        let Socks5Header(addr_type, remote_address, remote_port, header_length) = header;
         info!("sending udp request to {}:{}", remote_address, remote_port);
         self.stage = HandleStage::Addr;
         self.reset_timeout(event_loop);
@@ -213,9 +213,9 @@ impl UdpProcessor {
 
         let server_addr = if cfg!(feature = "sslocal") {
             // TODO: change `unwrap` to return `Result`
-            let (server_addr, server_port) =
+            let Address(server_addr, server_port) =
                 self.server_chooser.borrow_mut().choose(&remote_address).unwrap();
-            self.record_activity((server_addr.clone(), server_port), &remote_address);
+            self.record_activity(Address(server_addr.clone(), server_port), &remote_address);
             self.add_request(server_addr.clone(), server_port, request.into_owned());
             server_addr
         } else {
@@ -346,7 +346,7 @@ impl Caller for UdpProcessor {
             )
         }
 
-        if let Some((hostname, ip)) = my_try!(res) {
+        if let Some(HostIpPair(hostname, ip)) = my_try!(res) {
             if cfg!(feature = "sslocal") {
                 let ip_addr = my_try!(pair2addr(&ip, 0).ok_or(err!(ParseAddrFailed))).ip();
                 self.ip_to_hostname.insert(ip_addr, hostname.clone());

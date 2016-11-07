@@ -17,8 +17,4 @@
 - [x] OTA encrypt method support
 - [x] add mode support (`fast` and `balance`)
 - [ ] Multiple encrypt methods support (wait a stable crypto library)
-- [ ] TCP fast open (wait a new computer)
-
-#Test sites
-* http://www.bilibili.com/
-* http://www.panda.tv/
+- [ ] TCP fast open (wait `mio` support)

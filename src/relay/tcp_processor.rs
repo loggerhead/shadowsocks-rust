@@ -7,9 +7,9 @@ use std::io::{Read, Write, Result};
 use mio::tcp::{TcpStream, Shutdown};
 use mio::{EventLoop, Token, Timeout, EventSet, PollOpt};
 
-use mode::ServerChooser;
+use mode::{ServerChooser, Address};
 use socks5;
-use socks5::addr_type;
+use socks5::{addr_type, Socks5Header};
 use util::{RcCell, shift_vec};
 use config::Config;
 use encrypt::Encryptor;
@@ -49,8 +49,8 @@ pub struct TcpProcessor {
     remote_interest: EventSet,
     local_buf: Option<Vec<u8>>,
     remote_buf: Option<Vec<u8>>,
-    client_address: (String, u16),
-    server_address: Option<(String, u16)>,
+    client_address: Address,
+    server_address: Option<Address>,
     remote_hostname: Option<String>,
     encryptor: Encryptor,
     downstream_status: StreamStatus,
@@ -73,7 +73,7 @@ impl TcpProcessor {
         let encryptor = Encryptor::new(conf["password"].as_str().unwrap());
 
         let client_address = try!(local_sock.peer_addr()
-            .map(|addr| (addr.ip().to_string(), addr.port())));
+            .map(|addr| Address(addr.ip().to_string(), addr.port())));
         try!(local_sock.set_nodelay(true));
 
         Ok(TcpProcessor {
@@ -415,7 +415,7 @@ impl TcpProcessor {
 
         // parse socks5 header
         match parse_header(data) {
-            Some((addr_type, remote_address, remote_port, header_length)) => {
+            Some(Socks5Header(addr_type, remote_address, remote_port, header_length)) => {
                 info!("connecting to {}:{}", remote_address, remote_port);
                 let is_ota_session = try!(self.check_one_time_auth(addr_type));
                 let data = if is_ota_session {
@@ -468,11 +468,12 @@ impl TcpProcessor {
                         self.extend_buf(&data[header_length..], REMOTE);
                     }
 
-                    self.server_address = Some((remote_address, remote_port));
+                    self.server_address = Some(Address(remote_address, remote_port));
                 }
 
                 let token = self.get_id();
-                let remote_hostname = self.server_address.as_ref().map(|s| s.0.clone()).unwrap();
+                let remote_hostname =
+                    self.server_address.as_ref().map(|addr| addr.0.clone()).unwrap();
                 let resolved = self.dns_resolver.borrow_mut().resolve(token, remote_hostname);
                 match resolved {
                     Ok(None) => {}
@@ -683,7 +684,7 @@ impl Caller for TcpProcessor {
             )
         }
 
-        if let Some((_hostname, ip)) = my_try!(res) {
+        if let Some(HostIpPair(_hostname, ip)) = my_try!(res) {
             self.stage = HandleStage::Connecting;
             let port = self.server_address
                 .as_ref()
@@ -704,7 +705,8 @@ impl Caller for TcpProcessor {
 
 impl fmt::Debug for TcpProcessor {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}:{}/tcp", self.client_address.0, self.client_address.1)
+        let Address(ref ip, ref port) = self.client_address;
+        write!(f, "{}:{}/tcp", ip, port)
     }
 }
 

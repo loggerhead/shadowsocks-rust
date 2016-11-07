@@ -2,7 +2,7 @@ use std::net::IpAddr;
 use network::{slice2ip4, slice2ip6, NetworkReadBytes};
 
 /// (addr_type, dest_addr, dest_port, header_length)
-pub type Socks5Header = (u8, String, u16, usize);
+pub struct Socks5Header(pub u8, pub String, pub u16, pub usize);
 
 #[derive(Debug, PartialEq)]
 pub enum CheckAuthResult {
@@ -67,7 +67,7 @@ pub fn parse_header(data: &[u8]) -> Option<Socks5Header> {
         }
     }
 
-    dest_addr.and_then(|dest_addr| Some((addr_type, dest_addr, dest_port, header_len)))
+    dest_addr.and_then(|dest_addr| Some(Socks5Header(addr_type, dest_addr, dest_port, header_len)))
 }
 
 pub fn check_auth_method(data: &[u8]) -> CheckAuthResult {

@@ -10,17 +10,19 @@ use regex::Regex;
 use lru_time_cache::LruCache;
 use rand::{sample, thread_rng, ThreadRng, Rng};
 
-use collections::Dict;
 use config::Config;
+use collections::Dict;
 
 macro_rules! err {
     (InvalidMode, $m:expr) => ( io_err!("invalid mode {}", $m) );
     (InvalidPort, $m:expr) => ( io_err!("invalid port {}", $m) );
 }
 
-type Server = (String, u16);
-type Servers = Dict<Server, RttRecord>;
-type Activity = (Token, Server, String);
+#[derive(PartialEq, Eq, Hash, Clone, Debug)]
+pub struct Address(pub String, pub u16);
+#[derive(PartialEq, Eq, Hash, Clone, Debug)]
+struct Activity(pub Token, pub Address, pub String);
+type Servers = Dict<Address, RttRecord>;
 const BUF_SIZE: usize = 1024;
 
 #[derive(PartialEq)]
@@ -36,7 +38,7 @@ pub struct ServerChooser {
     servers: Servers,
     host_to_servers: LruCache<String, Servers>,
     activities: Dict<Activity, VecDeque<SystemTime>>,
-    token_to_pair: Dict<Token, (Server, String)>,
+    token_to_pair: Dict<Token, (Address, String)>,
 }
 
 impl ServerChooser {
@@ -60,7 +62,7 @@ impl ServerChooser {
                 let parts: Vec<&str> = server.as_str().unwrap().splitn(2, ':').collect();
                 let addr = parts[0].to_string();
                 let port = try!(u16::from_str(parts[1]).map_err(|_| err!(InvalidPort, server)));
-                servers.insert((addr, port), RttRecord::new());
+                servers.insert(Address(addr, port), RttRecord::new());
             }
         }
 
@@ -74,7 +76,7 @@ impl ServerChooser {
         })
     }
 
-    pub fn choose(&mut self, hostname: &str) -> Option<(String, u16)> {
+    pub fn choose(&mut self, hostname: &str) -> Option<Address> {
         match self.mode {
             Mode::Fast => self.choose_by_weight(hostname),
             Mode::Balance => self.random_choose(),
@@ -82,13 +84,13 @@ impl ServerChooser {
         }
     }
 
-    fn random_choose(&mut self) -> Option<(String, u16)> {
-        let addr_port_pairs: Vec<&(String, u16)> = self.servers.keys().collect();
-        let &&(ref addr, port) = try_opt!(self.rng.choose(&addr_port_pairs));
-        Some((addr.clone(), port))
+    fn random_choose(&mut self) -> Option<Address> {
+        let addr_port_pairs: Vec<&Address> = self.servers.keys().collect();
+        let &&Address(ref addr, port) = try_opt!(self.rng.choose(&addr_port_pairs));
+        Some(Address(addr.clone(), port))
     }
 
-    fn find_min(servers: &Servers) -> Option<(Server, RttRecord)> {
+    fn find_min(servers: &Servers) -> Option<(Address, RttRecord)> {
         let mut rng = thread_rng();
         let (mut server, mut rtt) =
             sample(&mut rng, servers.iter(), 1).pop().map_or((None, None), |(ref s, ref r)| {
@@ -110,12 +112,12 @@ impl ServerChooser {
             }
         }
 
-        server.map(|&(ref addr, port)| ((addr.clone(), port), rtt.unwrap().clone()))
+        server.map(|&Address(ref addr, port)| (Address(addr.clone(), port), rtt.unwrap().clone()))
     }
 
     // the compute need O(n) time. But for normal user,
     // the servers number is small, so the compute time is acceptable
-    fn choose_by_weight(&mut self, hostname: &str) -> Option<(String, u16)> {
+    fn choose_by_weight(&mut self, hostname: &str) -> Option<Address> {
         let host = self.get_host(hostname);
         let servers = self.default_servers();
         let servers = self.host_to_servers.entry(host.clone()).or_insert(servers);
@@ -130,23 +132,24 @@ impl ServerChooser {
         servers
     }
 
-    pub fn record(&mut self, token: Token, server: Server, hostname: &str) {
+    pub fn record(&mut self, token: Token, server: Address, hostname: &str) {
         match self.mode {
             Mode::Fast => {
                 self.token_to_pair.insert(token, (server.clone(), hostname.to_string()));
                 let host = self.get_host(hostname);
-                let times = self.activities.entry((token, server, host)).or_insert(VecDeque::new());
+                let times =
+                    self.activities.entry(Activity(token, server, host)).or_insert(VecDeque::new());
                 times.push_back(SystemTime::now());
             }
             _ => {}
         }
     }
 
-    pub fn update(&mut self, token: Token, server: Server, hostname: &str) {
+    pub fn update(&mut self, token: Token, server: Address, hostname: &str) {
         match self.mode {
             Mode::Fast => {
                 let host = self.get_host(hostname);
-                let tsh = (token, server, host);
+                let tsh = Activity(token, server, host);
                 let time = self.activities.get_mut(&tsh).and_then(|times| times.pop_front());
                 match time {
                     Some(time) => {
@@ -169,7 +172,7 @@ impl ServerChooser {
             Mode::Fast => {
                 if let Some(&(ref server, ref hostname)) = self.token_to_pair.get(&token) {
                     let host = self.get_host(hostname);
-                    let tsh = (token, server.clone(), host);
+                    let tsh = Activity(token, server.clone(), host);
                     self.activities.remove(&tsh);
                     self.host_to_servers.get_mut(&tsh.2).map(|servers| {
                         servers.get_mut(&tsh.1).map(|record| {

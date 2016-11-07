@@ -56,9 +56,10 @@ use util::{RcCell, handle_every_line, slice2string, slice2str};
 //     +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
 //     |                    ARCOUNT                    |
 //     +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
-pub type HostIpPair = (String, String);
-type ResponseRecord = (String, String, u16, u16);
-type ResponseHeader = (u16, u16, u16, u16, u16, u16, u16, u16, u16);
+#[derive(PartialEq, Eq, Hash, Clone, Debug)]
+pub struct HostIpPair(pub String, pub String);
+struct ResponseRecord(String, String, u16, u16);
+struct ResponseHeader(u16, u16, u16, u16, u16, u16, u16, u16, u16);
 
 const BUF_SIZE: usize = 1024;
 const NAP_TIME: u64 = 10;
@@ -215,13 +216,13 @@ impl DNSResolver {
         if hostname.is_empty() {
             Err(err!(EmptyHostName))
         } else if is_ip(hostname) {
-            Ok(Some((hostname.to_string(), hostname.to_string())))
+            Ok(Some(HostIpPair(hostname.to_string(), hostname.to_string())))
         } else if self.hosts.contains_key(hostname) {
             let ip = self.hosts[hostname].clone();
-            Ok(Some((hostname.to_string(), ip)))
+            Ok(Some(HostIpPair(hostname.to_string(), ip)))
         } else if self.cache.contains_key(hostname) {
             let ip = self.cache.get_mut(hostname).unwrap();
-            Ok(Some((hostname.to_string(), ip.clone())))
+            Ok(Some(HostIpPair(hostname.to_string(), ip.clone())))
         } else if !is_valid_hostname(hostname) {
             Err(err!(InvalidHost, hostname))
         } else {
@@ -286,7 +287,7 @@ impl DNSResolver {
                     caller.borrow_mut()
                         .handle_dns_resolved(event_loop, Err(err!(UnknownHost, hostname)));
                 } else {
-                    let hostname_ip = (hostname.clone(), ip.clone());
+                    let hostname_ip = HostIpPair(hostname.clone(), ip.clone());
                     caller.borrow_mut().handle_dns_resolved(event_loop, Ok(Some(hostname_ip)));
                 }
             }
@@ -322,14 +323,14 @@ impl DNSResolver {
                 res = Ok(None);
             } else if !ip.is_empty() {
                 self.cache.insert(hostname.clone(), ip.clone());
-                res = Ok(Some((hostname, ip)));
+                res = Ok(Some(HostIpPair(hostname, ip)));
             } else if hostname_status == 2 {
                 res = Err(err!(NoPreferredResponse));
 
                 for question in response.questions {
                     if question.1 == self.qtypes[1] {
                         ip.clear();
-                        res = Ok(Some((hostname, ip)));
+                        res = Ok(Some(HostIpPair(hostname, ip)));
                         break;
                     }
                 }
@@ -384,7 +385,7 @@ impl DNSResolver {
             Err(err!(EventError))
         } else {
             try!(self.receive_data_into_buf());
-            if let Ok(Some((hostname, ip))) = self.handle_recevied() {
+            if let Ok(Some(HostIpPair(hostname, ip))) = self.handle_recevied() {
                 self.call_callback(event_loop, hostname, ip);
             }
             self.reregister(event_loop)
@@ -510,14 +511,14 @@ fn parse_record(data: &[u8], offset: u16, question: bool) -> Option<(u16, Respon
     //     +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
     //     |                     QCLASS                    |
     //     +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
-    let res = if question {
+    if question {
         let bytes = &data[(offset + nlen) as usize..(offset + nlen + 4) as usize];
         let mut record = Cursor::new(bytes);
 
         let record_type = unpack!(u16, record);
         let record_class = unpack!(u16, record);
 
-        (nlen + 4, (name, String::new(), record_type, record_class))
+        Some((nlen + 4, ResponseRecord(name, String::new(), record_type, record_class)))
         //                                    1  1  1  1  1  1
         //      0  1  2  3  4  5  6  7  8  9  0  1  2  3  4  5
         //    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
@@ -553,10 +554,8 @@ fn parse_record(data: &[u8], offset: u16, question: bool) -> Option<(u16, Respon
                                    record_rdlength as usize,
                                    (offset + nlen + 10) as usize));
 
-        (nlen + 10 + record_rdlength, (name, ip, record_type, record_class))
-    };
-
-    Some(res)
+        Some((nlen + 10 + record_rdlength, ResponseRecord(name, ip, record_type, record_class)))
+    }
 }
 
 fn parse_header(data: &[u8]) -> Option<ResponseHeader> {
@@ -578,7 +577,7 @@ fn parse_header(data: &[u8]) -> Option<ResponseHeader> {
     let ra = (byte4 & 0b00000010) as u16;
     let rcode = (byte4 & 0b00001111) as u16;
 
-    Some((id, qr, tc, ra, rcode, qdcount, ancount, nscount, arcount))
+    Some(ResponseHeader(id, qr, tc, ra, rcode, qdcount, ancount, nscount, arcount))
 }
 
 fn parse_records(data: &[u8],
@@ -604,7 +603,8 @@ fn parse_response(data: &[u8]) -> Option<DNSResponse> {
     }
 
     parse_header(data).and_then(|header| {
-        let (_id, _qr, _tc, _ra, _rcode, qdcount, ancount, _nscount, _arcount) = header;
+        let ResponseHeader(_id, _qr, _tc, _ra, _rcode, qdcount, ancount, _nscount, _arcount) =
+            header;
 
         let offset = 12u16;
         let (offset, qds) = try_opt!(parse_records(data, offset, qdcount, true));
@@ -768,7 +768,7 @@ mod test {
             match resolver.block_resolve(hostname.to_string()) {
                 Ok(r) => {
                     assert!(r.is_some());
-                    let (_hostname, resolved_ip) = r.unwrap();
+                    let asyncdns::HostIpPair(_hostname, resolved_ip) = r.unwrap();
                     assert!(resolved_ip == ip);
                 }
                 Err(e) => {

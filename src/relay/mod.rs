@@ -8,7 +8,7 @@ use mode::ServerChooser;
 use config::Config;
 use network::pair2addr;
 use collections::Holder;
-use asyncdns::{DNSResolver, Caller};
+use asyncdns::{DNSResolver, Caller, HostIpPair};
 use util::{RcCell, new_rc_cell};
 
 pub use self::tcp_relay::TcpRelay;
@@ -101,7 +101,7 @@ fn init_relay<T: MyHandler, P: Caller, F>(conf: Config, f: F) -> Result<T>
 
     let host = conf["listen_address"].as_str().unwrap().to_string();
     let port = conf["listen_port"].as_integer().unwrap() as u16;
-    let (_host, ip) = try!(dns_resolver.block_resolve(host)
+    let HostIpPair(_host, ip) = try!(dns_resolver.block_resolve(host)
         .and_then(|h| h.ok_or(base_err!(DnsResolveFailed, "timeout"))));
 
     let socket_addr = try!(pair2addr(&ip, port).ok_or(base_err!(ParseAddrFailed)));
