@@ -1,11 +1,9 @@
 servers = [
-    # "188.166.255.113:8111",
-    # "localhost.loggerhead.me:8111",
-    "proxy.loggerhead.me:8111",
+    "localhost.loggerhead.me:8111",
 ]
 listen_port = 8010
 password = "foo"
 timeout = 10
 encrypt_method = "aes-256-ctr"
-one_time_auth = false
+one_time_auth = true
 mode = "fast"

@@ -16,8 +16,8 @@ cache:
   - cargo
   - pip
 before_script:
-  - pip install --user PySocks
-  - export PATH=$HOME/.local/bin:~/.cargo/bin:$PATH
+  - pip install --user nose PySocks
+  - export PATH=$HOME/.local/bin:$HOME/.cargo/bin:$HOME/Library/Python/2.7/bin/:$PATH
   - (cargo install rustfmt || true)
 script:
   - cargo fmt -- --write-mode=diff
@@ -25,9 +25,9 @@ script:
   - cargo test asyncdns
   - ./run.sh s -d start --log-file ssserver.log --pid-file ssserver.pid
   - ./run.sh c -d start --log-file sslocal.log --pid-file sslocal.pid
-  - sleep 1
-  - ./tests/test_tcp.py
-  - ./tests/test_udp.py
+  - python tests/echo_server.py &
+  - nosetests tests/test_tcp.py
+  - nosetests tests/test_udp.py
 
 notifications:
   email:
