@@ -191,15 +191,18 @@ impl UdpProcessor {
         let request = if cfg!(feature = "sslocal") {
             // if is a OTA session
             Cow::Owned(try!(if is_ota_enabled {
-                self.encryptor.borrow_mut().encrypt_udp_ota(addr_type | addr_type::AUTH, data)
-            } else {
-                self.encryptor.borrow_mut().encrypt_udp(data)
-            }.ok_or(err!(EncryptFailed))))
+                    self.encryptor.borrow_mut().encrypt_udp_ota(addr_type | addr_type::AUTH, data)
+                } else {
+                    self.encryptor.borrow_mut().encrypt_udp(data)
+                }
+                .ok_or(err!(EncryptFailed))))
         } else {
             // if is a OTA session
             if addr_type & addr_type::AUTH == addr_type::AUTH {
-                Cow::Owned(try!(self.encryptor.borrow_mut().decrypt_udp_ota(addr_type, data)
-                                .ok_or(err!(DecryptFailed))))
+                Cow::Owned(try!(self.encryptor
+                    .borrow_mut()
+                    .decrypt_udp_ota(addr_type, data)
+                    .ok_or(err!(DecryptFailed))))
                 // if ssserver enabled OTA but client not
             } else if is_ota_enabled {
                 return Err(err!(NotOneTimeAuthSession));

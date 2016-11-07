@@ -15,7 +15,7 @@ use mio::{Token, EventSet, EventLoop, PollOpt};
 use relay::Relay;
 use collections::{Set, Dict};
 use network::{NetworkWriteBytes, NetworkReadBytes};
-use network::{is_ip, slice2ip4, slice2ip6, pair2addr4, pair2addr6};
+use network::{is_ipv4, is_ipv6, is_ip, slice2ip4, slice2ip6, pair2addr};
 use util::{RcCell, handle_every_line, slice2string, slice2str};
 
 // All communications inside of the domain protocol are carried in a single
@@ -72,7 +72,7 @@ macro_rules! err {
     (NoPreferredResponse) => ( io_err!("no preferred response") );
     (InvalidResponse) => ( io_err!("invalid response") );
     (BufferEmpty) => ( io_err!("no buffered data available") );
-    (ParseAddrFailed) => ( io_err!("parse socket address from string failed") );
+    (ParseAddrFailed, $host:expr) => ( io_err!("parse socket address {} failed", $host) );
     (InitSocketFailed) => ( io_err!("initialize socket failed") );
 
     ($($arg:tt)*) => ( base_err!($($arg)*) );
@@ -188,11 +188,7 @@ impl DNSResolver {
     fn send_request(&self, hostname: String, qtype: u16) -> Result<()> {
         debug!("send dns query of {}", &hostname);
         for server in &self.servers {
-            let addr = match qtype {
-                QType::A => try!(pair2addr4(&server, 53).ok_or(err!(ParseAddrFailed))),
-                QType::AAAA => try!(pair2addr6(&server, 53).ok_or(err!(ParseAddrFailed))),
-                _ => return Err(err!(BuildRequestFailed)),
-            };
+            let addr = try!(pair2addr(&server, 53).ok_or(err!(ParseAddrFailed, server)));
             try!(build_request(&hostname, qtype).map_or(Err(err!(BuildRequestFailed)),
                                                         |req| self.sock.send_to(&req, &addr)));
         }
@@ -638,9 +634,9 @@ fn parse_resolv(prefer_ipv6: bool) -> Vec<String> {
     let _ = handle_every_line("/etc/resolv.conf",
                               &mut |line| {
         if line.starts_with("nameserver") {
-            if let Some(server) = line.split_whitespace().nth(1) {
-                if is_ip(server) {
-                    servers.push(server.to_string());
+            if let Some(ip) = line.split_whitespace().nth(1) {
+                if (prefer_ipv6 && is_ipv6(ip)) || (!prefer_ipv6 && is_ipv4(ip)) {
+                    servers.push(ip.to_string());
                 }
             }
         }
@@ -682,7 +678,7 @@ fn parse_hosts(prefer_ipv6: bool) -> Dict<String, String> {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if !parts.is_empty() {
             let ip = parts[0];
-            if is_ip(ip) {
+            if (prefer_ipv6 && is_ipv6(ip)) || (!prefer_ipv6 && is_ipv4(ip)) {
                 for hostname in parts[1..].iter() {
                     if !hostname.is_empty() {
                         hosts.insert(hostname.to_string(), ip.to_string());
@@ -769,14 +765,17 @@ mod test {
         let tests = if ipv6 { IPV6_TESTS } else { IPV4_TESTS };
         let mut resolver = asyncdns::DNSResolver::new(Token(0), None, ipv6).unwrap();
         for &(hostname, ip) in &tests {
-            resolver.block_resolve(hostname.to_string()).ok().map_or_else(|| {
-                                                                              assert!(false);
-                                                                          },
-                                                                          |r| {
-                assert!(r.is_some());
-                let (_hostname, resolved_ip) = r.unwrap();
-                assert!(resolved_ip == ip);
-            });
+            match resolver.block_resolve(hostname.to_string()) {
+                Ok(r) => {
+                    assert!(r.is_some());
+                    let (_hostname, resolved_ip) = r.unwrap();
+                    assert!(resolved_ip == ip);
+                }
+                Err(e) => {
+                    println!("block_resolve failed: {}", e);
+                    assert!(false);
+                }
+            }
         }
     }
 
@@ -785,6 +784,7 @@ mod test {
         test_block_resolve(false);
     }
 
+    // this test may failed if your computer is not a ipv6 host
     #[test]
     fn ipv6_block_resolve() {
         test_block_resolve(true);

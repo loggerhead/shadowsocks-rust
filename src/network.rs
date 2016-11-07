@@ -11,18 +11,16 @@ pub enum AddressFamily {
     AF_INET6,
 }
 
-pub fn get_address_family(ip: &str) -> Option<AddressFamily> {
-    if Ipv4Addr::from_str(ip).is_ok() {
-        return Some(AddressFamily::AF_INET);
-    }
-    if Ipv6Addr::from_str(ip).is_ok() {
-        return Some(AddressFamily::AF_INET6);
-    }
-    None
+pub fn is_ipv4(ip: &str) -> bool {
+    Ipv4Addr::from_str(ip).is_ok()
 }
 
-pub fn is_ip(address: &str) -> bool {
-    get_address_family(address).is_some()
+pub fn is_ipv6(ip: &str) -> bool {
+    Ipv6Addr::from_str(ip).is_ok()
+}
+
+pub fn is_ip(ip: &str) -> bool {
+    is_ipv4(ip) || is_ipv6(ip)
 }
 
 macro_rules! slice2sized {
