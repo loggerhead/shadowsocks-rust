@@ -1,7 +1,8 @@
 use std::str;
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, Result};
 use std::io::prelude::*;
+use std::path::Path;
 use std::rc::Rc;
 use std::cell::RefCell;
 
@@ -30,18 +31,18 @@ pub fn slice2string(data: &[u8]) -> Option<String> {
     String::from_utf8(data.to_vec()).ok()
 }
 
-pub fn handle_every_line(filepath: &str, func: &mut FnMut(String)) {
-    if let Ok(f) = File::open(filepath) {
-        let reader = BufReader::new(f);
-        for line in reader.lines() {
-            let line = match line {
-                Ok(line) => line.trim().to_string(),
-                _ => break,
-            };
+pub fn handle_every_line<P: AsRef<Path>>(filepath: P, func: &mut FnMut(String)) -> Result<()> {
+    let f = try!(File::open(filepath));
+    let reader = BufReader::new(f);
+    for line in reader.lines() {
+        let line = match line {
+            Ok(line) => line.trim().to_string(),
+            _ => break,
+        };
 
-            func(line);
-        }
+        func(line);
     }
+    Ok(())
 }
 
 pub fn shift_vec<T: Clone>(v: &mut Vec<T>, offset: usize) {

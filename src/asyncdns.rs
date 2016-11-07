@@ -1,6 +1,8 @@
 use std::fmt;
 use std::io;
 use std::io::{Result, Cursor};
+use std::env;
+use std::path::PathBuf;
 use std::time::Duration;
 use std::{thread, time};
 
@@ -187,12 +189,8 @@ impl DNSResolver {
         debug!("send dns query of {}", &hostname);
         for server in &self.servers {
             let addr = match qtype {
-                QType::A => {
-                    try!(pair2addr4(&server, 53).ok_or(err!(ParseAddrFailed)))
-                }
-                QType::AAAA => {
-                    try!(pair2addr6(&server, 53).ok_or(err!(ParseAddrFailed)))
-                }
+                QType::A => try!(pair2addr4(&server, 53).ok_or(err!(ParseAddrFailed))),
+                QType::AAAA => try!(pair2addr6(&server, 53).ok_or(err!(ParseAddrFailed))),
                 _ => return Err(err!(BuildRequestFailed)),
             };
             try!(build_request(&hostname, qtype).map_or(Err(err!(BuildRequestFailed)),
@@ -634,12 +632,11 @@ fn parse_response(data: &[u8]) -> Option<DNSResponse> {
     })
 }
 
-// TODO: make compatible with windows
 fn parse_resolv(prefer_ipv6: bool) -> Vec<String> {
     let mut servers = vec![];
 
-    handle_every_line("/etc/resolv.conf",
-                      &mut |line| {
+    let _ = handle_every_line("/etc/resolv.conf",
+                              &mut |line| {
         if line.starts_with("nameserver") {
             if let Some(server) = line.split_whitespace().nth(1) {
                 if is_ip(server) {
@@ -660,12 +657,28 @@ fn parse_resolv(prefer_ipv6: bool) -> Vec<String> {
     servers
 }
 
-// TODO: make compatible with windows
+
 fn parse_hosts(prefer_ipv6: bool) -> Dict<String, String> {
     let mut hosts = Dict::default();
+    if prefer_ipv6 {
+        hosts.insert("localhost".to_string(), "::1".to_string());
+    } else {
+        hosts.insert("localhost".to_string(), "127.0.0.1".to_string());
+    }
 
-    handle_every_line("/etc/hosts",
-                      &mut |line| {
+    let hosts_path = if cfg!(target_family = "UNIX") {
+        PathBuf::from("/etc/hosts")
+    } else {
+        let mut path = match env::var("WINDIR") {
+            Ok(dir) => PathBuf::from(dir),
+            _ => return hosts,
+        };
+        path.push("/system32/drivers/etc/hosts");
+        path
+    };
+
+    let _ = handle_every_line(&hosts_path,
+                              &mut |line| {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if !parts.is_empty() {
             let ip = parts[0];
@@ -678,12 +691,6 @@ fn parse_hosts(prefer_ipv6: bool) -> Dict<String, String> {
             }
         }
     });
-
-    if prefer_ipv6 {
-        hosts.insert("localhost".to_string(), "::1".to_string());
-    } else {
-        hosts.insert("localhost".to_string(), "127.0.0.1".to_string());
-    }
 
     hosts
 }
@@ -728,17 +735,15 @@ mod test {
 
     use asyncdns;
 
-    const IPV4_TESTS: [(&'static str, &'static str); 3] = [
-        ("8.8.8.8", "8.8.8.8"),
-        ("localhost", "127.0.0.1"),
-        ("localhost.loggerhead.me", "127.0.0.1"),
-    ];
+    const IPV4_TESTS: [(&'static str, &'static str); 3] = [("8.8.8.8", "8.8.8.8"),
+                                                           ("localhost", "127.0.0.1"),
+                                                           ("localhost.loggerhead.me",
+                                                            "127.0.0.1")];
 
-    const IPV6_TESTS: [(&'static str, &'static str); 3] = [
-        ("2001:4860:4860::8888", "2001:4860:4860::8888"),
-        ("localhost", "::1"),
-        ("localhost.loggerhead.me", "::1"),
-    ];
+    const IPV6_TESTS: [(&'static str, &'static str); 3] = [("2001:4860:4860::8888",
+                                                            "2001:4860:4860::8888"),
+                                                           ("localhost", "::1"),
+                                                           ("localhost.loggerhead.me", "::1")];
 
     #[test]
     fn parse_response() {
@@ -761,11 +766,7 @@ mod test {
     }
 
     fn test_block_resolve(ipv6: bool) {
-        let tests = if ipv6 {
-            IPV6_TESTS
-        } else {
-            IPV4_TESTS
-        };
+        let tests = if ipv6 { IPV6_TESTS } else { IPV4_TESTS };
         let mut resolver = asyncdns::DNSResolver::new(Token(0), None, ipv6).unwrap();
         for &(hostname, ip) in &tests {
             resolver.block_resolve(hostname.to_string()).ok().map_or_else(|| {

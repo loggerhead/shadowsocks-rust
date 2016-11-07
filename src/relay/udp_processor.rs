@@ -58,10 +58,11 @@ impl UdpProcessor {
                prefer_ipv6: bool)
                -> Result<UdpProcessor> {
         let sock = try!(if prefer_ipv6 {
-            UdpSocket::v6()
-        } else {
-            UdpSocket::v4()
-        }.or(Err(err!(InitSocketFailed))));
+                UdpSocket::v6()
+            } else {
+                UdpSocket::v4()
+            }
+            .or(Err(err!(InitSocketFailed))));
         let cache_timeout = Duration::new(600, 0);
 
         Ok(UdpProcessor {
@@ -359,7 +360,8 @@ impl Caller for UdpProcessor {
 
             if let Some(port_requests_map) = self.requests.remove(&hostname) {
                 for (port, requests) in &port_requests_map {
-                    let server_addr = my_try!(pair2addr(&ip, port.clone()).ok_or(err!(ParseAddrFailed)));
+                    let server_addr = my_try!(pair2addr(&ip, port.clone())
+                        .ok_or(err!(ParseAddrFailed)));
 
                     for request in requests {
                         my_try!(self.send_to(CLIENT, request, &server_addr));

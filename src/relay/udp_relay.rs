@@ -71,10 +71,11 @@ impl UdpRelay {
                     prefer_ipv6| {
             let encryptor = new_rc_cell(Encryptor::new(conf["password"].as_str().unwrap()));
             let listener = try!(if prefer_ipv6 {
-                UdpSocket::v6()
-            } else {
-                UdpSocket::v4()
-            }.or(Err(err!(InitSocketFailed))));
+                    UdpSocket::v6()
+                } else {
+                    UdpSocket::v4()
+                }
+                .or(Err(err!(InitSocketFailed))));
 
             try!(listener.bind(&socket_addr).or(Err(err!(BindAddrFailed, socket_addr))));
 
