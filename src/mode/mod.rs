@@ -115,6 +115,7 @@ impl ServerChooser {
         server.map(|&Address(ref addr, port)| (Address(addr.clone(), port), rtt.unwrap().clone()))
     }
 
+    // TODO: choose server by probability according to its weight
     // the compute need O(n) time. But for normal user,
     // the servers number is small, so the compute time is acceptable
     fn choose_by_weight(&mut self, hostname: &str) -> Option<Address> {

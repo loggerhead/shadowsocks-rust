@@ -18,3 +18,8 @@
 - [x] add mode support (`fast` and `balance`)
 - [ ] Multiple encrypt methods support (wait a stable crypto library)
 - [ ] TCP fast open (wait `mio` support)
+
+#TBD
+- [ ] test compatible with win10
+- [ ] test IPv6
+- [ ] bench with fast mode
