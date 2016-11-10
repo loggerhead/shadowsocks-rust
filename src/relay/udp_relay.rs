@@ -18,8 +18,6 @@
 // +-------+--------------+
 // | Fixed |   Variable   |
 // +-------+--------------+
-use std::io;
-use std::io::Result;
 use std::net::SocketAddr;
 
 use mio::udp::UdpSocket;
@@ -29,18 +27,12 @@ use mode::ServerChooser;
 use util::{RcCell, new_rc_cell};
 use config::Config;
 use socks5::parse_header;
-use encrypt::Encryptor;
+use crypto::Encryptor;
 // TODO: rename `DNSResolver` to `DnsResolver`
 use asyncdns::DNSResolver;
 use collections::{Holder, Dict};
+use error::{Result, SocketError, Error as UnionError, Socks5Error, ProcessError};
 use super::{init_relay, Relay, MyHandler, UdpProcessor};
-
-macro_rules! err {
-    (InvalidSocks5Header) => ( io_err!("invalid socks5 header") );
-    (Socks5Header) => ( io_err!("invalid socks5 header") );
-
-    ($($arg:tt)*) => ( processor_err!($($arg)*) );
-}
 
 // only receive data from client/sslocal,
 // and relay the data to `UdpProcessor`
@@ -69,15 +61,16 @@ impl UdpRelay {
                     processors,
                     socket_addr,
                     prefer_ipv6| {
-            let encryptor = new_rc_cell(Encryptor::new(conf["password"].as_str().unwrap()));
-            let listener = try!(if prefer_ipv6 {
-                    UdpSocket::v6()
-                } else {
-                    UdpSocket::v4()
-                }
-                .or(Err(err!(InitSocketFailed))));
-
-            try!(listener.bind(&socket_addr).or(Err(err!(BindAddrFailed, socket_addr))));
+            let encryptor = Encryptor::new(conf["password"].as_str().unwrap(),
+                                           conf["encrypt_method"].as_str().unwrap())
+                .map_err(|e| ProcessError::InitEncryptorFailed(e))?;
+            let listener = if prefer_ipv6 {
+                UdpSocket::v6()
+            } else {
+                UdpSocket::v4()
+            };
+            let listener = listener.map_err(|_| SocketError::InitSocketFailed)?;
+            listener.bind(&socket_addr).map_err(|_| SocketError::BindAddrFailed(socket_addr))?;
 
             if cfg!(feature = "sslocal") {
                 info!("ssclient udp relay listen on {}", socket_addr);
@@ -96,7 +89,7 @@ impl UdpRelay {
                 server_chooser: server_chooser,
                 cache: Dict::default(),
                 processors: processors,
-                encryptor: encryptor,
+                encryptor: new_rc_cell(encryptor),
                 prefer_ipv6: prefer_ipv6,
             })
         })
@@ -108,11 +101,11 @@ impl UdpRelay {
                       self.token,
                       self.interest,
                       PollOpt::edge() | PollOpt::oneshot())
-            .or(Err(err!(RegisterFailed))));
+            .or(Err(SocketError::RegisterFailed)));
         try!(self.dns_resolver
             .borrow_mut()
             .register(&mut event_loop)
-            .or(Err(err!(RegisterFailed))));
+            .or(Err(SocketError::RegisterFailed)));
 
         let this = new_rc_cell(self);
         try!(event_loop.run(&mut Relay::Udp(this)));
@@ -164,7 +157,8 @@ impl UdpRelay {
             Some(header) => {
                 if !self.cache.contains_key(&client_addr) {
                     debug!("create udp processor for {:?}", client_addr);
-                    let token = try!(self.processors.alloc_token().ok_or(err!(AllocTokenFailed)));
+                    let token =
+                        try!(self.processors.alloc_token().ok_or(SocketError::AllocTokenFailed));
                     try!(self.create_processor(event_loop, token, client_addr));
                 }
 
@@ -174,7 +168,7 @@ impl UdpRelay {
                 }
                 Ok(())
             }
-            None => Err(err!(InvalidSocks5Header)),
+            None => err_from!(Socks5Error::InvalidHeader),
         }
     }
 
@@ -185,7 +179,7 @@ impl UdpRelay {
                                    PollOpt::edge() | PollOpt::oneshot()));
         if events.is_error() {
             error!("events error on udp relay");
-            return Err(err!(EventError));
+            return err_from!(SocketError::EventError);
         }
 
         let mut buf = self.receive_buf.take().unwrap();
@@ -217,7 +211,7 @@ impl UdpRelay {
                                 res = self.handle_request(event_loop, addr, &data);
                             }
                             None => {
-                                res = Err(err!(DecryptFailed));
+                                res = err_from!(ProcessError::DecryptFailed);
                             }
                         }
                     }
@@ -236,7 +230,7 @@ impl MyHandler for UdpRelay {
         if token == self.token {
             self.handle_events(event_loop, events)
                 .map_err(|e| {
-                    error!("udp relay: {}", e);
+                    error!("udp relay: {:?}", e);
                 })
                 .unwrap();
         } else if token == self.dns_token {
@@ -244,7 +238,7 @@ impl MyHandler for UdpRelay {
                 .borrow_mut()
                 .handle_events(event_loop, events)
                 .map_err(|e| {
-                    error!("dns resolver: {}", e);
+                    error!("dns resolver: {:?}", e);
                 })
                 .unwrap();
         } else {
@@ -252,10 +246,13 @@ impl MyHandler for UdpRelay {
                 .get(token)
                 .map(|p| p.borrow_mut().handle_events(event_loop, token, events));
             if let Some(Err(e)) = res {
-                if e.kind() != io::ErrorKind::ConnectionReset {
-                    error!("{:?}: {}",
-                           &self.processors[token].borrow() as &UdpProcessor,
-                           e);
+                match e {
+                    UnionError::SocketError(SocketError::ConnectionClosed) => {}
+                    _ => {
+                        error!("{:?}: {:?}",
+                               &self.processors[token].borrow() as &UdpProcessor,
+                               e)
+                    }
                 }
                 self.destroy_processor(event_loop, token);
             }

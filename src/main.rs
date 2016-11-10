@@ -29,14 +29,14 @@ fn main() {
            let conf = conf.clone();
             spawn(|| {
                 TcpRelay::new(conf).and_then(|r| r.run())
-                    .unwrap_or_else(|e| error!("{}", e))
+                    .unwrap_or_else(|e| error!("{:?}", e))
             })
         },
         {
             let conf = conf.clone();
             spawn(|| {
                 UdpRelay::new(conf).and_then(|r| r.run())
-                    .unwrap_or_else(|e| error!("{}", e))
+                    .unwrap_or_else(|e| error!("{:?}", e))
             })
         },
     ];

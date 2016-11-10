@@ -1,8 +1,8 @@
+use std::io;
 use std::fmt;
 use std::ops::BitAnd;
 use std::borrow::{Cow, Borrow};
-use std::io;
-use std::io::{Read, Write, Result};
+use std::io::{Read, Write};
 
 use mio::tcp::{TcpStream, Shutdown};
 use mio::{EventLoop, Token, Timeout, EventSet, PollOpt};
@@ -12,28 +12,13 @@ use socks5;
 use socks5::{addr_type, Socks5Header};
 use util::{RcCell, shift_vec};
 use config::Config;
-use encrypt::Encryptor;
+use crypto::Encryptor;
 use asyncdns::{Caller, DNSResolver, HostIpPair};
 use network::{pair2addr, NetworkWriteBytes};
 use socks5::{pack_addr, parse_header, check_auth_method, CheckAuthResult};
+use error;
+use error::{Result, SocketError, ProcessError, Socks5Error};
 use super::Relay;
-
-macro_rules! err {
-    (CheckSocks5AuthFailed, $r:expr) => (
-        match $r {
-            CheckAuthResult::BadSocksHeader => io_err!("bad socks5 header"),
-            CheckAuthResult::NoAcceptableMethods => io_err!("no acceptable socks5 methods"),
-            _ => unreachable!(),
-        }
-    );
-    (UnknownSocks5Cmd, $cmd:expr) => ( io_err!("unknown socks5 command: {}", $cmd) );
-    (InvalidSocks5Header) => ( io_err!("invalid socks5 header") );
-    (ConnectionClosed) => (
-        io::Error::new(io::ErrorKind::ConnectionReset, "connection closed by the other side")
-    );
-
-    ($($arg:tt)*) => ( processor_err!($($arg)*) );
-}
 
 pub struct TcpProcessor {
     conf: Config,
@@ -70,7 +55,10 @@ impl TcpProcessor {
         } else {
             HandleStage::Addr
         };
-        let encryptor = Encryptor::new(conf["password"].as_str().unwrap());
+
+        let encryptor = Encryptor::new(conf["password"].as_str().unwrap(),
+                                       conf["encrypt_method"].as_str().unwrap())
+            .map_err(|e| ProcessError::InitEncryptorFailed(e))?;
 
         let client_address = try!(local_sock.peer_addr()
             .map(|addr| Address(addr.ip().to_string(), addr.port())));
@@ -228,11 +216,12 @@ impl TcpProcessor {
         };
 
         register_result.map(|_| {
-            debug!("registered {:?} {:?} socket with {:?}",
-                   self,
-                   self.sock_desc(is_local_sock),
-                   events);
-        })
+                debug!("registered {:?} {:?} socket with {:?}",
+                       self,
+                       self.sock_desc(is_local_sock),
+                       events);
+            })
+            .map_err(|e| From::from(e))
     }
 
     pub fn register(&mut self,
@@ -289,18 +278,18 @@ impl TcpProcessor {
                         buf.set_len(nread);
                     }
                 }
-                Err(e) => return Err(err!(ReadFailed, e)),
+                Err(e) => return err_from!(SocketError::ReadFailed(e)),
             }
 
             // no read received which means client closed
             if buf.is_empty() {
-                return Err(err!(ConnectionClosed));
+                return err_from!(SocketError::ConnectionClosed);
             }
         }
 
         if (cfg!(feature = "sslocal") && !is_local_sock) ||
            (!cfg!(feature = "sslocal") && is_local_sock) {
-            self.encryptor.decrypt(&buf).ok_or(err!(DecryptFailed))
+            self.encryptor.decrypt(&buf).ok_or(From::from(ProcessError::DecryptFailed))
         } else {
             Ok(buf)
         }
@@ -308,7 +297,7 @@ impl TcpProcessor {
 
     fn write_to_sock(&mut self, data: &[u8], is_local_sock: bool) -> Result<usize> {
         let nwrite =
-            try!(self.get_sock(is_local_sock).write(data).map_err(|e| err!(WriteFailed, e)));
+            try!(self.get_sock(is_local_sock).write(data).map_err(|e| SocketError::WriteFailed(e)));
         if cfg!(feature = "sslocal") && !is_local_sock {
             self.record_activity();
         }
@@ -332,7 +321,7 @@ impl TcpProcessor {
                     self.update_stream_depend_on(data.len() == nwrite, REMOTE);
                     Ok(())
                 }
-                None => Err(err!(EncryptFailed)),
+                None => err_from!(ProcessError::EncryptFailed),
             }
         } else {
             let nwrite = try!(self.write_to_sock(data, REMOTE));
@@ -353,7 +342,7 @@ impl TcpProcessor {
         if cfg!(feature = "sslocal") {
             match self.encryptor.encrypt(data) {
                 Some(ref data) => self.extend_buf(data, REMOTE),
-                None => return Err(err!(EncryptFailed)),
+                None => return err_from!(ProcessError::EncryptFailed),
             }
         } else {
             self.extend_buf(data, REMOTE);
@@ -392,7 +381,7 @@ impl TcpProcessor {
 
         // if ssserver enabled OTA but client not
         if !cfg!(feature = "sslocal") && is_ota_enabled && !is_ota_session {
-            Err(err!(NotOneTimeAuthSession))
+            err_from!(ProcessError::NotOneTimeAuthSession)
         } else {
             Ok(is_ota_session)
         }
@@ -409,7 +398,7 @@ impl TcpProcessor {
             match data[1] {
                 socks5::cmd::UDP_ASSOCIATE => return self.handle_udp_handshake(),
                 socks5::cmd::CONNECT => data = &data[3..],
-                cmd => return Err(err!(UnknownSocks5Cmd, cmd)),
+                cmd => return err_from!(Socks5Error::UnknownCmd(cmd)),
             }
         }
 
@@ -422,7 +411,7 @@ impl TcpProcessor {
                     match self.encryptor
                         .enable_ota(addr_type | addr_type::AUTH, header_length, &data) {
                         Some(ota_data) => Cow::Owned(ota_data),
-                        None => return Err(err!(EnableOneTimeAuthFailed)),
+                        None => return err_from!(ProcessError::EnableOneTimeAuthFailed),
                     }
                 } else {
                     Cow::Borrowed(data)
@@ -449,7 +438,7 @@ impl TcpProcessor {
 
                     match self.encryptor.encrypt(data.borrow()) {
                         Some(ref data) => self.extend_buf(data, REMOTE),
-                        None => return Err(err!(EncryptFailed)),
+                        None => return err_from!(ProcessError::EncryptFailed),
                     }
 
                     let server_address = self.server_chooser.borrow_mut().choose(&remote_address);
@@ -458,7 +447,7 @@ impl TcpProcessor {
                             self.remote_hostname = Some(remote_address);
                             self.server_address = Some(address);
                         }
-                        None => return Err(err!(NoServerAvailable)),
+                        None => return err_from!(ProcessError::NoServerAvailable),
                     }
                 } else {
                     // buffer data
@@ -482,7 +471,7 @@ impl TcpProcessor {
                 }
                 Ok(())
             }
-            None => Err(err!(InvalidSocks5Header)),
+            None => err_from!(Socks5Error::InvalidHeader),
         }
     }
 
@@ -496,11 +485,11 @@ impl TcpProcessor {
                 Ok(())
             }
             CheckAuthResult::BadSocksHeader => {
-                Err(err!(CheckSocks5AuthFailed, CheckAuthResult::BadSocksHeader))
+                err_from!(Socks5Error::CheckAuthFailed(CheckAuthResult::BadSocksHeader))
             }
             CheckAuthResult::NoAcceptableMethods => {
-                try!(self.write_to_sock(&[0x05, 0xff], LOCAL));
-                Err(err!(CheckSocks5AuthFailed, CheckAuthResult::NoAcceptableMethods))
+                self.write_to_sock(&[0x05, 0xff], LOCAL)?;
+                err_from!(Socks5Error::CheckAuthFailed(CheckAuthResult::NoAcceptableMethods))
             }
         }
     }
@@ -527,7 +516,7 @@ impl TcpProcessor {
         } else {
             match self.encryptor.encrypt(&data) {
                 Some(encrypted) => encrypted,
-                None => return Err(err!(EncryptFailed)),
+                None => return err_from!(ProcessError::EncryptFailed),
             }
         };
 
@@ -567,9 +556,8 @@ impl TcpProcessor {
     }
 
     fn create_connection(&mut self, ip: &str, port: u16) -> Result<TcpStream> {
-        pair2addr(&ip, port)
-            .ok_or(base_err!(ParseAddrFailed))
-            .and_then(|addr| TcpStream::connect(&addr))
+        let addr = pair2addr(&ip, port)?;
+        Ok(TcpStream::connect(&addr)?)
     }
 
     pub fn handle_events(&mut self,
@@ -584,9 +572,9 @@ impl TcpProcessor {
                 let e = self.local_sock.take_socket_error().unwrap_err();
                 if e.kind() != io::ErrorKind::ConnectionReset {
                     error!("events error on local socket of {:?}: {}", self, e);
-                    return Err(err!(EventError));
+                    return err_from!(SocketError::EventError);
                 } else {
-                    return Err(err!(ConnectionClosed));
+                    return err_from!(SocketError::ConnectionClosed);
                 }
             }
             debug!("{:?} events for local socket {:?}", events, self);
@@ -603,9 +591,9 @@ impl TcpProcessor {
                 let e = self.remote_sock.take().unwrap().take_socket_error().unwrap_err();
                 if e.kind() != io::ErrorKind::ConnectionReset {
                     error!("events error on remote socket of {:?}: {}", self, e);
-                    return Err(err!(EventError));
+                    return err_from!(SocketError::EventError);
                 } else {
-                    return Err(err!(ConnectionClosed));
+                    return err_from!(SocketError::ConnectionClosed);
                 }
             }
             debug!("{:?} events for remote socket {:?}", events, self);
@@ -654,9 +642,9 @@ impl TcpProcessor {
         (self.local_token, self.remote_token)
     }
 
-    pub fn fetch_error(&self) -> Result<()> {
+    pub fn fetch_error(&mut self) -> Result<()> {
         match self.stage {
-            HandleStage::Error(ref e) => Err(err!(DnsResolveFailed, e)),
+            HandleStage::Error(ref mut e) => Err(e.take().unwrap()),
             _ => Ok(()),
         }
     }
@@ -677,7 +665,7 @@ impl Caller for TcpProcessor {
                 match $r {
                     Ok(r) => r,
                     Err(e) => {
-                        self.stage = HandleStage::Error(e);
+                        self.stage = HandleStage::Error(Some(e));
                         return;
                     }
                 }
@@ -737,7 +725,7 @@ enum HandleStage {
     // remote connected, piping local and remote
     Stream,
     Destroyed,
-    Error(io::Error),
+    Error(Option<error::Error>),
 }
 
 #[derive(Debug, PartialEq)]

@@ -1,26 +1,31 @@
-use rand::{Rng, OsRng};
-use crypto::mac::Mac;
-use crypto::md5::Md5;
-use crypto::sha1::Sha1;
-use crypto::hmac::Hmac;
-use crypto::digest::Digest;
-use crypto::aes::{ctr, KeySize};
-use crypto::symmetriccipher::SynchronousStreamCipher;
+use std::sync::Arc;
+use std::sync::Mutex;
+use lru_time_cache::LruCache;
 
+use rand::{Rng, OsRng};
+use rust_crypto::mac::Mac;
+use rust_crypto::md5::Md5;
+use rust_crypto::sha1::Sha1;
+use rust_crypto::hmac::Hmac;
+use rust_crypto::digest::Digest;
 use network::{NetworkReadBytes, NetworkWriteBytes};
 
-const BUF_SIZE: usize = 64 * 1024;
+use super::error::{Error, CipherResult};
+use super::{Method, Cipher, Mode};
+use super::cipher::StreamCipher;
 
-type Cipher = Box<SynchronousStreamCipher + 'static>;
+const BUF_SIZE: usize = 64 * 1024;
+const KEY_CACHE_SIZE: usize = 1024;
+const HMAC_SHA1_LEN: usize = 10;
 
 pub struct Encryptor {
     ota_helper: Option<OtaHelper>,
     is_iv_sent: bool,
-    key: Vec<u8>,
+    key: Arc<Vec<u8>>,
+    iv_len: usize,
     password: String,
-    cipher_iv: Vec<u8>,
-    decipher_iv: Vec<u8>,
-    cipher: Option<Cipher>,
+    method: Method,
+    cipher: Cipher,
     decipher: Option<Cipher>,
 }
 
@@ -29,30 +34,33 @@ pub struct Encryptor {
 // +-----------+----------------+
 // | cipher iv | encrypted data |
 // +-----------+----------------+
-//       16
 impl Encryptor {
-    pub fn new(password: &str) -> Encryptor {
-        let (key, cipher_iv) = gen_key_iv(password);
-        let cipher = create_cipher(&key, &cipher_iv);
+    pub fn new(password: &str, method: &str) -> CipherResult<Encryptor> {
+        let method = method.replace("-", "_");
+        let method = try!(Method::from(&method).ok_or(Error::UnknownMethod(method.to_string())));
+        let (key, iv) = gen_key_iv(password, method);
+        let iv_len = iv.len();
+        let cipher = try!(Cipher::new(method, Mode::Encrypt, key.clone(), iv));
 
-        Encryptor {
+        Ok(Encryptor {
             ota_helper: None,
             is_iv_sent: false,
             key: key,
+            iv_len: iv_len,
             password: String::from(password),
-            cipher_iv: cipher_iv,
-            decipher_iv: vec![0u8; 16],
-            cipher: Some(cipher),
+            method: method,
+            cipher: cipher,
             decipher: None,
-        }
+        })
     }
 
-    pub fn get_key(&self) -> &Vec<u8> {
-        &self.key
+    #[cfg(feature = "sslocal")]
+    fn cipher_iv(&self) -> &[u8] {
+        self.cipher.iv()
     }
 
-    pub fn get_iv(&self) -> &Vec<u8> {
-        &self.cipher_iv
+    fn decipher_iv(&self) -> Option<&[u8]> {
+        self.decipher.as_ref().map(|c| c.iv())
     }
 
     #[cfg(feature = "sslocal")]
@@ -63,13 +71,14 @@ impl Encryptor {
                       -> Option<Vec<u8>> {
         let mut ota = OtaHelper::new();
         // OTA header
-        let mut header = Vec::with_capacity(header_length + 10);
+        let mut header = vec![];
         header.push(addr_type);
+        // first byte is addr_type
         header.extend_from_slice(&data[1..header_length]);
 
         // sha1 of header
-        let mut key = Vec::with_capacity(self.cipher_iv.len() + self.key.len());
-        key.extend_from_slice(&self.cipher_iv);
+        let mut key = vec![];
+        key.extend_from_slice(&self.cipher_iv());
         key.extend_from_slice(&self.key);
         let sha1 = ota.hmac_sha1(&header, &key);
         header.extend_from_slice(&sha1);
@@ -80,10 +89,10 @@ impl Encryptor {
             Some(header)
         } else {
             // OTA chunk
-            let chunk = try_opt!(ota.pack_chunk(data, &self.cipher_iv));
+            let chunk = try_opt!(ota.pack_chunk(data, &self.cipher_iv()));
 
             // OTA request
-            let mut data = Vec::with_capacity(header.len() + chunk.len());
+            let mut data = vec![];
             data.extend_from_slice(&header);
             data.extend_from_slice(&chunk);
 
@@ -101,38 +110,31 @@ impl Encryptor {
         let mut ota = OtaHelper::new();
         // verify OTA header
         let header = &data[..header_length];
-        let sha1 = &data[header_length..header_length + 10];
-        let mut key = Vec::with_capacity(self.decipher_iv.len() + self.key.len());
-        key.extend_from_slice(&self.decipher_iv);
+        let sha1 = &data[header_length..header_length + HMAC_SHA1_LEN];
+        let mut key = vec![];
+        key.extend_from_slice(try_opt!(self.decipher_iv()));
         key.extend_from_slice(&self.key);
         if !ota.verify_sha1(header, &key, sha1) {
             return None;
         }
 
         // unpack OTA chunks
-        let res = ota.unpack_chunk(&data[header_length + 10..], &self.decipher_iv);
+        let res = ota.unpack_chunk(&data[header_length + HMAC_SHA1_LEN..],
+                                   try_opt!(self.decipher_iv()));
         self.ota_helper = Some(ota);
         res
     }
 
-    fn raw_encrypt(&mut self, data: &[u8]) -> Option<Vec<u8>> {
-        if let Some(ref mut cipher) = self.cipher {
-            let mut output = vec![0u8; data.len()];
-            cipher.process(data, output.as_mut_slice());
-            Some(output)
-        } else {
-            None
-        }
+    pub fn raw_encrypt(&mut self, data: &[u8]) -> Option<Vec<u8>> {
+        let mut output = vec![];
+        self.cipher.update(data, &mut output).ok().map(|_| output)
     }
 
-    fn raw_decrypt(&mut self, data: &[u8]) -> Option<Vec<u8>> {
-        if let Some(ref mut cipher) = self.decipher {
-            let mut output = vec![0u8; data.len()];
-            cipher.process(data, output.as_mut_slice());
-            Some(output)
-        } else {
-            None
-        }
+    pub fn raw_decrypt(&mut self, data: &[u8]) -> Option<Vec<u8>> {
+        self.decipher.as_mut().and_then(|decipher| {
+            let mut output = vec![];
+            decipher.update(data, &mut output).ok().map(|_| output)
+        })
     }
 
     pub fn encrypt(&mut self, data: &[u8]) -> Option<Vec<u8>> {
@@ -141,9 +143,8 @@ impl Encryptor {
             self.is_iv_sent = true;
             match self.raw_encrypt(data) {
                 Some(ref mut encrypted) => {
-                    let len = self.cipher_iv.len() + encrypted.len();
-                    let mut result = Vec::with_capacity(len);
-                    result.extend_from_slice(&self.cipher_iv);
+                    let mut result = vec![];
+                    result.extend_from_slice(&self.cipher.iv());
                     result.append(encrypted);
 
                     Some(result)
@@ -154,7 +155,7 @@ impl Encryptor {
             // if this is a OTA request
             if cfg!(feature = "sslocal") && self.ota_helper.is_some() {
                 let mut ota = self.ota_helper.take().unwrap();
-                let data = &try_opt!(ota.pack_chunk(data, &self.cipher_iv));
+                let data = &try_opt!(ota.pack_chunk(data, &self.cipher.iv()));
                 self.ota_helper = Some(ota);
                 self.raw_encrypt(data)
             } else {
@@ -166,68 +167,62 @@ impl Encryptor {
     pub fn decrypt(&mut self, data: &[u8]) -> Option<Vec<u8>> {
         // if first request
         if self.decipher.is_none() {
-            if data.len() < 16 {
-                None
-            } else {
-                let iv_len = self.decipher_iv.len();
-                self.decipher_iv[..].copy_from_slice(&data[..iv_len]);
-                self.decipher = Some(create_cipher(&self.key, &self.decipher_iv));
+            let iv_len = self.iv_len;
+            if data.len() > iv_len {
+                let iv = Vec::from(&data[..iv_len]);
+                self.decipher = Cipher::new(self.method, Mode::Decrypt, self.key.clone(), iv).ok();
                 self.raw_decrypt(&data[iv_len..])
+            } else {
+                None
             }
         } else {
             let mut decrypted = try_opt!(self.raw_decrypt(data));
             // if this is a OTA request
             if !cfg!(feature = "sslocal") && self.ota_helper.is_some() {
                 let mut ota = self.ota_helper.take().unwrap();
-                decrypted = try_opt!(ota.unpack_chunk(&decrypted, &self.decipher_iv));
+                decrypted = try_opt!(ota.unpack_chunk(&decrypted, try_opt!(self.decipher_iv())));
                 self.ota_helper = Some(ota);
             }
             Some(decrypted)
         }
     }
 
-    fn raw_encrypt_udp(&self, key: &[u8], iv: &[u8], data: &[u8]) -> (Cipher, Vec<u8>) {
-        let mut cipher = create_cipher(key, iv);
+    fn raw_encrypt_udp(&self, key: Arc<Vec<u8>>, iv: &[u8], data: &[u8]) -> Option<Vec<u8>> {
+        let mut cipher = try_opt!(Cipher::new(self.method, Mode::Encrypt, key, Vec::from(iv)).ok());
         let mut encrypted = vec![0u8; data.len()];
-        cipher.process(data, encrypted.as_mut_slice());
+        try_opt!(cipher.update(data, &mut encrypted).ok());
 
-        let mut res = Vec::with_capacity(iv.len() + data.len());
+        let mut res = vec![];
         res.extend_from_slice(iv);
         res.extend_from_slice(&encrypted);
-
-        (cipher, res)
+        Some(res)
     }
 
     fn raw_decrypt_udp(&self,
                        iv_len: usize,
-                       key: &[u8],
+                       key: Arc<Vec<u8>>,
                        data: &[u8])
-                       -> (Vec<u8>, Cipher, Vec<u8>) {
-        let iv = data[..iv_len].to_vec();
-
-        let mut decipher = create_cipher(key, &iv);
+                       -> Option<(Cipher, Vec<u8>)> {
+        let iv = &data[..iv_len];
+        let mut decipher = try_opt!(Cipher::new(self.method, Mode::Decrypt, key, Vec::from(iv))
+            .ok());
         let mut decrypted = vec![0u8; data.len() - iv_len];
-        decipher.process(&data[iv_len..], decrypted.as_mut_slice());
+        try_opt!(decipher.update(&data[iv_len..], &mut decrypted).ok());
 
-        (iv, decipher, decrypted)
+        Some((decipher, decrypted))
     }
 
     pub fn encrypt_udp(&mut self, data: &[u8]) -> Option<Vec<u8>> {
-        let (key, iv) = gen_key_iv(&self.password);
-        let (cipher, data) = self.raw_encrypt_udp(&key, &iv, data);
-        self.key = key;
-        self.cipher_iv = iv;
-        self.cipher = Some(cipher);
-        Some(data)
+        let (key, iv) = gen_key_iv(&self.password, self.method);
+        self.raw_encrypt_udp(key, &iv, data)
     }
 
     pub fn decrypt_udp(&mut self, data: &[u8]) -> Option<Vec<u8>> {
-        let (key, _iv) = gen_key_iv(&self.password);
-        let (iv, decipher, data) = self.raw_decrypt_udp(_iv.len(), &key, data);
-        self.key = key;
-        self.decipher_iv = iv;
-        self.decipher = Some(decipher);
-        Some(data)
+        let (key, _iv) = gen_key_iv(&self.password, self.method);
+        self.raw_decrypt_udp(_iv.len(), key, data).and_then(|(decipher, data)| {
+            self.decipher = Some(decipher);
+            Some(data)
+        })
     }
 
     pub fn encrypt_udp_ota(&mut self, addr_type: u8, data: &[u8]) -> Option<Vec<u8>> {
@@ -236,11 +231,11 @@ impl Encryptor {
         }
         let ota = self.ota_helper.take().unwrap();
 
-        let mut chunk = Vec::with_capacity(data.len() + 10);
+        let mut chunk = Vec::with_capacity(data.len() + HMAC_SHA1_LEN);
         chunk.push(addr_type);
         chunk.extend_from_slice(&data[1..]);
 
-        let (key, iv) = gen_key_iv(&self.password);
+        let (key, iv) = gen_key_iv(&self.password, self.method);
         let mut ota_key = Vec::with_capacity(key.len() + iv.len());
         ota_key.extend_from_slice(&iv);
         ota_key.extend_from_slice(&key);
@@ -249,12 +244,11 @@ impl Encryptor {
         chunk.extend_from_slice(&sha1);
 
         self.ota_helper = Some(ota);
-        let (_, data) = self.raw_encrypt_udp(&key, &iv, &chunk);
-        Some(data)
+        self.raw_encrypt_udp(key, &iv, &chunk)
     }
 
     pub fn decrypt_udp_ota(&mut self, _addr_type: u8, data: &[u8]) -> Option<Vec<u8>> {
-        if data.len() < 10 {
+        if data.len() < HMAC_SHA1_LEN {
             return None;
         }
 
@@ -263,12 +257,12 @@ impl Encryptor {
         }
         let ota = self.ota_helper.take().unwrap();
 
-        let mut ota_key = Vec::with_capacity(self.key.len() + self.decipher_iv.len());
-        ota_key.extend_from_slice(&self.decipher_iv);
+        let mut ota_key = vec![];
+        ota_key.extend_from_slice(try_opt!(self.decipher_iv()));
         ota_key.extend_from_slice(&self.key);
 
-        let sha1 = &data[data.len() - 10..];
-        let data = &data[..data.len() - 10];
+        let sha1 = &data[data.len() - HMAC_SHA1_LEN..];
+        let data = &data[..data.len() - HMAC_SHA1_LEN];
 
         if ota.verify_sha1(data, &ota_key, sha1) {
             self.ota_helper = Some(ota);
@@ -290,7 +284,7 @@ impl OtaHelper {
     fn new() -> OtaHelper {
         OtaHelper {
             index: 0,
-            chunk_sha1: Vec::with_capacity(10),
+            chunk_sha1: Vec::with_capacity(HMAC_SHA1_LEN),
             chunk_len: 0,
             chunk_buf: Vec::with_capacity(BUF_SIZE),
         }
@@ -299,15 +293,10 @@ impl OtaHelper {
     fn hmac_sha1(&self, data: &[u8], key: &[u8]) -> Vec<u8> {
         let mut hmac = Hmac::new(Sha1::new(), key);
         let len = hmac.output_bytes();
-        let mut res = Vec::with_capacity(len);
-        unsafe {
-            res.set_len(len);
-        }
+        let mut res = vec![0u8; len];
         hmac.input(data);
         hmac.raw_result(&mut res);
-        unsafe {
-            res.set_len(10);
-        }
+        res.resize(HMAC_SHA1_LEN, 0);
         res
     }
 
@@ -316,12 +305,12 @@ impl OtaHelper {
     }
 
     fn pack_chunk(&mut self, data: &[u8], cipher_iv: &[u8]) -> Option<Vec<u8>> {
-        let mut ota_key = Vec::with_capacity(cipher_iv.len() + 4);
+        let mut ota_key = vec![];
         ota_key.extend_from_slice(cipher_iv);
         pack!(i32, ota_key, self.index);
 
         let sha1 = self.hmac_sha1(data, &ota_key);
-        let mut chunk = Vec::with_capacity(12 + data.len());
+        let mut chunk = vec![];
         pack!(u16, chunk, data.len() as u16);
         chunk.extend_from_slice(&sha1);
         chunk.extend_from_slice(data);
@@ -391,27 +380,31 @@ impl OtaHelper {
     }
 }
 
-fn create_cipher(key: &[u8], iv: &[u8]) -> Cipher {
-    Box::new(ctr(KeySize::KeySize256, key, iv))
-}
-
-// TODO: cache key
-fn gen_key_iv(password: &str) -> (Vec<u8>, Vec<u8>) {
-    let (key, _iv) = evp_bytes_to_key(password, 32, 16);
-    let mut cipher_iv = Vec::with_capacity(16);
-    unsafe {
-        cipher_iv.set_len(16);
+fn gen_key_iv(password: &str, method: Method) -> (Arc<Vec<u8>>, Vec<u8>) {
+    lazy_static! {
+        static ref CACHE: Mutex<LruCache<(String, Method), Arc<Vec<u8>>>> =
+            Mutex::new(LruCache::with_capacity(KEY_CACHE_SIZE));
     }
-    let _ = OsRng::new().map(|mut rng| rng.fill_bytes(&mut cipher_iv));
-    (key, cipher_iv)
+
+    let (key_len, iv_len) = Method::info(method);
+
+    let key = match CACHE.lock().unwrap().get(&(password.to_string(), method)) {
+        Some(key) => key.clone(),
+        None => Arc::new(evp_bytes_to_key(password, key_len, iv_len).0),
+    };
+
+    let mut iv = vec![0u8; iv_len];
+    let _ = OsRng::new().map(|mut rng| rng.fill_bytes(&mut iv));
+    (key, iv)
 }
 
 // equivalent to OpenSSL's EVP_BytesToKey() with count 1
 fn evp_bytes_to_key(password: &str, key_len: usize, iv_len: usize) -> (Vec<u8>, Vec<u8>) {
+    const MD5_LEN: usize = 16;
     let mut i = 0;
-    let mut m: Vec<Box<[u8; 16]>> = Vec::with_capacity(key_len + iv_len);
+    let mut m: Vec<Box<[u8; MD5_LEN]>> = Vec::with_capacity(key_len + iv_len);
     let password = password.as_bytes();
-    let mut data = Vec::with_capacity(16 + password.len());
+    let mut data = Vec::with_capacity(MD5_LEN + password.len());
     let mut cnt = 0;
 
     while cnt < key_len + iv_len {
@@ -423,7 +416,7 @@ fn evp_bytes_to_key(password: &str, key_len: usize, iv_len: usize) -> (Vec<u8>, 
         }
         data.extend_from_slice(password);
 
-        let mut buf = Box::new([0u8; 16]);
+        let mut buf = Box::new([0u8; MD5_LEN]);
         let mut md5 = Md5::new();
         md5.input(&data);
         md5.result(&mut *buf);
@@ -433,7 +426,7 @@ fn evp_bytes_to_key(password: &str, key_len: usize, iv_len: usize) -> (Vec<u8>, 
         i += 1;
     }
 
-    let mut tmp: Vec<u8> = Vec::with_capacity(16 * m.capacity());
+    let mut tmp: Vec<u8> = Vec::with_capacity(MD5_LEN * m.capacity());
     for bytes in m {
         tmp.extend_from_slice(&*bytes);
     }

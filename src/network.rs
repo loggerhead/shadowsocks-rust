@@ -1,9 +1,12 @@
 use std::io;
 use std::io::Cursor;
+use std::convert::From;
 use std::str::FromStr;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt};
+
+use error::{SocketError, Result};
 
 #[allow(non_camel_case_types)]
 pub enum AddressFamily {
@@ -60,12 +63,12 @@ pub fn pair2addr6(ip: &str, port: u16) -> Option<SocketAddr> {
     Ipv6Addr::from_str(ip).map(|ip| SocketAddr::new(IpAddr::V6(ip), port)).ok()
 }
 
-pub fn pair2addr(ip: &str, port: u16) -> Option<SocketAddr> {
-    let res = pair2addr4(ip, port);
-    match res {
+pub fn pair2addr(ip: &str, port: u16) -> Result<SocketAddr> {
+    let res = match pair2addr4(ip, port) {
         None => pair2addr6(ip, port),
-        _ => res,
-    }
+        addr => addr,
+    };
+    res.ok_or(From::from(SocketError::ParseAddrFailed(format!("{}:{}", ip, port))))
 }
 
 pub trait NetworkWriteBytes: WriteBytesExt {

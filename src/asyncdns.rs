@@ -1,7 +1,7 @@
 use std::fmt;
-use std::io;
-use std::io::{Result, Cursor};
 use std::env;
+use std::convert::From;
+use std::io::Cursor;
 use std::path::PathBuf;
 use std::time::Duration;
 use std::{thread, time};
@@ -12,6 +12,7 @@ use lru_time_cache::LruCache;
 use mio::udp::UdpSocket;
 use mio::{Token, EventSet, EventLoop, PollOpt};
 
+use error::{Result, SocketError};
 use relay::Relay;
 use collections::{Set, Dict};
 use network::{NetworkWriteBytes, NetworkReadBytes};
@@ -65,18 +66,30 @@ const BUF_SIZE: usize = 1024;
 const NAP_TIME: u64 = 10;
 const TIMEOUT: u64 = 5000;
 
-macro_rules! err {
-    (EmptyHostName) => ( io_err!("empty hostname") );
-    (BuildRequestFailed) => ( io_err!("build dns request failed") );
-    (InvalidHost, $host:expr) => ( io_err!("invalid host {}", $host) );
-    (UnknownHost, $host:expr) => ( io_err!("unknown host {}", $host) );
-    (NoPreferredResponse) => ( io_err!("no preferred response") );
-    (InvalidResponse) => ( io_err!("invalid response") );
-    (BufferEmpty) => ( io_err!("no buffered data available") );
-    (ParseAddrFailed, $host:expr) => ( io_err!("parse socket address {} failed", $host) );
-    (InitSocketFailed) => ( io_err!("initialize socket failed") );
+pub enum Error {
+    Timeout,
+    BufferEmpty,
+    EmptyHostName,
+    InvalidResponse,
+    BuildRequestFailed,
+    NoPreferredResponse,
+    InvalidHost(String),
+    UnknownHost(String),
+}
 
-    ($($arg:tt)*) => ( base_err!($($arg)*) );
+impl fmt::Debug for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            &Error::Timeout => write!(f, "timeout"),
+            &Error::BufferEmpty => write!(f, "no buffered data available"),
+            &Error::EmptyHostName => write!(f, "empty hostname"),
+            &Error::InvalidResponse => write!(f, "invalid response"),
+            &Error::BuildRequestFailed => write!(f, "build dns request failed"),
+            &Error::NoPreferredResponse => write!(f, "no preferred response"),
+            &Error::InvalidHost(ref host) => write!(f, "invalid host {}", host),
+            &Error::UnknownHost(ref host) => write!(f, "unknown host {}", host),
+        }
+    }
 }
 
 pub trait Caller {
@@ -140,9 +153,11 @@ impl DNSResolver {
             None => parse_resolv(prefer_ipv6),
         };
         let (qtypes, sock) = if prefer_ipv6 {
-            (vec![QType::AAAA, QType::A], try!(UdpSocket::v6().map_err(|_| err!(InitSocketFailed))))
+            (vec![QType::AAAA, QType::A],
+             try!(UdpSocket::v6().map_err(|_| SocketError::InitSocketFailed)))
         } else {
-            (vec![QType::A, QType::AAAA], try!(UdpSocket::v4().map_err(|_| err!(InitSocketFailed))))
+            (vec![QType::A, QType::AAAA],
+             try!(UdpSocket::v4().map_err(|_| SocketError::InitSocketFailed)))
         };
         let hosts = parse_hosts(prefer_ipv6);
         let cache_timeout = Duration::new(600, 0);
@@ -189,9 +204,9 @@ impl DNSResolver {
     fn send_request(&self, hostname: String, qtype: u16) -> Result<()> {
         debug!("send dns query of {}", &hostname);
         for server in &self.servers {
-            let addr = try!(pair2addr(&server, 53).ok_or(err!(ParseAddrFailed, server)));
-            try!(build_request(&hostname, qtype).map_or(Err(err!(BuildRequestFailed)),
-                                                        |req| self.sock.send_to(&req, &addr)));
+            let addr = try!(pair2addr(&server, 53));
+            let req = try!(build_request(&hostname, qtype).ok_or(Error::BuildRequestFailed));
+            try!(self.sock.send_to(&req, &addr));
         }
         Ok(())
     }
@@ -206,7 +221,7 @@ impl DNSResolver {
             Ok(Some((nread, _addr))) => unsafe {
                 buf.set_len(nread);
             },
-            Err(e) => res = Err(e),
+            Err(e) => res = err_from!(e),
         }
         self.receive_buf = Some(buf);
         res
@@ -214,7 +229,7 @@ impl DNSResolver {
 
     fn local_resolve(&mut self, hostname: &String) -> Result<Option<HostIpPair>> {
         if hostname.is_empty() {
-            Err(err!(EmptyHostName))
+            err_from!(Error::EmptyHostName)
         } else if is_ip(hostname) {
             Ok(Some(HostIpPair(hostname.to_string(), hostname.to_string())))
         } else if self.hosts.contains_key(hostname) {
@@ -224,7 +239,7 @@ impl DNSResolver {
             let ip = self.cache.get_mut(hostname).unwrap();
             Ok(Some(HostIpPair(hostname.to_string(), ip.clone())))
         } else if !is_valid_hostname(hostname) {
-            Err(err!(InvalidHost, hostname))
+            err_from!(Error::InvalidHost(hostname.clone()))
         } else {
             Ok(None)
         }
@@ -285,7 +300,8 @@ impl DNSResolver {
                 let caller = self.callers.get_mut(token).unwrap();
                 if ip.is_empty() {
                     caller.borrow_mut()
-                        .handle_dns_resolved(event_loop, Err(err!(UnknownHost, hostname)));
+                        .handle_dns_resolved(event_loop,
+                                             err_from!(Error::UnknownHost(hostname.clone())));
                 } else {
                     let hostname_ip = HostIpPair(hostname.clone(), ip.clone());
                     caller.borrow_mut().handle_dns_resolved(event_loop, Ok(Some(hostname_ip)));
@@ -295,7 +311,7 @@ impl DNSResolver {
     }
 
     fn handle_recevied(&mut self) -> Result<Option<HostIpPair>> {
-        let mut res = Err(err!(BufferEmpty));
+        let mut res = err_from!(Error::BufferEmpty);
         let receive_buf = self.receive_buf.take().unwrap();
         if receive_buf.is_empty() {
             return res;
@@ -325,7 +341,7 @@ impl DNSResolver {
                 self.cache.insert(hostname.clone(), ip.clone());
                 res = Ok(Some(HostIpPair(hostname, ip)));
             } else if hostname_status == 2 {
-                res = Err(err!(NoPreferredResponse));
+                res = err_from!(Error::NoPreferredResponse);
 
                 for question in response.questions {
                     if question.1 == self.qtypes[1] {
@@ -336,7 +352,7 @@ impl DNSResolver {
                 }
             }
         } else {
-            res = Err(err!(InvalidResponse));
+            res = err_from!(Error::InvalidResponse);
         }
 
         self.receive_buf = Some(receive_buf);
@@ -352,8 +368,9 @@ impl DNSResolver {
 
         if is_reregister {
             event_loop.reregister(&self.sock, self.token, events, pollopts)
+                .map_err(|e| From::from(e))
         } else {
-            event_loop.register(&self.sock, self.token, events, pollopts)
+            event_loop.register(&self.sock, self.token, events, pollopts).map_err(|e| From::from(e))
         }
     }
 
@@ -375,14 +392,15 @@ impl DNSResolver {
             try!(self.register(event_loop));
 
             for caller in self.callers.values() {
-                caller.borrow_mut().handle_dns_resolved(event_loop, Err(err!(EventError)));
+                caller.borrow_mut()
+                    .handle_dns_resolved(event_loop, err_from!(SocketError::EventError));
             }
 
             self.callers.clear();
             self.hostname_status.clear();
             self.token_to_hostname.clear();
             self.hostname_to_tokens.clear();
-            Err(err!(EventError))
+            err_from!(SocketError::EventError)
         } else {
             try!(self.receive_data_into_buf());
             if let Ok(Some(HostIpPair(hostname, ip))) = self.handle_recevied() {
@@ -772,7 +790,7 @@ mod test {
                     assert!(resolved_ip == ip);
                 }
                 Err(e) => {
-                    println!("block_resolve failed: {}", e);
+                    println!("block_resolve failed: {:?}", e);
                     assert!(false);
                 }
             }

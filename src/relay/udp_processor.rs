@@ -1,9 +1,8 @@
-use std::io;
-use std::io::Result;
 use std::fmt;
+use std::borrow::Cow;
+use std::convert::From;
 use std::time::Duration;
 use std::net::{SocketAddr, IpAddr};
-use std::borrow::Cow;
 
 use lru_time_cache::LruCache;
 use mio::udp::UdpSocket;
@@ -13,22 +12,16 @@ use mode::{ServerChooser, Address};
 use util::RcCell;
 use config::Config;
 use collections::Dict;
-use encrypt::Encryptor;
+use crypto::Encryptor;
 use socks5::{parse_header, pack_addr, addr_type, Socks5Header};
 use network::{pair2addr, NetworkWriteBytes};
 use asyncdns::{Caller, DNSResolver, HostIpPair};
+use error;
+use error::{Result, SocketError, ProcessError, Socks5Error};
 use super::Relay;
 
 type Socks5Requests = Vec<Vec<u8>>;
 type PortRequestMap = Dict<u16, Socks5Requests>;
-
-macro_rules! err {
-    (InvalidSocks5Header) => ( io_err!("invalid socks5 header") );
-    (UnknownHost, $host:expr) => ( io_err!("cannot find relevant request of {}", $host) );
-
-    ($($arg:tt)*) => ( processor_err!($($arg)*) );
-}
-
 
 pub struct UdpProcessor {
     token: Token,
@@ -58,12 +51,12 @@ impl UdpProcessor {
                encryptor: RcCell<Encryptor>,
                prefer_ipv6: bool)
                -> Result<UdpProcessor> {
-        let sock = try!(if prefer_ipv6 {
-                UdpSocket::v6()
-            } else {
-                UdpSocket::v4()
-            }
-            .or(Err(err!(InitSocketFailed))));
+        let sock = if prefer_ipv6 {
+            UdpSocket::v6()
+        } else {
+            UdpSocket::v4()
+        };
+        let sock = sock.map_err(|_| SocketError::InitSocketFailed)?;
         let cache_timeout = Duration::new(600, 0);
 
         Ok(UdpProcessor {
@@ -112,8 +105,9 @@ impl UdpProcessor {
         };
 
         register_result.map(|_| {
-            debug!("registered {:?} socket with {:?}", self, self.interest);
-        })
+                debug!("registered {:?} socket with {:?}", self, self.interest);
+            })
+            .map_err(|e| From::from(e))
     }
 
     pub fn register(&mut self, event_loop: &mut EventLoop<Relay>) -> Result<()> {
@@ -174,7 +168,7 @@ impl UdpProcessor {
             self.relay_sock.borrow().send_to(data, addr)
         };
 
-        res.map_err(|e| err!(WriteFailed, e))
+        res.map_err(|e| From::from(SocketError::WriteFailed(e)))
     }
 
     pub fn handle_request(&mut self,
@@ -190,22 +184,30 @@ impl UdpProcessor {
         let is_ota_enabled = self.conf.get_bool("one_time_auth").unwrap_or(false);
         let request = if cfg!(feature = "sslocal") {
             // if is a OTA session
-            Cow::Owned(try!(if is_ota_enabled {
-                    self.encryptor.borrow_mut().encrypt_udp_ota(addr_type | addr_type::AUTH, data)
-                } else {
-                    self.encryptor.borrow_mut().encrypt_udp(data)
-                }
-                .ok_or(err!(EncryptFailed))))
+            let encrypted: Option<Vec<u8>> = if is_ota_enabled {
+                self.encryptor.borrow_mut().encrypt_udp_ota(addr_type | addr_type::AUTH, data)
+            } else {
+                self.encryptor.borrow_mut().encrypt_udp(data)
+            };
+            let encrypted = encrypted.ok_or({
+                    let err: error::Error = From::from(ProcessError::EncryptFailed);
+                    err
+                })?;
+            Cow::Owned(encrypted)
         } else {
             // if is a OTA session
             if addr_type & addr_type::AUTH == addr_type::AUTH {
-                Cow::Owned(try!(self.encryptor
+                let decrypted: Option<Vec<u8>> = self.encryptor
                     .borrow_mut()
-                    .decrypt_udp_ota(addr_type, data)
-                    .ok_or(err!(DecryptFailed))))
+                    .decrypt_udp_ota(addr_type, data);
+                let decrypted = decrypted.ok_or({
+                        let err: error::Error = From::from(ProcessError::DecryptFailed);
+                        err
+                    })?;
+                Cow::Owned(decrypted)
                 // if ssserver enabled OTA but client not
             } else if is_ota_enabled {
-                return Err(err!(NotOneTimeAuthSession));
+                return err_from!(ProcessError::NotOneTimeAuthSession);
             } else {
                 Cow::Borrowed(data)
             }
@@ -241,7 +243,7 @@ impl UdpProcessor {
         let mut buf = self.receive_buf.take().unwrap();
         new_fat_slice_from_vec!(buf_slice, buf);
 
-        let res = try!(self.sock.recv_from(buf_slice).map_err(|e| err!(ReadFailed, e)));
+        let res = try!(self.sock.recv_from(buf_slice).map_err(|e| SocketError::ReadFailed(e)));
         let res = match res {
             None => Ok(None),
             Some((nread, addr)) => {
@@ -259,10 +261,10 @@ impl UdpProcessor {
                                 response.extend_from_slice(&data);
                                 self.send_to(SERVER, &response, &self.addr)
                             } else {
-                                Err(err!(InvalidSocks5Header))
+                                err_from!(Socks5Error::InvalidHeader)
                             }
                         }
-                        None => Err(err!(DecryptFailed)),
+                        None => err_from!(ProcessError::DecryptFailed),
                     }
                 } else {
                     // construct a socks5 request
@@ -278,7 +280,7 @@ impl UdpProcessor {
 
                     match self.encryptor.borrow_mut().encrypt_udp(&data) {
                         Some(response) => self.send_to(SERVER, &response, &self.addr),
-                        None => Err(err!(EncryptFailed)),
+                        None => err_from!(ProcessError::EncryptFailed),
                     }
                 }
             }
@@ -298,7 +300,7 @@ impl UdpProcessor {
 
         if events.is_error() {
             error!("{:?} got a events error", self);
-            return Err(err!(EventError));
+            return err_from!(SocketError::EventError);
         }
 
         try!(self.on_remote_read(event_loop));
@@ -339,7 +341,7 @@ impl Caller for UdpProcessor {
                 match $r {
                     Ok(r) => r,
                     Err(e) => {
-                        self.stage = HandleStage::Error(e);
+                        self.stage = HandleStage::Error(Some(e));
                         return;
                     }
                 }
@@ -348,21 +350,20 @@ impl Caller for UdpProcessor {
 
         if let Some(HostIpPair(hostname, ip)) = my_try!(res) {
             if cfg!(feature = "sslocal") {
-                let ip_addr = my_try!(pair2addr(&ip, 0).ok_or(err!(ParseAddrFailed))).ip();
+                let ip_addr = my_try!(pair2addr(&ip, 0)).ip();
                 self.ip_to_hostname.insert(ip_addr, hostname.clone());
             }
 
             if let Some(port_requests_map) = self.requests.remove(&hostname) {
                 for (port, requests) in &port_requests_map {
-                    let server_addr = my_try!(pair2addr(&ip, port.clone())
-                        .ok_or(err!(ParseAddrFailed)));
-
+                    let server_addr = my_try!(pair2addr(&ip, port.clone()));
                     for request in requests {
                         my_try!(self.send_to(CLIENT, request, &server_addr));
                     }
                 }
             } else {
-                self.stage = HandleStage::Error(err!(UnknownHost, hostname));
+                let err = error::Error::Other(format!("unknown host {}", hostname));
+                self.stage = HandleStage::Error(Some(err));
                 return;
             }
         }
@@ -389,5 +390,5 @@ enum HandleStage {
     Dns,
     Stream,
     Destroyed,
-    Error(io::Error),
+    Error(Option<error::Error>),
 }

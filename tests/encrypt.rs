@@ -6,121 +6,162 @@ use std::io::prelude::*;
 use std::sync::mpsc::channel;
 use std::net::{TcpListener, TcpStream, Shutdown};
 
-use shadowsocks::encrypt::Encryptor;
+use shadowsocks::crypto::Encryptor;
 
 const PASSWORD: &'static str = "foo";
 const MESSAGES: &'static [&'static str] = &["a", "hi", "foo", "hello", "world"];
+const METHODS: &'static [&'static str] = &[
+    "aes_256_ctr",
+    #[cfg(feature = "openssl")]
+    "aes_256_cfb",
+    #[cfg(feature = "openssl")]
+    "aes_256_cfb8",
+    #[cfg(feature = "openssl")]
+    "rc4",
+];
 
-fn encrypt(cryptor: &mut Encryptor, data: &[u8]) -> Vec<u8> {
-    let encrypted = cryptor.encrypt(data);
-    assert!(encrypted.is_some());
-    encrypted.unwrap()
+macro_rules! assert_new {
+    ($method:expr) => (
+        {
+            println!("test method: {}", $method);
+            let encryptor = Encryptor::new(PASSWORD, $method);
+            match encryptor {
+                Ok(encryptor) => encryptor,
+                Err(e) => {
+                    println!("create encryptor failed: {:?}", e);
+                    return assert!(false);
+                }
+            }
+        }
+    )
 }
 
-fn decrypt(cryptor: &mut Encryptor, data: &[u8]) -> Vec<u8> {
-    let decrypted = cryptor.decrypt(data);
-    assert!(decrypted.is_some());
-    decrypted.unwrap()
+macro_rules! assert_do {
+    ($cryptor:expr, $func:tt, $data:expr) => (
+        {
+            let processed = $cryptor.$func($data);
+            assert!(processed.is_some());
+            processed.unwrap()
+        }
+    )
+}
+
+macro_rules! assert_raw_encrypt {
+    ($cryptor:expr, $data:expr) => ( assert_do!($cryptor, raw_encrypt, $data) )
+}
+
+macro_rules! assert_raw_decrypt {
+    ($cryptor:expr, $data:expr) => ( assert_do!($cryptor, raw_decrypt, $data) )
+}
+
+macro_rules! assert_encrypt {
+    ($cryptor:expr, $data:expr) => ( assert_do!($cryptor, encrypt, $data) )
+}
+
+macro_rules! assert_decrypt {
+    ($cryptor:expr, $data:expr) => ( assert_do!($cryptor, decrypt, $data) )
+}
+
+macro_rules! assert_encrypt_udp {
+    ($cryptor:expr, $data:expr) => ( assert_do!($cryptor, encrypt_udp, $data) )
+}
+
+macro_rules! assert_decrypt_udp {
+    ($cryptor:expr, $data:expr) => ( assert_do!($cryptor, decrypt_udp, $data) )
 }
 
 #[test]
 fn in_order() {
-    let mut encryptor = Encryptor::new(PASSWORD);
-    for msg in MESSAGES {
-        let encrypted = encrypt(&mut encryptor, msg.as_bytes());
-        let decrypted = decrypt(&mut encryptor, &encrypted);
-        assert_eq!(msg.as_bytes()[..], decrypted[..]);
+    for method in METHODS {
+        let mut encryptor = assert_new!(method);
+        for msg in MESSAGES {
+            let encrypted = assert_encrypt!(encryptor, msg.as_bytes());
+            let decrypted = assert_decrypt!(encryptor, &encrypted);
+            assert_eq!(msg.as_bytes()[..], decrypted[..]);
+        }
     }
 }
 
 #[test]
 fn chaos() {
-    let mut encryptor = Encryptor::new(PASSWORD);
-    let mut buf_msg = vec![];
-    let mut buf_encrypted = vec![];
+    for method in METHODS {
+        let mut encryptor = assert_new!(method);
+        let mut buf_msg = vec![];
+        let mut buf_encrypted = vec![];
 
-    macro_rules! assert_decrypt {
-        () => (
-            let decrypted = decrypt(&mut encryptor, &buf_encrypted);
-            assert_eq!(buf_msg[..], decrypted[..]);
-            buf_msg.clear();
-            buf_encrypted.clear();
-        )
-    }
+        for i in 0..MESSAGES.len() {
+            let msg = MESSAGES[i].as_bytes();
+            let encrypted = assert_encrypt!(encryptor, msg);
 
-    for i in 0..MESSAGES.len() {
-        let msg = MESSAGES[i].as_bytes();
-        let encrypted = encrypt(&mut encryptor, msg);
-
-        buf_msg.extend_from_slice(msg);
-        buf_encrypted.extend_from_slice(&encrypted);
-        if i % 2 == 0 {
-            assert_decrypt!();
+            buf_msg.extend_from_slice(msg);
+            buf_encrypted.extend_from_slice(&encrypted);
+            if i % 2 == 0 {
+                let decrypted = assert_decrypt!(encryptor, &buf_encrypted);
+                assert_eq!(buf_msg[..], decrypted[..]);
+                buf_msg.clear();
+                buf_encrypted.clear();
+            }
         }
+
+        let decrypted = assert_decrypt!(encryptor, &buf_encrypted);
+        assert_eq!(buf_msg[..], decrypted[..]);
+        buf_msg.clear();
+        buf_encrypted.clear();
     }
-    assert_decrypt!();
 }
 
 #[test]
 fn tcp_server() {
-    let (tx, rx) = channel();
-
     fn test_encryptor(mut stream: TcpStream, mut encryptor: Encryptor) {
         for msg in MESSAGES.iter() {
-            let encrypted = encrypt(&mut encryptor, msg.as_bytes());
+            let encrypted = assert_encrypt!(encryptor, msg.as_bytes());
             stream.write(&encrypted).unwrap();
         }
         stream.shutdown(Shutdown::Write).unwrap();
 
         let mut data = vec![];
         stream.read_to_end(&mut data).unwrap();
-        let decrypted = decrypt(&mut encryptor, &data);
+        let decrypted = assert_decrypt!(encryptor, &data);
 
-        let mut tmp = vec![];
+        let mut msgs = vec![];
         for msg in MESSAGES.iter() {
-            tmp.extend_from_slice(msg.as_bytes());
+            msgs.extend_from_slice(msg.as_bytes());
         }
-        let messages_bytes = &tmp;
-        assert_eq!(messages_bytes, &decrypted);
+        assert_eq!(&msgs, &decrypted);
     }
 
-    let t1 = thread::spawn(move || {
-        let encryptor = Encryptor::new(PASSWORD);
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        tx.send(listener.local_addr().unwrap()).unwrap();
-        let stream = listener.incoming().next().unwrap().unwrap();
-        test_encryptor(stream, encryptor);
-    });
 
-    let t2 = thread::spawn(move || {
-        let encryptor = Encryptor::new(PASSWORD);
-        let server_addr = rx.recv().unwrap();
-        let stream = TcpStream::connect(server_addr).unwrap();
-        test_encryptor(stream, encryptor);
-    });
+    for method in METHODS {
+        let (tx, rx) = channel();
 
-    t1.join().unwrap();
-    t2.join().unwrap();
+        let t1 = thread::spawn(move || {
+            let encryptor = assert_new!(method);
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            tx.send(listener.local_addr().unwrap()).unwrap();
+            let stream = listener.incoming().next().unwrap().unwrap();
+            test_encryptor(stream, encryptor);
+        });
+
+        let t2 = thread::spawn(move || {
+            let encryptor = assert_new!(method);
+            let server_addr = rx.recv().unwrap();
+            let stream = TcpStream::connect(server_addr).unwrap();
+            test_encryptor(stream, encryptor);
+        });
+
+        t1.join().unwrap();
+        t2.join().unwrap();
+    }
 }
 
 #[test]
 fn udp() {
-    fn encrypt_udp(cryptor: &mut Encryptor, data: &[u8]) -> Vec<u8> {
-        let encrypted = cryptor.encrypt_udp(data);
-        assert!(encrypted.is_some());
-        encrypted.unwrap()
-    }
-
-    fn decrypt_udp(cryptor: &mut Encryptor, data: &[u8]) -> Vec<u8> {
-        let decrypted = cryptor.decrypt_udp(data);
-        assert!(decrypted.is_some());
-        decrypted.unwrap()
-    }
-
-    let mut encryptor = Encryptor::new(PASSWORD);
-    for msg in MESSAGES.iter() {
-        let encrypted = encrypt_udp(&mut encryptor, msg.as_bytes());
-        let decrypted = decrypt_udp(&mut encryptor, &encrypted);
-        assert_eq!(msg.as_bytes()[..], decrypted[..]);
+    for method in METHODS {
+        let mut encryptor = assert_new!(method);
+        for msg in MESSAGES {
+            let encrypted = assert_encrypt_udp!(encryptor, msg.as_bytes());
+            let decrypted = assert_decrypt_udp!(encryptor, &encrypted);
+            assert_eq!(msg.as_bytes()[..], decrypted[..]);
+        }
     }
 }

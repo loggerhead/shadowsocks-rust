@@ -1,5 +1,4 @@
-use std::io;
-use std::io::Result;
+use std::fmt;
 use std::net::SocketAddr;
 
 use mio::{Handler, Token, EventSet, EventLoop};
@@ -10,12 +9,45 @@ use network::pair2addr;
 use collections::Holder;
 use asyncdns::{DNSResolver, Caller, HostIpPair};
 use util::{RcCell, new_rc_cell};
+use error::{DnsError, SocketError, Result};
+use crypto::error::Error as CryptoError;
 
 pub use self::tcp_relay::TcpRelay;
 pub use self::udp_relay::UdpRelay;
 pub use self::tcp_processor::TcpProcessor;
 pub use self::udp_processor::UdpProcessor;
 
+pub enum Error {
+    EnableOneTimeAuthFailed,
+    NotOneTimeAuthSession,
+    ConnectFailed(String),
+    EncryptFailed,
+    DecryptFailed,
+    NoServerAvailable,
+    InitEncryptorFailed(CryptoError),
+}
+
+impl fmt::Debug for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            &Error::EnableOneTimeAuthFailed => write!(f, "enable one time auth failed"),
+            &Error::NotOneTimeAuthSession => {
+                write!(f, "current connection is not a one time auth session")
+            }
+            &Error::ConnectFailed(ref e) => write!(f, "connect to server failed ({})", e),
+            &Error::EncryptFailed => write!(f, "encrypt data failed"),
+            &Error::DecryptFailed => write!(f, "decrypt data failed"),
+            &Error::NoServerAvailable => write!(f, "no ssserver available"),
+            &Error::InitEncryptorFailed(ref e) => write!(f, "init encryptor failed ({:?})", e),
+        }
+    }
+}
+
+impl From<CryptoError> for Error {
+    fn from(e: CryptoError) -> Error {
+        Error::InitEncryptorFailed(e)
+    }
+}
 
 #[derive(Clone)]
 pub enum Relay {
@@ -57,29 +89,6 @@ pub trait MyHandler {
     fn timeout(&mut self, event_loop: &mut EventLoop<Relay>, token: Token);
 }
 
-macro_rules! base_err {
-    (ParseAddrFailed) => ( io_err!("parse socket address from string failed") );
-    (InitSocketFailed) => ( io_err!("initialize socket failed") );
-    (EventError) => ( io_err!("got a event error") );
-    (RegisterFailed) => ( io_err!("register to event loop failed") );
-    (ReadFailed, $e:expr) => ( io_err!("read data from socket failed ({})", $e) );
-    (WriteFailed, $e:expr) => ( io_err!("write data to socket failed ({})", $e) );
-    (BindAddrFailed, $addr:expr) => ( io_err!("bind socket to address {} failed", $addr) );
-    (AllocTokenFailed) => ( io_err!("alloc token failed") );
-    (DnsResolveFailed, $e:expr) => ( io_err!("dns resolve failed ({})", $e) );
-}
-
-macro_rules! processor_err {
-    (EnableOneTimeAuthFailed) => ( io_err!("enable one time auth failed") );
-    (NotOneTimeAuthSession) => ( io_err!("current connection is not a one time auth session") );
-    (ConnectFailed, $e:expr) => ( io_err!("connect to server failed ({})", $e) );
-    (EncryptFailed) => ( io_err!("encrypt data failed") );
-    (DecryptFailed) => ( io_err!("decrypt data failed") );
-    (NoServerAvailable) => ( io_err!("no ssserver available") );
-
-    ($($arg:tt)*) => ( base_err!($($arg)*) );
-}
-
 fn init_relay<T: MyHandler, P: Caller, F>(conf: Config, f: F) -> Result<T>
     where F: FnOnce(Config,
                     Token,
@@ -92,8 +101,8 @@ fn init_relay<T: MyHandler, P: Caller, F>(conf: Config, f: F) -> Result<T>
                     -> Result<T>
 {
     let mut processors = Holder::new();
-    let token = try!(processors.alloc_token().ok_or(base_err!(AllocTokenFailed)));
-    let dns_token = try!(processors.alloc_token().ok_or(base_err!(AllocTokenFailed)));
+    let token = try!(processors.alloc_token().ok_or(SocketError::AllocTokenFailed));
+    let dns_token = try!(processors.alloc_token().ok_or(SocketError::AllocTokenFailed));
 
     let prefer_ipv6 = conf["prefer_ipv6"].as_bool().unwrap();
     let mut dns_resolver = try!(DNSResolver::new(dns_token, None, prefer_ipv6));
@@ -101,10 +110,10 @@ fn init_relay<T: MyHandler, P: Caller, F>(conf: Config, f: F) -> Result<T>
 
     let host = conf["listen_address"].as_str().unwrap().to_string();
     let port = conf["listen_port"].as_integer().unwrap() as u16;
-    let HostIpPair(_host, ip) = try!(dns_resolver.block_resolve(host)
-        .and_then(|h| h.ok_or(base_err!(DnsResolveFailed, "timeout"))));
+    let HostIpPair(_host, ip) = dns_resolver.block_resolve(host)
+        .and_then(|h| h.ok_or(From::from(DnsError::Timeout)))?;
 
-    let socket_addr = try!(pair2addr(&ip, port).ok_or(base_err!(ParseAddrFailed)));
+    let socket_addr = try!(pair2addr(&ip, port));
 
     f(conf,
       token,

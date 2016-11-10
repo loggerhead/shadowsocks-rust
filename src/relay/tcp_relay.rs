@@ -1,6 +1,3 @@
-use std::io;
-use std::io::Result;
-
 use mio::tcp::{TcpListener, TcpStream};
 use mio::{Token, EventSet, EventLoop, PollOpt};
 
@@ -9,12 +6,9 @@ use config::Config;
 use collections::Holder;
 use asyncdns::DNSResolver;
 use util::{RcCell, new_rc_cell};
+use error::{Result, SocketError, Error as UnionError};
 use super::{init_relay, TcpProcessor, MyHandler, Relay};
 use super::tcp_processor::LOCAL;
-
-macro_rules! err {
-    ($($arg:tt)*) => ( base_err!($($arg)*) );
-}
 
 pub struct TcpRelay {
     token: Token,
@@ -37,7 +31,7 @@ impl TcpRelay {
                     socket_addr,
                     _prefer_ipv6| {
             let listener = try!(TcpListener::bind(&socket_addr)
-                .or(Err(err!(BindAddrFailed, socket_addr))));
+                .or(Err(SocketError::BindAddrFailed(socket_addr))));
 
             if cfg!(feature = "sslocal") {
                 info!("ssclient tcp relay listen on {}", socket_addr);
@@ -63,11 +57,11 @@ impl TcpRelay {
                       self.token,
                       EventSet::readable(),
                       PollOpt::edge() | PollOpt::oneshot())
-            .or(Err(err!(RegisterFailed))));
+            .or(Err(SocketError::RegisterFailed)));
         try!(self.dns_resolver
             .borrow_mut()
             .register(&mut event_loop)
-            .or(Err(err!(RegisterFailed))));
+            .or(Err(SocketError::RegisterFailed)));
         let this = new_rc_cell(self);
         try!(event_loop.run(&mut Relay::Tcp(this)));
         Ok(())
@@ -115,7 +109,7 @@ impl TcpRelay {
         if events.is_error() {
             error!("events error on tcp relay: {:?}",
                    self.listener.take_socket_error().unwrap_err());
-            return Err(err!(EventError));
+            return err_from!(SocketError::EventError);
         }
 
         match try!(self.listener.accept()) {
@@ -135,7 +129,7 @@ impl TcpRelay {
                             self.processors.remove(t2);
                         }
                     }
-                    Err(err!(AllocTokenFailed))
+                    err_from!(SocketError::AllocTokenFailed)
                 }
             }
             None => Ok(()),
@@ -148,7 +142,7 @@ impl MyHandler for TcpRelay {
         if token == self.token {
             self.handle_events(event_loop, events)
                 .map_err(|e| {
-                    error!("tcp relay: {}", e);
+                    error!("tcp relay: {:?}", e);
                 })
                 .unwrap();
         } else if token == self.dns_token {
@@ -156,19 +150,22 @@ impl MyHandler for TcpRelay {
                 .borrow_mut()
                 .handle_events(event_loop, events)
                 .map_err(|e| {
-                    error!("dns resolver: {}", e);
+                    error!("dns resolver: {:?}", e);
                 })
                 .unwrap();
         } else {
             let res = self.processors.get(token).map(|p| {
-                try!(p.borrow().fetch_error());
+                p.borrow_mut().fetch_error()?;
                 p.borrow_mut().handle_events(event_loop, token, events)
             });
             if let Some(Err(e)) = res {
-                if e.kind() != io::ErrorKind::ConnectionReset {
-                    error!("{:?}: {}",
-                           &self.processors[token].borrow() as &TcpProcessor,
-                           e);
+                match e {
+                    UnionError::SocketError(SocketError::ConnectionClosed) => {}
+                    _ => {
+                        error!("{:?}: {:?}",
+                               &self.processors[token].borrow() as &TcpProcessor,
+                               e)
+                    }
                 }
                 self.destroy_processor(event_loop, token);
             }

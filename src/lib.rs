@@ -21,11 +21,15 @@ extern crate rand;
 extern crate toml;
 extern crate clap;
 extern crate regex;
-extern crate crypto;
 extern crate chrono;
 extern crate byteorder;
 extern crate lru_time_cache;
+extern crate crypto as rust_crypto;
+#[cfg(feature = "openssl")]
+extern crate openssl as rust_openssl;
 
+#[macro_use]
+pub mod error;
 #[macro_use]
 pub mod util;
 #[macro_use]
@@ -35,7 +39,7 @@ pub mod relay;
 pub mod mode;
 pub mod config;
 pub mod socks5;
-pub mod encrypt;
+pub mod crypto;
 pub mod asyncdns;
 pub mod my_logger;
 pub mod collections;

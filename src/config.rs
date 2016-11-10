@@ -80,7 +80,7 @@ lazy_static! {
         let mut m = HashMap::new();
         m.insert("pid_file", "/var/run/ss-rust.pid");
         m.insert("log_file", "/var/log/ss-rust.log");
-        m.insert("encryption_method", "aes-256-ctr");
+        m.insert("encrypt_method", "aes-256-ctr");
         m.insert("timeout", "300");
         if cfg!(feature = "sslocal") {
             m.insert("listen_address", "127.0.0.1");
@@ -108,11 +108,11 @@ pub fn gen_config() -> Result<Config, ConfigError> {
             .value_name("password")
             .help("password")
             .takes_value(true))
-        .arg(Arg::with_name("encryption_method")
+        .arg(Arg::with_name("encrypt_method")
             .short("m")
             .value_name("method")
             .help("encryption method")
-            .default_value(DEFAULT_VALUE["encryption_method"]))
+            .default_value(DEFAULT_VALUE["encrypt_method"]))
         .arg(Arg::with_name("timeout")
             .short("t")
             .value_name("timeout")
@@ -315,7 +315,7 @@ fn check_config(matches: ArgMatches, mut config: Table) -> Result<Config, Config
     try_set_config!("listen_port", i64, check);
     try_set_config!("password", check);
     try_set_config!("timeout", i64, check);
-    try_set_config!("encryption_method", check);
+    try_set_config!("encrypt_method", check);
 
     try_set_config!("fast_open", bool);
     try_set_config!("one_time_auth", bool);
