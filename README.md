@@ -1,9 +1,9 @@
-#shadowsocks-rust
+# shadowsocks-rust
 [![Build Status](https://travis-ci.org/loggerhead/shadowsocks-rust.svg?branch=master)](https://travis-ci.org/loggerhead/shadowsocks-rust)
 [![Build status](https://ci.appveyor.com/api/projects/status/ti4hi7era48ltxq4?svg=true)](https://ci.appveyor.com/project/loggerhead/shadowsocks-rust)
 [![crate](https://img.shields.io/crates/v/shadowsocks.svg)](https://crates.io/crates/shadowsocks)
 
-#Running
+# Running
 ```bash
 # start ssserver
 ./run.sh s
@@ -11,15 +11,44 @@
 ./run.sh c
 ```
 
-#Features
-- [x] Running as daemon
-- [x] UDP support
-- [x] OTA encrypt method support
-- [x] add mode support (`fast` and `balance`)
-- [ ] Multiple encrypt methods support (wait a stable crypto library)
-- [ ] TCP fast open (wait `mio` support)
+# Compare official shadowsocks
+## Features
 
-#TBD
+|                             | Rust  | Python (2.9.0) |
+| --------------------------- | :---: | :------------: |
+| TCP & UDP support           | __√__ |     __√__      |
+| TCP fast open               | __X__ |     __√__      |
+| Destination IP blacklist    | __X__ |     __√__      |
+| One time auth               | __√__ |     __√__      |
+| Multiple encryption methods | __√__ |     __√__      |
+| Async UDP support           | __√__ |     __X__      |
+| IPv6 support                | __√__ |    Unknown     |
+| Windows compatible          | __√__ |     __√__      |
+| Multiple servers support    | __X__ |     __X__      |
+
+## Performance
+|               | Rust | Python (2.9.0) |
+| ------------- | :--: | :------------: |
+| local host    |      |                |
+| remote server |      |                |
+
+## Both Supported Encryption Methods
+
+* AES-128-CTR
+* AES-192-CTR
+* AES-256-CTR
+* AES-128-CFB
+* AES-256-CFB
+* AES-128-CFB1
+* AES-256-CFB1
+* AES-128-CFB8
+* AES-256-CFB8
+* Salsa20
+* Chacha20
+* RC4
+
+# TBD
 - [ ] test compatible with win10
 - [ ] test IPv6
 - [ ] bench with fast mode
+- [ ] support TCP fast open (wait `mio` support)
