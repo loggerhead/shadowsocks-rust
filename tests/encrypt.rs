@@ -10,20 +10,44 @@ use shadowsocks::crypto::Encryptor;
 
 const PASSWORD: &'static str = "foo";
 const MESSAGES: &'static [&'static str] = &["a", "hi", "foo", "hello", "world"];
+
+#[cfg(not(feature = "openssl"))]
 const METHODS: &'static [&'static str] = &[
-    "aes_256_ctr",
-    #[cfg(feature = "openssl")]
-    "aes_256_cfb",
-    #[cfg(feature = "openssl")]
-    "aes_256_cfb8",
-    #[cfg(feature = "openssl")]
+    "aes-128-ctr",
+    "aes-192-ctr",
+    "aes-256-ctr",
     "rc4",
+    "hc128",
+    "salsa20",
+    "xsalsa20",
+    "chacha20",
+    "xchacha20",
+    "sosemanuk",
+];
+
+#[cfg(feature = "openssl")]
+const METHODS: &'static [&'static str] = &[
+    "aes-128-ctr",
+    "aes-192-ctr",
+    "aes-256-ctr",
+    "rc4",
+    "hc128",
+    "salsa20",
+    "xsalsa20",
+    "chacha20",
+    "xchacha20",
+    "sosemanuk",
+    "aes-128-cfb",
+    "aes-256-cfb",
+    "aes-128-cfb1",
+    "aes-256-cfb1",
+    "aes-128-cfb8",
+    "aes-256-cfb8",
 ];
 
 macro_rules! assert_new {
     ($method:expr) => (
         {
-            println!("test method: {}", $method);
             let encryptor = Encryptor::new(PASSWORD, $method);
             match encryptor {
                 Ok(encryptor) => encryptor,

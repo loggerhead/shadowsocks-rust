@@ -14,12 +14,10 @@ impl OpensslCipher {
         let cipher = match method {
             Method::aes_128_cfb => Cipher::aes_128_cfb128(),
             Method::aes_256_cfb => Cipher::aes_256_cfb128(),
-            Method::aes_128_ctr => Cipher::aes_128_ctr(),
-            Method::aes_128_cfb8 => Cipher::aes_128_cfb8(),
-            Method::aes_256_cfb8 => Cipher::aes_256_cfb8(),
             Method::aes_128_cfb1 => Cipher::aes_128_cfb1(),
             Method::aes_256_cfb1 => Cipher::aes_256_cfb1(),
-            Method::rc4 => Cipher::rc4(),
+            Method::aes_128_cfb8 => Cipher::aes_128_cfb8(),
+            Method::aes_256_cfb8 => Cipher::aes_256_cfb8(),
             m => return Err(Error::UnsupportMethod(m)),
         };
         let block_size = cipher.block_size();

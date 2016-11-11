@@ -1,4 +1,3 @@
-use std::convert::From;
 #[cfg(feature = "openssl")]
 use super::rust_openssl;
 

@@ -60,8 +60,7 @@ impl Handler for Relay {
     type Timeout = Token;
 
     fn ready(&mut self, event_loop: &mut EventLoop<Relay>, token: Token, events: EventSet) {
-        let this = self.clone();
-        match this {
+        match self.clone() {
             Relay::Tcp(r) => {
                 r.borrow_mut().ready(event_loop, token, events);
             }
@@ -72,8 +71,7 @@ impl Handler for Relay {
     }
 
     fn timeout(&mut self, event_loop: &mut EventLoop<Relay>, token: Token) {
-        let this = self.clone();
-        match this {
+        match self.clone() {
             Relay::Tcp(r) => {
                 r.borrow_mut().timeout(event_loop, token);
             }

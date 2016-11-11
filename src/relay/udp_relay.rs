@@ -227,19 +227,13 @@ impl UdpRelay {
 impl MyHandler for UdpRelay {
     fn ready(&mut self, event_loop: &mut EventLoop<Relay>, token: Token, events: EventSet) {
         if token == self.token {
-            self.handle_events(event_loop, events)
-                .map_err(|e| {
-                    error!("udp relay: {:?}", e);
-                })
-                .unwrap();
+            if let Err(e) = self.handle_events(event_loop, events) {
+                error!("udp relay: {:?}", e);
+            }
         } else if token == self.dns_token {
-            self.dns_resolver
-                .borrow_mut()
-                .handle_events(event_loop, events)
-                .map_err(|e| {
-                    error!("dns resolver: {:?}", e);
-                })
-                .unwrap();
+            if let Err(e) = self.dns_resolver.borrow_mut().handle_events(event_loop, events) {
+                error!("dns resolver: {:?}", e);
+            }
         } else {
             let res = self.processors
                 .get(token)

@@ -39,40 +39,41 @@ macro_rules! define_methods {
 
 #[cfg(not(feature = "openssl"))]
 define_methods!(
+    aes_128_ctr => (16, 16, Crypto),
+    aes_192_ctr => (24, 16, Crypto),
     aes_256_ctr => (32, 16, Crypto),
+    rc4 => (16, 0, Crypto),
+    hc128 => (16, 16, Crypto),
+    salsa20 => (32, 8, Crypto),
+    xsalsa20 => (32, 24, Crypto),
+    chacha20 => (32, 8, Crypto),
+    xchacha20 => (32, 24, Crypto),
+    sosemanuk => (32, 16, Crypto),
 );
 
 #[cfg(feature = "openssl")]
 define_methods!(
+    aes_128_ctr => (16, 16, Crypto),
+    aes_192_ctr => (24, 16, Crypto),
     aes_256_ctr => (32, 16, Crypto),
+    rc4 => (16, 0, Crypto),
+    hc128 => (16, 16, Crypto),
+    salsa20 => (32, 8, Crypto),
+    xsalsa20 => (32, 24, Crypto),
+    chacha20 => (32, 8, Crypto),
+    xchacha20 => (32, 24, Crypto),
+    sosemanuk => (32, 16, Crypto),
 
     aes_128_cfb => (16, 16, Openssl),
-    aes_192_cfb => (24, 16, Openssl),
     aes_256_cfb => (32, 16, Openssl),
-    aes_128_ofb => (16, 16, Openssl),
-    aes_192_ofb => (24, 16, Openssl),
-    aes_256_ofb => (32, 16, Openssl),
-    aes_128_ctr => (16, 16, Openssl),
-    aes_192_ctr => (24, 16, Openssl),
-    aes_128_cfb8 => (16, 16, Openssl),
-    aes_192_cfb8 => (24, 16, Openssl),
-    aes_256_cfb8 => (32, 16, Openssl),
     aes_128_cfb1 => (16, 16, Openssl),
-    aes_192_cfb1 => (24, 16, Openssl),
     aes_256_cfb1 => (32, 16, Openssl),
-    bf_cfb => (16, 8, Openssl),
-    camellia_128_cfb => (16, 16, Openssl),
-    camellia_192_cfb => (24, 16, Openssl),
-    camellia_256_cfb => (32, 16, Openssl),
-    cast5_cfb => (16, 8, Openssl),
-    des_cfb => (8, 8, Openssl),
-    idea_cfb => (16, 8, Openssl),
-    rc2_cfb => (16, 8, Openssl),
-    rc4 => (16, 0, Openssl),
-    seed_cfb => (16, 16, Openssl),
+    aes_128_cfb8 => (16, 16, Openssl),
+    aes_256_cfb8 => (32, 16, Openssl),
 );
 
 pub enum BelongLib {
     Crypto,
+    #[cfg(feature = "openssl")]
     Openssl,
 }

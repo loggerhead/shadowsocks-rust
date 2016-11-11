@@ -1,6 +1,5 @@
 use std::io;
 use std::fmt;
-use std::convert::From;
 
 #[cfg(feature = "openssl")]
 use rust_openssl::error::ErrorStack;
