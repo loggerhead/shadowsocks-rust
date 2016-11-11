@@ -21,8 +21,7 @@ before_script:
   - (cargo install rustfmt || true)
 script:
   - cargo fmt -- --write-mode=diff
-  - cargo test --test encrypt
-  - cargo test asyncdns
+  - cargo test
   - ./run.sh s -d start --log-file ssserver.log --pid-file ssserver.pid
   - ./run.sh c -d start --log-file sslocal.log --pid-file sslocal.pid
   - python tests/echo_server.py &
