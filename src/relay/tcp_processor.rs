@@ -60,9 +60,9 @@ impl TcpProcessor {
                                        conf["encrypt_method"].as_str().unwrap())
             .map_err(|e| ProcessError::InitEncryptorFailed(e))?;
 
-        let client_address = try!(local_sock.peer_addr()
-            .map(|addr| Address(addr.ip().to_string(), addr.port())));
-        try!(local_sock.set_nodelay(true));
+        let client_address = local_sock.peer_addr()
+            .map(|addr| Address(addr.ip().to_string(), addr.port()))?;
+        local_sock.set_nodelay(true)?;
 
         Ok(TcpProcessor {
             conf: conf,
@@ -297,7 +297,7 @@ impl TcpProcessor {
 
     fn write_to_sock(&mut self, data: &[u8], is_local_sock: bool) -> Result<usize> {
         let nwrite =
-            try!(self.get_sock(is_local_sock).write(data).map_err(|e| SocketError::WriteFailed(e)));
+            self.get_sock(is_local_sock).write(data).map_err(|e| SocketError::WriteFailed(e))?;
         if cfg!(feature = "sslocal") && !is_local_sock {
             self.record_activity();
         }
@@ -314,7 +314,7 @@ impl TcpProcessor {
         if cfg!(feature = "sslocal") {
             match self.encryptor.encrypt(data) {
                 Some(ref data) => {
-                    let nwrite = try!(self.write_to_sock(data, REMOTE));
+                    let nwrite = self.write_to_sock(data, REMOTE)?;
                     if nwrite < data.len() {
                         self.extend_buf(&data[nwrite..], REMOTE);
                     }
@@ -324,7 +324,7 @@ impl TcpProcessor {
                 None => err_from!(ProcessError::EncryptFailed),
             }
         } else {
-            let nwrite = try!(self.write_to_sock(data, REMOTE));
+            let nwrite = self.write_to_sock(data, REMOTE)?;
             if nwrite < data.len() {
                 self.extend_buf(&data[nwrite..], REMOTE);
             }
@@ -355,7 +355,7 @@ impl TcpProcessor {
         trace!("udp associate handshake");
         self.stage = HandleStage::UDPAssoc;
 
-        let addr = try!(self.local_sock.local_addr());
+        let addr = self.local_sock.local_addr()?;
         let packed_addr = pack_addr(addr.ip());
         let mut packed_port = Vec::<u8>::new();
         try_pack!(u16, packed_port, addr.port());
@@ -366,7 +366,7 @@ impl TcpProcessor {
         header.extend_from_slice(&packed_addr);
         header.extend_from_slice(&packed_port);
 
-        try!(self.local_sock.write_all(&header));
+        self.local_sock.write_all(&header)?;
 
         Ok(())
     }
@@ -406,7 +406,7 @@ impl TcpProcessor {
         match parse_header(data) {
             Some(Socks5Header(addr_type, remote_address, remote_port, header_length)) => {
                 info!("connecting to {}:{}", remote_address, remote_port);
-                let is_ota_session = try!(self.check_one_time_auth(addr_type));
+                let is_ota_session = self.check_one_time_auth(addr_type)?;
                 let data = if is_ota_session {
                     match self.encryptor
                         .enable_ota(addr_type | addr_type::AUTH, header_length, &data) {
@@ -433,7 +433,7 @@ impl TcpProcessor {
                                      // fake port
                                      0x00,
                                      0x00];
-                    try!(self.write_to_sock(response, LOCAL));
+                    self.write_to_sock(response, LOCAL)?;
                     self.update_stream(StreamDirection::Down, StreamStatus::WaitReading);
 
                     match self.encryptor.encrypt(data.borrow()) {
@@ -480,7 +480,7 @@ impl TcpProcessor {
 
         match check_auth_method(data) {
             CheckAuthResult::Success => {
-                try!(self.write_to_sock(&[0x05, 0x00], LOCAL));
+                self.write_to_sock(&[0x05, 0x00], LOCAL)?;
                 self.stage = HandleStage::Addr;
                 Ok(())
             }
@@ -495,7 +495,7 @@ impl TcpProcessor {
     }
 
     fn on_local_read(&mut self, event_loop: &mut EventLoop<Relay>) -> Result<()> {
-        let data = try!(self.receive_data(LOCAL));
+        let data = self.receive_data(LOCAL)?;
         self.reset_timeout(event_loop);
         match self.stage {
             HandleStage::Init => self.handle_stage_init(event_loop, &data),
@@ -508,7 +508,7 @@ impl TcpProcessor {
 
     // remote_sock <= data
     fn on_remote_read(&mut self, event_loop: &mut EventLoop<Relay>) -> Result<()> {
-        let data = try!(self.receive_data(REMOTE));
+        let data = self.receive_data(REMOTE)?;
         self.reset_timeout(event_loop);
 
         let data = if cfg!(feature = "sslocal") {
@@ -521,7 +521,7 @@ impl TcpProcessor {
         };
 
         // buffer unfinished bytes
-        let nwrite = try!(self.write_to_sock(&data, LOCAL));
+        let nwrite = self.write_to_sock(&data, LOCAL)?;
         if nwrite < data.len() {
             self.extend_buf(&data[nwrite..], LOCAL);
         }
@@ -538,7 +538,7 @@ impl TcpProcessor {
             }
         } else {
             let mut buf = self.get_buf(is_local_sock);
-            let nwrite = try!(self.write_to_sock(&buf, is_local_sock));
+            let nwrite = self.write_to_sock(&buf, is_local_sock)?;
             shift_vec(&mut buf, nwrite);
             self.update_stream_depend_on(buf.len() == nwrite, is_local_sock);
             self.set_buf(buf, is_local_sock);
@@ -580,10 +580,10 @@ impl TcpProcessor {
             debug!("{:?} events for local socket {:?}", events, self);
 
             if events.is_readable() || events.is_hup() {
-                try!(self.on_local_read(event_loop));
+                self.on_local_read(event_loop)?;
             }
             if events.is_writable() {
-                try!(self.on_local_write(event_loop));
+                self.on_local_write(event_loop)?;
             }
             self.reregister(event_loop, LOCAL)
         } else if token == self.remote_token {
@@ -599,10 +599,10 @@ impl TcpProcessor {
             debug!("{:?} events for remote socket {:?}", events, self);
 
             if events.is_readable() || events.is_hup() {
-                try!(self.on_remote_read(event_loop));
+                self.on_remote_read(event_loop)?;
             }
             if events.is_writable() {
-                try!(self.on_remote_write(event_loop));
+                self.on_remote_write(event_loop)?;
             }
             self.reregister(event_loop, REMOTE)
         } else {

@@ -61,7 +61,7 @@ impl ServerChooser {
             for server in conf_servers {
                 let parts: Vec<&str> = server.as_str().unwrap().splitn(2, ':').collect();
                 let addr = parts[0].to_string();
-                let port = try!(u16::from_str(parts[1]).map_err(|_| err!(InvalidPort, server)));
+                let port = u16::from_str(parts[1]).map_err(|_| err!(InvalidPort, server))?;
                 servers.insert(Address(addr, port), RttRecord::new());
             }
         }

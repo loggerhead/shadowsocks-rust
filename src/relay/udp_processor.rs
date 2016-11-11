@@ -243,7 +243,7 @@ impl UdpProcessor {
         let mut buf = self.receive_buf.take().unwrap();
         new_fat_slice_from_vec!(buf_slice, buf);
 
-        let res = try!(self.sock.recv_from(buf_slice).map_err(|e| SocketError::ReadFailed(e)));
+        let res = self.sock.recv_from(buf_slice).map_err(|e| SocketError::ReadFailed(e))?;
         let res = match res {
             None => Ok(None),
             Some((nread, addr)) => {
@@ -303,7 +303,7 @@ impl UdpProcessor {
             return err_from!(SocketError::EventError);
         }
 
-        try!(self.on_remote_read(event_loop));
+        self.on_remote_read(event_loop)?;
         self.reregister(event_loop)
     }
 

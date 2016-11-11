@@ -120,28 +120,28 @@ impl<'a> NetworkReadBytes for &'a [u8] {
 
 #[macro_export]
 macro_rules! pack {
-    (i32, $r:expr, $v:expr) => ( try_opt!($r.put_i32($v).ok()); );
-    (u16, $r:expr, $v:expr) => ( try_opt!($r.put_u16($v).ok()); );
-    (u8, $r:expr, $v:expr) => ( try_opt!($r.put_u8($v).ok()); );
+    (i32, $r:expr, $v:expr) => ( try_opt!($r.put_i32($v).ok()) );
+    (u16, $r:expr, $v:expr) => ( try_opt!($r.put_u16($v).ok()) );
+    (u8, $r:expr, $v:expr) => ( try_opt!($r.put_u8($v).ok()) );
 }
 
 #[macro_export]
 macro_rules! unpack {
-    (u32, $r:expr) => ( try_opt!($r.get_u32().ok()); );
-    (u16, $r:expr) => ( try_opt!($r.get_u16().ok()); );
-    (u8, $r:expr) => ( try_opt!($r.get_u8().ok()); );
+    (u32, $r:expr) => ( try_opt!($r.get_u32().ok()) );
+    (u16, $r:expr) => ( try_opt!($r.get_u16().ok()) );
+    (u8, $r:expr) => ( try_opt!($r.get_u8().ok()) );
 }
 
 #[macro_export]
 macro_rules! try_pack {
-    (i32, $r:expr, $v:expr) => ( try!($r.put_i32($v)); );
-    (u16, $r:expr, $v:expr) => ( try!($r.put_u16($v)); );
-    (u8, $r:expr, $v:expr) => ( try!($r.put_u8($v)); );
+    (i32, $r:expr, $v:expr) => ( $r.put_i32($v)? );
+    (u16, $r:expr, $v:expr) => ( $r.put_u16($v)? );
+    (u8, $r:expr, $v:expr) => ( $r.put_u8($v)? );
 }
 
 #[macro_export]
 macro_rules! try_unpack {
-    (u32, $r:expr) => ( try!($r.get_u32()); );
-    (u16, $r:expr) => ( try!($r.get_u16()); );
-    (u8, $r:expr) => ( try!($r.get_u8()); );
+    (u32, $r:expr) => ( $r.get_u32()? );
+    (u16, $r:expr) => ( $r.get_u16()? );
+    (u8, $r:expr) => ( $r.get_u8()? );
 }

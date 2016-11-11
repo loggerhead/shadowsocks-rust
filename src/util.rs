@@ -32,7 +32,7 @@ pub fn slice2string(data: &[u8]) -> Option<String> {
 }
 
 pub fn handle_every_line<P: AsRef<Path>>(filepath: P, func: &mut FnMut(String)) -> Result<()> {
-    let f = try!(File::open(filepath));
+    let f = File::open(filepath)?;
     let reader = BufReader::new(f);
     for line in reader.lines() {
         let line = match line {

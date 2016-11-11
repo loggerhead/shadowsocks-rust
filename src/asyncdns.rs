@@ -154,10 +154,10 @@ impl DNSResolver {
         };
         let (qtypes, sock) = if prefer_ipv6 {
             (vec![QType::AAAA, QType::A],
-             try!(UdpSocket::v6().map_err(|_| SocketError::InitSocketFailed)))
+             UdpSocket::v6().map_err(|_| SocketError::InitSocketFailed)?)
         } else {
             (vec![QType::A, QType::AAAA],
-             try!(UdpSocket::v4().map_err(|_| SocketError::InitSocketFailed)))
+             UdpSocket::v4().map_err(|_| SocketError::InitSocketFailed)?)
         };
         let hosts = parse_hosts(prefer_ipv6);
         let cache_timeout = Duration::new(600, 0);
@@ -204,9 +204,9 @@ impl DNSResolver {
     fn send_request(&self, hostname: String, qtype: u16) -> Result<()> {
         debug!("send dns query of {}", &hostname);
         for server in &self.servers {
-            let addr = try!(pair2addr(&server, 53));
-            let req = try!(build_request(&hostname, qtype).ok_or(Error::BuildRequestFailed));
-            try!(self.sock.send_to(&req, &addr));
+            let addr = pair2addr(&server, 53)?;
+            let req = build_request(&hostname, qtype).ok_or(Error::BuildRequestFailed)?;
+            self.sock.send_to(&req, &addr)?;
         }
         Ok(())
     }
@@ -248,16 +248,16 @@ impl DNSResolver {
     pub fn block_resolve(&mut self, hostname: String) -> Result<Option<HostIpPair>> {
         match self.local_resolve(&hostname) {
             Ok(None) => {
-                try!(self.send_request(hostname, self.qtypes[0]));
+                self.send_request(hostname, self.qtypes[0])?;
                 let nap_ms = time::Duration::from_millis(NAP_TIME);
                 for _ in 0..2 {
                     // because there has no block UDP socket in mio,
                     // so sleep the async one until timeout
                     let mut time_cnt = 0;
-                    try!(self.receive_data_into_buf());
+                    self.receive_data_into_buf()?;
                     while time_cnt < TIMEOUT && self.buf_len() == 0 {
                         thread::sleep(nap_ms);
-                        try!(self.receive_data_into_buf());
+                        self.receive_data_into_buf()?;
                         time_cnt += NAP_TIME;
                     }
 
@@ -284,7 +284,7 @@ impl DNSResolver {
                 self.hostname_to_tokens.get_mut(&hostname).unwrap().insert(token);
                 self.token_to_hostname.insert(token, hostname.clone());
 
-                try!(self.send_request(hostname, self.qtypes[0]));
+                self.send_request(hostname, self.qtypes[0])?;
                 Ok(None)
             }
             res => res,
@@ -335,7 +335,7 @@ impl DNSResolver {
 
             if ip.is_empty() && hostname_status == 1 {
                 self.hostname_status.insert(hostname.clone(), HostnameStatus::Second);
-                try!(self.send_request(hostname, self.qtypes[1]));
+                self.send_request(hostname, self.qtypes[1])?;
                 res = Ok(None);
             } else if !ip.is_empty() {
                 self.cache.insert(hostname.clone(), ip.clone());
@@ -389,7 +389,7 @@ impl DNSResolver {
         if events.is_error() {
             error!("events error on DNS socket");
             let _ = event_loop.deregister(&self.sock);
-            try!(self.register(event_loop));
+            self.register(event_loop)?;
 
             for caller in self.callers.values() {
                 caller.borrow_mut()
@@ -402,7 +402,7 @@ impl DNSResolver {
             self.hostname_to_tokens.clear();
             err_from!(SocketError::EventError)
         } else {
-            try!(self.receive_data_into_buf());
+            self.receive_data_into_buf()?;
             if let Ok(Some(HostIpPair(hostname, ip))) = self.handle_recevied() {
                 self.call_callback(event_loop, hostname, ip);
             }

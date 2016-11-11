@@ -23,7 +23,7 @@ impl OpensslCipher {
             m => return Err(Error::UnsupportMethod(m)),
         };
         let block_size = cipher.block_size();
-        let inner = try!(Crypter::new(cipher, mode.into(), key, Some(iv)));
+        let inner = Crypter::new(cipher, mode.into(), key, Some(iv))?;
 
         Ok(OpensslCipher {
             block_size: block_size,
@@ -36,7 +36,7 @@ impl StreamCipher for OpensslCipher {
     fn update(&mut self, input: &[u8], output: &mut Vec<u8>) -> CipherResult<()> {
         let cap = input.len() + self.block_size;
         output.resize(cap, 0);
-        let length = try!(self.inner.update(input, output));
+        let length = self.inner.update(input, output)?;
         output.resize(length, 0);
         Ok(())
     }

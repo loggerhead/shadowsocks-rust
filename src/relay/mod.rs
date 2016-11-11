@@ -101,19 +101,19 @@ fn init_relay<T: MyHandler, P: Caller, F>(conf: Config, f: F) -> Result<T>
                     -> Result<T>
 {
     let mut processors = Holder::new();
-    let token = try!(processors.alloc_token().ok_or(SocketError::AllocTokenFailed));
-    let dns_token = try!(processors.alloc_token().ok_or(SocketError::AllocTokenFailed));
+    let token = processors.alloc_token().ok_or(SocketError::AllocTokenFailed)?;
+    let dns_token = processors.alloc_token().ok_or(SocketError::AllocTokenFailed)?;
 
     let prefer_ipv6 = conf["prefer_ipv6"].as_bool().unwrap();
-    let mut dns_resolver = try!(DNSResolver::new(dns_token, None, prefer_ipv6));
-    let server_chooser = try!(ServerChooser::new(&conf));
+    let mut dns_resolver = DNSResolver::new(dns_token, None, prefer_ipv6)?;
+    let server_chooser = ServerChooser::new(&conf)?;
 
     let host = conf["listen_address"].as_str().unwrap().to_string();
     let port = conf["listen_port"].as_integer().unwrap() as u16;
     let HostIpPair(_host, ip) = dns_resolver.block_resolve(host)
         .and_then(|h| h.ok_or(From::from(DnsError::Timeout)))?;
 
-    let socket_addr = try!(pair2addr(&ip, port));
+    let socket_addr = pair2addr(&ip, port)?;
 
     f(conf,
       token,

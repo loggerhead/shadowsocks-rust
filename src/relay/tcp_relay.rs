@@ -30,8 +30,8 @@ impl TcpRelay {
                     processors,
                     socket_addr,
                     _prefer_ipv6| {
-            let listener = try!(TcpListener::bind(&socket_addr)
-                .or(Err(SocketError::BindAddrFailed(socket_addr))));
+            let listener =
+                TcpListener::bind(&socket_addr).or(Err(SocketError::BindAddrFailed(socket_addr)))?;
 
             if cfg!(feature = "sslocal") {
                 info!("ssclient tcp relay listen on {}", socket_addr);
@@ -52,18 +52,18 @@ impl TcpRelay {
     }
 
     pub fn run(self) -> Result<()> {
-        let mut event_loop = try!(EventLoop::new());
-        try!(event_loop.register(&self.listener,
+        let mut event_loop = EventLoop::new()?;
+        event_loop.register(&self.listener,
                       self.token,
                       EventSet::readable(),
                       PollOpt::edge() | PollOpt::oneshot())
-            .or(Err(SocketError::RegisterFailed)));
-        try!(self.dns_resolver
+            .or(Err(SocketError::RegisterFailed))?;
+        self.dns_resolver
             .borrow_mut()
             .register(&mut event_loop)
-            .or(Err(SocketError::RegisterFailed)));
+            .or(Err(SocketError::RegisterFailed))?;
         let this = new_rc_cell(self);
-        try!(event_loop.run(&mut Relay::Tcp(this)));
+        event_loop.run(&mut Relay::Tcp(this))?;
         Ok(())
     }
 
@@ -79,12 +79,12 @@ impl TcpRelay {
                         remote_token: Token,
                         conn: TcpStream)
                         -> Result<()> {
-        let p = try!(TcpProcessor::new(local_token,
-                                       remote_token,
-                                       self.conf.clone(),
-                                       conn,
-                                       self.dns_resolver.clone(),
-                                       self.server_chooser.clone()));
+        let p = TcpProcessor::new(local_token,
+                                  remote_token,
+                                  self.conf.clone(),
+                                  conn,
+                                  self.dns_resolver.clone(),
+                                  self.server_chooser.clone())?;
         let p = new_rc_cell(p);
         self.processors.insert_with(local_token, p.clone());
         self.processors.insert_with(remote_token, p.clone());
@@ -102,17 +102,17 @@ impl TcpRelay {
     }
 
     fn handle_events(&mut self, event_loop: &mut EventLoop<Relay>, events: EventSet) -> Result<()> {
-        try!(event_loop.reregister(&self.listener,
-                                   self.token,
-                                   EventSet::readable(),
-                                   PollOpt::edge() | PollOpt::oneshot()));
+        event_loop.reregister(&self.listener,
+                        self.token,
+                        EventSet::readable(),
+                        PollOpt::edge() | PollOpt::oneshot())?;
         if events.is_error() {
             error!("events error on tcp relay: {:?}",
                    self.listener.take_socket_error().unwrap_err());
             return err_from!(SocketError::EventError);
         }
 
-        match try!(self.listener.accept()) {
+        match self.listener.accept()? {
             Some((conn, _addr)) => {
                 debug!("create tcp processor for {}", _addr);
                 let tokens = (self.processors.alloc_token(), self.processors.alloc_token());

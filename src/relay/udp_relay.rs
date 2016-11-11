@@ -96,19 +96,19 @@ impl UdpRelay {
     }
 
     pub fn run(self) -> Result<()> {
-        let mut event_loop = try!(EventLoop::new());
-        try!(event_loop.register(&*self.listener.borrow(),
+        let mut event_loop = EventLoop::new()?;
+        event_loop.register(&*self.listener.borrow(),
                       self.token,
                       self.interest,
                       PollOpt::edge() | PollOpt::oneshot())
-            .or(Err(SocketError::RegisterFailed)));
-        try!(self.dns_resolver
+            .or(Err(SocketError::RegisterFailed))?;
+        self.dns_resolver
             .borrow_mut()
             .register(&mut event_loop)
-            .or(Err(SocketError::RegisterFailed)));
+            .or(Err(SocketError::RegisterFailed))?;
 
         let this = new_rc_cell(self);
-        try!(event_loop.run(&mut Relay::Udp(this)));
+        event_loop.run(&mut Relay::Udp(this))?;
         Ok(())
     }
 
@@ -128,14 +128,14 @@ impl UdpRelay {
                         token: Token,
                         client_addr: SocketAddr)
                         -> Result<()> {
-        let p = new_rc_cell(try!(UdpProcessor::new(token,
-                                                   self.conf.clone(),
-                                                   client_addr,
-                                                   self.listener.clone(),
-                                                   self.dns_resolver.clone(),
-                                                   self.server_chooser.clone(),
-                                                   self.encryptor.clone(),
-                                                   self.prefer_ipv6)));
+        let p = new_rc_cell(UdpProcessor::new(token,
+                                              self.conf.clone(),
+                                              client_addr,
+                                              self.listener.clone(),
+                                              self.dns_resolver.clone(),
+                                              self.server_chooser.clone(),
+                                              self.encryptor.clone(),
+                                              self.prefer_ipv6)?);
         self.processors.insert_with(token, p.clone());
         self.cache.insert(client_addr, p.clone());
         self.dns_resolver.borrow_mut().add_caller(p.clone());
@@ -157,14 +157,13 @@ impl UdpRelay {
             Some(header) => {
                 if !self.cache.contains_key(&client_addr) {
                     debug!("create udp processor for {:?}", client_addr);
-                    let token =
-                        try!(self.processors.alloc_token().ok_or(SocketError::AllocTokenFailed));
-                    try!(self.create_processor(event_loop, token, client_addr));
+                    let token = self.processors.alloc_token().ok_or(SocketError::AllocTokenFailed)?;
+                    self.create_processor(event_loop, token, client_addr)?;
                 }
 
                 if data.len() > 0 {
                     let p = &self.cache[&client_addr];
-                    try!(p.borrow_mut().handle_request(event_loop, data, header));
+                    p.borrow_mut().handle_request(event_loop, data, header)?;
                 }
                 Ok(())
             }
@@ -173,10 +172,10 @@ impl UdpRelay {
     }
 
     fn handle_events(&mut self, event_loop: &mut EventLoop<Relay>, events: EventSet) -> Result<()> {
-        try!(event_loop.reregister(&*self.listener.borrow(),
-                                   self.token,
-                                   self.interest,
-                                   PollOpt::edge() | PollOpt::oneshot()));
+        event_loop.reregister(&*self.listener.borrow(),
+                        self.token,
+                        self.interest,
+                        PollOpt::edge() | PollOpt::oneshot())?;
         if events.is_error() {
             error!("events error on udp relay");
             return err_from!(SocketError::EventError);

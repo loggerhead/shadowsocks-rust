@@ -37,10 +37,10 @@ pub struct Encryptor {
 impl Encryptor {
     pub fn new(password: &str, method: &str) -> CipherResult<Encryptor> {
         let method = method.replace("-", "_");
-        let method = try!(Method::from(&method).ok_or(Error::UnknownMethod(method.to_string())));
+        let method = Method::from(&method).ok_or(Error::UnknownMethod(method.to_string()))?;
         let (key, iv) = gen_key_iv(password, method);
         let iv_len = iv.len();
-        let cipher = try!(Cipher::new(method, Mode::Encrypt, key.clone(), iv));
+        let cipher = Cipher::new(method, Mode::Encrypt, key.clone(), iv)?;
 
         Ok(Encryptor {
             ota_helper: None,
