@@ -39,13 +39,15 @@ byteorder = "0.5"
 lazy_static = "0.2"
 lru_time_cache = "0.5"
 rust-crypto = "0.2"
-openssl = { version = "0.9", optional = true }
 clippy = { version = ">= 0.0.95", optional = true }
 
-[target.'cfg(target_family = "unix")'.dependencies]
+[target.'cfg(any(linux, unix))'.dependencies]
 sig = "~1.0.0"
 daemonize = "0.2"
+openssl = "0.9"
+
+[target.'cfg(macos)'.dependencies]
+openssl = { version = "0.9", optional = true }
 
 [features]
 sslocal = []
-default = ["openssl"]

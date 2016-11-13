@@ -8,7 +8,9 @@ use rust_crypto::symmetriccipher::SynchronousStreamCipher;
 
 use super::{Method, Mode};
 use super::cipher::StreamCipher;
-use super::error::{Error, CipherResult};
+use super::error::CipherResult;
+#[cfg(feature = "openssl")]
+use super::error::Error;
 
 pub struct CryptoCipher {
     inner: Box<SynchronousStreamCipher + 'static>,
