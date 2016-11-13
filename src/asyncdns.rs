@@ -1,10 +1,11 @@
 use std::fmt;
 use std::env;
 use std::convert::From;
+use std::str::FromStr;
 use std::io::Cursor;
+use std::net::{ToSocketAddrs, SocketAddr};
 use std::path::PathBuf;
 use std::time::Duration;
-use std::{thread, time};
 
 use rand;
 use regex::Regex;
@@ -63,8 +64,6 @@ struct ResponseRecord(String, String, u16, u16);
 struct ResponseHeader(u16, u16, u16, u16, u16, u16, u16, u16, u16);
 
 const BUF_SIZE: usize = 1024;
-const NAP_TIME: u64 = 10;
-const TIMEOUT: u64 = 5000;
 
 pub enum Error {
     Timeout,
@@ -129,6 +128,7 @@ enum HostnameStatus {
 }
 
 pub struct DNSResolver {
+    prefer_ipv6: bool,
     token: Token,
     hosts: Dict<String, String>,
     cache: LruCache<String, String>,
@@ -152,17 +152,18 @@ impl DNSResolver {
             Some(servers) => servers,
             None => parse_resolv(prefer_ipv6),
         };
-        let (qtypes, sock) = if prefer_ipv6 {
-            (vec![QType::AAAA, QType::A],
-             UdpSocket::v6().map_err(|_| SocketError::InitSocketFailed)?)
+        let (qtypes, addr) = if prefer_ipv6 {
+            (vec![QType::AAAA, QType::A], "[::]:0")
         } else {
-            (vec![QType::A, QType::AAAA],
-             UdpSocket::v4().map_err(|_| SocketError::InitSocketFailed)?)
+            (vec![QType::A, QType::AAAA], "0.0.0.0:0")
         };
+        let addr = SocketAddr::from_str(addr).map_err(|_| SocketError::InitSocketFailed)?;
+        let sock = UdpSocket::bound(&addr).map_err(|_| SocketError::InitSocketFailed)?;
         let hosts = parse_hosts(prefer_ipv6);
         let cache_timeout = Duration::new(600, 0);
 
         Ok(DNSResolver {
+            prefer_ipv6: prefer_ipv6,
             token: token,
             servers: servers,
             hosts: hosts,
@@ -192,13 +193,6 @@ impl DNSResolver {
         }
 
         self.callers.remove(&token).is_some()
-    }
-
-    fn buf_len(&self) -> usize {
-        match self.receive_buf {
-            Some(ref receive_buf) => receive_buf.len(),
-            None => 0,
-        }
     }
 
     fn send_request(&self, hostname: String, qtype: u16) -> Result<()> {
@@ -248,24 +242,33 @@ impl DNSResolver {
     pub fn block_resolve(&mut self, hostname: String) -> Result<Option<HostIpPair>> {
         match self.local_resolve(&hostname) {
             Ok(None) => {
-                self.send_request(hostname, self.qtypes[0])?;
-                let nap_ms = time::Duration::from_millis(NAP_TIME);
-                for _ in 0..2 {
-                    // because there has no block UDP socket in mio,
-                    // so sleep the async one until timeout
-                    let mut time_cnt = 0;
-                    self.receive_data_into_buf()?;
-                    while time_cnt < TIMEOUT && self.buf_len() == 0 {
-                        thread::sleep(nap_ms);
-                        self.receive_data_into_buf()?;
-                        time_cnt += NAP_TIME;
+                let mut addr_v4 = None;
+                let mut addr_v6 = None;
+
+                for addr in (hostname.as_str(), 0).to_socket_addrs()? {
+                    match addr {
+                        SocketAddr::V4(addr) => {
+                            if addr_v4.is_none() {
+                                addr_v4 = Some(addr);
+                            }
+                        }
+                        SocketAddr::V6(addr) => {
+                            if addr_v6.is_none() {
+                                addr_v6 = Some(addr);
+                            }
+                        }
                     }
 
-                    match self.handle_recevied() {
-                        Ok(None) => continue,
-                        r => return r,
+                    if self.prefer_ipv6 && addr_v6.is_some() {
+                        return Ok(Some(HostIpPair(hostname.to_string(),
+                                                  addr_v6.unwrap().ip().to_string())));
+                    }
+                    if !self.prefer_ipv6 && addr_v4.is_some() {
+                        return Ok(Some(HostIpPair(hostname.to_string(),
+                                                  addr_v4.unwrap().ip().to_string())));
                     }
                 }
+
                 Ok(None)
             }
             res => res,
