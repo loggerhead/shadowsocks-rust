@@ -4,6 +4,6 @@ servers = [
 listen_port = 8010
 password = "foo"
 timeout = 60
-encrypt_method = "aes-256-cfb"
+encrypt_method = "aes-256-ctr"
 one_time_auth = true
 mode = "fast"

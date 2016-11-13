@@ -14,14 +14,18 @@ install:
   - set PATH=%PATH%;C:\Users\appveyor\.cargo\bin;%PYTHON%/Scripts/
   - rustc -V
   - cargo -V
-  - "pip.exe install nose PySocks"
+  - pip install nose PySocks
 
 test_script:
   - cargo test
-  - cargo run -- -h
-  - ps: Start-Process cargo run -- -c tests\config\server_conf.toml --log-file ssserver.log
-  - cargo run --features sslocal -- -h
-  - ps: Start-Process cargo run --features sslocal -- -c tests\config\client_conf.toml --log-file sslocal.log
-  - ps: Start-Process python tests\echo_server.py
+  - cargo build
+  - ps: mv target\debug\shadowsocks.exe ssserver.exe
+  - cargo build --features sslocal
+  - ps: mv target\debug\shadowsocks.exe sslocal.exe
+  - ssserver.exe -h
+  - sslocal.exe -h
+  - ps: Start-Process ssserver.exe -ArgumentList '-c tests\config\server_conf.toml --log-file ssserver.log'
+  - ps: Start-Process sslocal.exe -ArgumentList '-c tests\config\local_conf.toml --log-file sslocal.log'
+  - ps: Start-Process python -ArgumentList 'tests\echo_server.py'
   - nosetests tests\test_tcp.py
   - nosetests tests\test_udp.py
