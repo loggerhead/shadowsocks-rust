@@ -421,18 +421,12 @@ impl TcpProcessor {
                 self.stage = HandleStage::Dns;
                 // send socks5 response to client
                 if cfg!(feature = "sslocal") {
-                    let response = &[0x05,
-                                     0x00,
-                                     0x00,
-                                     0x01,
+                    #[cfg_attr(rustfmt, rustfmt_skip)]
+                    let response = &[0x05, 0x00, 0x00, 0x01,
                                      // fake ip
-                                     0x00,
-                                     0x00,
-                                     0x00,
-                                     0x00,
+                                     0x00, 0x00, 0x00, 0x00,
                                      // fake port
-                                     0x00,
-                                     0x00];
+                                     0x00, 0x00];
                     self.write_to_sock(response, LOCAL)?;
                     self.update_stream(StreamDirection::Down, StreamStatus::WaitReading);
 

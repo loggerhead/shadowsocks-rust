@@ -763,6 +763,7 @@ mod test {
                                                            ("localhost.loggerhead.me", "::1")];
 
     #[test]
+    #[cfg_attr(rustfmt, rustfmt_skip)]
     fn parse_response() {
         let data: &[u8] =
             &[0x0d, 0x0d, 0x81, 0x80, 0x00, 0x01, 0x00, 0x04, 0x00, 0x05, 0x00, 0x00, 0x05, 0x62,
