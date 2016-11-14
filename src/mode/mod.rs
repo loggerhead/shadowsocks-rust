@@ -151,8 +151,7 @@ impl ServerChooser {
             match time {
                 Some(time) => {
                     self.servers.get_mut(&tsh.1).unwrap().update(&time);
-                    let servers =
-                        self.host_to_servers.entry(tsh.2).or_insert(self.servers.clone());
+                    let servers = self.host_to_servers.entry(tsh.2).or_insert(self.servers.clone());
                     servers.get_mut(&tsh.1).unwrap().update(&time);
                 }
                 None => {

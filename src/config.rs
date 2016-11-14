@@ -203,7 +203,9 @@ fn read_config(config_path: &str) -> Result<Table, ConfigError> {
 
     let mut input = String::new();
     if let Err(e) = f.read_to_string(&mut input) {
-        let errmsg = format!("config file {} is not valid UTF-8 file ({})", config_path, e);
+        let errmsg = format!("config file {} is not valid UTF-8 file ({})",
+                             config_path,
+                             e);
         return Err(ConfigError::new(errmsg));
     }
 
