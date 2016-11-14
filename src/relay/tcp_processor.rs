@@ -51,9 +51,9 @@ impl TcpProcessor {
                server_chooser: RcCell<ServerChooser>)
                -> Result<TcpProcessor> {
         let stage = if cfg!(feature = "sslocal") {
-            HandleStage::Init
+            HandleStage::Handshake1
         } else {
-            HandleStage::Addr
+            HandleStage::Handshake3
         };
 
         let encryptor = Encryptor::new(conf["password"].as_str().unwrap(),
@@ -242,7 +242,9 @@ impl TcpProcessor {
 
     fn record_activity(&self) {
         match self.stage {
-            HandleStage::Addr | HandleStage::Connecting | HandleStage::Stream => {
+            HandleStage::Handshake3 |
+            HandleStage::Connecting |
+            HandleStage::Stream => {
                 self.server_chooser.borrow_mut().record(self.get_id(),
                                                         self.server_address.clone().unwrap(),
                                                         self.remote_hostname.as_ref().unwrap());
@@ -253,7 +255,9 @@ impl TcpProcessor {
 
     fn update_activity(&self) {
         match self.stage {
-            HandleStage::Addr | HandleStage::Connecting | HandleStage::Stream => {
+            HandleStage::Handshake3 |
+            HandleStage::Connecting |
+            HandleStage::Stream => {
                 self.server_chooser.borrow_mut().update(self.get_id(),
                                                         self.server_address.clone().unwrap(),
                                                         self.remote_hostname.as_ref().unwrap());
@@ -387,95 +391,16 @@ impl TcpProcessor {
         }
     }
 
-    // spec `replies` section of https://www.ietf.org/rfc/rfc1928.txt
-    fn handle_stage_addr(&mut self,
-                         event_loop: &mut EventLoop<Relay>,
-                         mut data: &[u8])
-                         -> Result<()> {
-        trace!("{:?} handle stage addr", self);
-
-        if cfg!(feature = "sslocal") {
-            match data[1] {
-                socks5::cmd::UDP_ASSOCIATE => return self.handle_udp_handshake(),
-                socks5::cmd::CONNECT => data = &data[3..],
-                cmd => return err_from!(Socks5Error::UnknownCmd(cmd)),
-            }
-        }
-
-        // parse socks5 header
-        match parse_header(data) {
-            Some(Socks5Header(addr_type, remote_address, remote_port, header_length)) => {
-                info!("connecting to {}:{}", remote_address, remote_port);
-                let is_ota_session = self.check_one_time_auth(addr_type)?;
-                let data = if is_ota_session {
-                    match self.encryptor
-                        .enable_ota(addr_type | addr_type::AUTH, header_length, &data) {
-                        Some(ota_data) => Cow::Owned(ota_data),
-                        None => return err_from!(ProcessError::EnableOneTimeAuthFailed),
-                    }
-                } else {
-                    Cow::Borrowed(data)
-                };
-
-                self.update_stream(StreamDirection::Up, StreamStatus::WaitWriting);
-                self.stage = HandleStage::Dns;
-                // send socks5 response to client
-                if cfg!(feature = "sslocal") {
-                    #[cfg_attr(rustfmt, rustfmt_skip)]
-                    let response = &[0x05, 0x00, 0x00, 0x01,
-                                     // fake ip
-                                     0x00, 0x00, 0x00, 0x00,
-                                     // fake port
-                                     0x00, 0x00];
-                    self.write_to_sock(response, LOCAL)?;
-                    self.update_stream(StreamDirection::Down, StreamStatus::WaitReading);
-
-                    match self.encryptor.encrypt(data.borrow()) {
-                        Some(ref data) => self.extend_buf(data, REMOTE),
-                        None => return err_from!(ProcessError::EncryptFailed),
-                    }
-
-                    let server_address = self.server_chooser.borrow_mut().choose(&remote_address);
-                    match server_address {
-                        Some(address) => {
-                            self.remote_hostname = Some(remote_address);
-                            self.server_address = Some(address);
-                        }
-                        None => return err_from!(ProcessError::NoServerAvailable),
-                    }
-                } else {
-                    // buffer data
-                    if is_ota_session {
-                        self.extend_buf(&data, REMOTE);
-                    } else if data.len() > header_length {
-                        self.extend_buf(&data[header_length..], REMOTE);
-                    }
-
-                    self.server_address = Some(Address(remote_address, remote_port));
-                }
-
-                let token = self.get_id();
-                let remote_hostname =
-                    self.server_address.as_ref().map(|addr| addr.0.clone()).unwrap();
-                let resolved = self.dns_resolver.borrow_mut().resolve(token, remote_hostname);
-                match resolved {
-                    Ok(None) => {}
-                    // if hostname is resolved immediately
-                    res => self.handle_dns_resolved(event_loop, res),
-                }
-                Ok(())
-            }
-            None => err_from!(Socks5Error::InvalidHeader),
-        }
-    }
-
-    fn handle_stage_init(&mut self, _event_loop: &mut EventLoop<Relay>, data: &[u8]) -> Result<()> {
-        trace!("{:?} handle stage init", self);
+    fn handle_stage_handshake1(&mut self,
+                               _event_loop: &mut EventLoop<Relay>,
+                               data: &[u8])
+                               -> Result<()> {
+        trace!("{:?} handle stage handshake1", self);
 
         match check_auth_method(data) {
             CheckAuthResult::Success => {
                 self.write_to_sock(&[0x05, 0x00], LOCAL)?;
-                self.stage = HandleStage::Addr;
+                self.stage = HandleStage::Handshake2;
                 Ok(())
             }
             CheckAuthResult::BadSocksHeader => {
@@ -488,12 +413,106 @@ impl TcpProcessor {
         }
     }
 
+    // spec `replies` section of https://www.ietf.org/rfc/rfc1928.txt
+    fn handle_stage_handshake2(&mut self,
+                               event_loop: &mut EventLoop<Relay>,
+                               mut data: &[u8])
+                               -> Result<()> {
+        trace!("{:?} handle stage handshake2", self);
+
+        if cfg!(feature = "sslocal") {
+            match data[1] {
+                socks5::cmd::UDP_ASSOCIATE => return self.handle_udp_handshake(),
+                socks5::cmd::CONNECT => data = &data[3..],
+                cmd => return err_from!(Socks5Error::UnknownCmd(cmd)),
+            }
+
+            // +----+-----+-------+------+----------+----------+
+            // |VER | REP |  RSV  | ATYP | BND.ADDR | BND.PORT |
+            // +----+-----+-------+------+----------+----------+
+            // |05  | 00  |  00   |  01  | 00000000 |   0000   |
+            // +----+-----+-------+------+----------+----------+
+            //                             fake ip   fake port
+            let response = &[0x05, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+            self.write_to_sock(response, LOCAL)?;
+        }
+
+        if data.is_empty() {
+            self.stage = HandleStage::Handshake3;
+            Ok(())
+        } else {
+            self.handle_stage_handshake3(event_loop, data)
+        }
+    }
+
+    fn handle_stage_handshake3(&mut self,
+                               event_loop: &mut EventLoop<Relay>,
+                               data: &[u8])
+                               -> Result<()> {
+        trace!("{:?} handle stage handshake3", self);
+        let Socks5Header(addr_type, remote_address, remote_port, header_length) =
+            parse_header(data).ok_or(Socks5Error::InvalidHeader)?;
+        info!("connecting to {}:{}", remote_address, remote_port);
+
+        let is_ota_session = self.check_one_time_auth(addr_type)?;
+        let data = if is_ota_session {
+            match self.encryptor
+                .enable_ota(addr_type | addr_type::AUTH, header_length, &data) {
+                Some(ota_data) => Cow::Owned(ota_data),
+                None => return err_from!(ProcessError::EnableOneTimeAuthFailed),
+            }
+        } else {
+            Cow::Borrowed(data)
+        };
+
+        self.update_stream(StreamDirection::Up, StreamStatus::WaitWriting);
+        self.stage = HandleStage::Dns;
+        // send socks5 response to client
+        if cfg!(feature = "sslocal") {
+            self.update_stream(StreamDirection::Down, StreamStatus::WaitReading);
+
+            match self.encryptor.encrypt(data.borrow()) {
+                Some(ref data) => self.extend_buf(data, REMOTE),
+                None => return err_from!(ProcessError::EncryptFailed),
+            }
+
+            let server_address = self.server_chooser.borrow_mut().choose(&remote_address);
+            match server_address {
+                Some(address) => {
+                    self.remote_hostname = Some(remote_address);
+                    self.server_address = Some(address);
+                }
+                None => return err_from!(ProcessError::NoServerAvailable),
+            }
+        } else {
+            // buffer data
+            if is_ota_session {
+                self.extend_buf(&data, REMOTE);
+            } else if data.len() > header_length {
+                self.extend_buf(&data[header_length..], REMOTE);
+            }
+
+            self.server_address = Some(Address(remote_address, remote_port));
+        }
+
+        let token = self.get_id();
+        let remote_hostname = self.server_address.as_ref().map(|addr| addr.0.clone()).unwrap();
+        let resolved = self.dns_resolver.borrow_mut().resolve(token, remote_hostname);
+        match resolved {
+            Ok(None) => {}
+            // if hostname is resolved immediately
+            res => self.handle_dns_resolved(event_loop, res),
+        }
+        Ok(())
+    }
+
     fn on_local_read(&mut self, event_loop: &mut EventLoop<Relay>) -> Result<()> {
         let data = self.receive_data(LOCAL)?;
         self.reset_timeout(event_loop);
         match self.stage {
-            HandleStage::Init => self.handle_stage_init(event_loop, &data),
-            HandleStage::Addr => self.handle_stage_addr(event_loop, &data),
+            HandleStage::Handshake1 => self.handle_stage_handshake1(event_loop, &data),
+            HandleStage::Handshake2 => self.handle_stage_handshake2(event_loop, &data),
+            HandleStage::Handshake3 => self.handle_stage_handshake3(event_loop, &data),
             HandleStage::Connecting => self.handle_stage_connecting(event_loop, &data),
             HandleStage::Stream => self.handle_stage_stream(event_loop, &data),
             _ => Ok(()),
@@ -707,9 +726,9 @@ pub const REMOTE: bool = false;
 #[derive(Debug)]
 enum HandleStage {
     // only sslocal: auth METHOD received from local, reply with selection message
-    Init,
-    // addr received from local, query DNS for remote
-    Addr,
+    Handshake1,
+    Handshake2,
+    Handshake3,
     // only sslocal: UDP assoc
     UDPAssoc,
     // DNS resolved, connect to remote
