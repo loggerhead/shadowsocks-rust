@@ -95,6 +95,7 @@ lazy_static! {
     };
 }
 
+// TODO: change to use macro when https://github.com/kbknapp/clap-rs/pull/731 decided
 pub fn gen_config() -> Result<Config, ConfigError> {
     let mut args = App::new("A fast tunnel proxy that helps you bypass firewalls.")
         .about("You can supply configurations via either config file or command line arguments.")
