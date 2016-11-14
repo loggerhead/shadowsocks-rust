@@ -78,15 +78,15 @@ pub enum Error {
 
 impl fmt::Debug for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            &Error::Timeout => write!(f, "timeout"),
-            &Error::BufferEmpty => write!(f, "no buffered data available"),
-            &Error::EmptyHostName => write!(f, "empty hostname"),
-            &Error::InvalidResponse => write!(f, "invalid response"),
-            &Error::BuildRequestFailed => write!(f, "build dns request failed"),
-            &Error::NoPreferredResponse => write!(f, "no preferred response"),
-            &Error::InvalidHost(ref host) => write!(f, "invalid host {}", host),
-            &Error::UnknownHost(ref host) => write!(f, "unknown host {}", host),
+        match *self {
+            Error::Timeout => write!(f, "timeout"),
+            Error::BufferEmpty => write!(f, "no buffered data available"),
+            Error::EmptyHostName => write!(f, "empty hostname"),
+            Error::InvalidResponse => write!(f, "invalid response"),
+            Error::BuildRequestFailed => write!(f, "build dns request failed"),
+            Error::NoPreferredResponse => write!(f, "no preferred response"),
+            Error::InvalidHost(ref host) => write!(f, "invalid host {}", host),
+            Error::UnknownHost(ref host) => write!(f, "unknown host {}", host),
         }
     }
 }
@@ -198,7 +198,7 @@ impl DNSResolver {
     fn send_request(&self, hostname: String, qtype: u16) -> Result<()> {
         debug!("send dns query of {}", &hostname);
         for server in &self.servers {
-            let addr = pair2addr(&server, 53)?;
+            let addr = pair2addr(server, 53)?;
             let req = build_request(&hostname, qtype).ok_or(Error::BuildRequestFailed)?;
             self.sock.send_to(&req, &addr)?;
         }
@@ -371,9 +371,9 @@ impl DNSResolver {
 
         if is_reregister {
             event_loop.reregister(&self.sock, self.token, events, pollopts)
-                .map_err(|e| From::from(e))
+                .map_err(From::from)
         } else {
-            event_loop.register(&self.sock, self.token, events, pollopts).map_err(|e| From::from(e))
+            event_loop.register(&self.sock, self.token, events, pollopts).map_err(From::from)
         }
     }
 

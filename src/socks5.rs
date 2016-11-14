@@ -11,23 +11,23 @@ pub enum Error {
 
 impl fmt::Debug for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            &Error::CheckAuthFailed(ref r) => {
-                match r {
-                    &CheckAuthResult::BadSocksHeader => write!(f, "bad socks5 header"),
-                    &CheckAuthResult::NoAcceptableMethods => {
+        match *self {
+            Error::CheckAuthFailed(ref r) => {
+                match *r {
+                    CheckAuthResult::BadSocksHeader => write!(f, "bad socks5 header"),
+                    CheckAuthResult::NoAcceptableMethods => {
                         write!(f, "no acceptable socks5 methods")
                     }
                     _ => unreachable!(),
                 }
             }
-            &Error::UnknownCmd(cmd) => write!(f, "unknown socks5 command: {}", cmd),
-            &Error::InvalidHeader => write!(f, "invalid socks5 header"),
+            Error::UnknownCmd(cmd) => write!(f, "unknown socks5 command: {}", cmd),
+            Error::InvalidHeader => write!(f, "invalid socks5 header"),
         }
     }
 }
 
-/// (addr_type, dest_addr, dest_port, header_length)
+// (addr_type, dest_addr, dest_port, header_length)
 pub struct Socks5Header(pub u8, pub String, pub u16, pub usize);
 
 #[derive(Debug, PartialEq)]

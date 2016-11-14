@@ -144,7 +144,7 @@ impl Encryptor {
             match self.raw_encrypt(data) {
                 Some(ref mut encrypted) => {
                     let mut result = vec![];
-                    result.extend_from_slice(&self.cipher.iv());
+                    result.extend_from_slice(self.cipher.iv());
                     result.append(encrypted);
 
                     Some(result)
@@ -327,7 +327,7 @@ impl OtaHelper {
             if self.chunk_len == 0 {
                 // wait a complete header
                 if data.len() + self.chunk_buf.len() < 12 {
-                    self.chunk_buf.extend_from_slice(&data);
+                    self.chunk_buf.extend_from_slice(data);
                     break;
                 } else {
                     // split DATA.LEN, HMAC-SHA1 from DATA

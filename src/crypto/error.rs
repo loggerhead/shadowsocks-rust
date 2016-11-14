@@ -25,24 +25,24 @@ impl From<ErrorStack> for Error {
 
 impl fmt::Debug for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            &Error::UnknownMethod(ref s) => write!(f, "unknown method {}", s),
-            &Error::UnsupportMethod(m) => write!(f, "unsupport method {:?}", m),
+        match *self {
+            Error::UnknownMethod(ref s) => write!(f, "unknown method {}", s),
+            Error::UnsupportMethod(m) => write!(f, "unsupport method {:?}", m),
             #[cfg(feature = "openssl")]
-            &Error::OpensslError(ref err) => write!(f, "{:?}", err),
-            &Error::IoError(ref err) => write!(f, "{:?}", err),
+            Error::OpensslError(ref err) => write!(f, "{:?}", err),
+            Error::IoError(ref err) => write!(f, "{:?}", err),
         }
     }
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            &Error::UnknownMethod(ref s) => write!(f, "unknown method {}", s),
-            &Error::UnsupportMethod(m) => write!(f, "unsupport method {:?}", m),
+        match *self {
+            Error::UnknownMethod(ref s) => write!(f, "unknown method {}", s),
+            Error::UnsupportMethod(m) => write!(f, "unsupport method {:?}", m),
             #[cfg(feature = "openssl")]
-            &Error::OpensslError(ref err) => write!(f, "{}", err),
-            &Error::IoError(ref err) => write!(f, "{}", err),
+            Error::OpensslError(ref err) => write!(f, "{}", err),
+            Error::IoError(ref err) => write!(f, "{}", err),
         }
     }
 }

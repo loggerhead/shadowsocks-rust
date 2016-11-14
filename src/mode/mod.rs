@@ -122,67 +122,58 @@ impl ServerChooser {
         let host = self.get_host(hostname);
         let servers = self.default_servers();
         let servers = self.host_to_servers.entry(host.clone()).or_insert(servers);
-        Self::find_min(&servers).map(|(server, _)| server)
+        Self::find_min(servers).map(|(server, _)| server)
     }
 
     fn default_servers(&self) -> Servers {
         let mut servers = Dict::default();
-        for (k, _) in &self.servers {
+        for k in self.servers.keys() {
             servers.insert(k.clone(), RttRecord::new());
         }
         servers
     }
 
     pub fn record(&mut self, token: Token, server: Address, hostname: &str) {
-        match self.mode {
-            Mode::Fast => {
-                self.token_to_pair.insert(token, (server.clone(), hostname.to_string()));
-                let host = self.get_host(hostname);
-                let times =
-                    self.activities.entry(Activity(token, server, host)).or_insert(VecDeque::new());
-                times.push_back(SystemTime::now());
-            }
-            _ => {}
+        if let Mode::Fast = self.mode {
+            self.token_to_pair.insert(token, (server.clone(), hostname.to_string()));
+            let host = self.get_host(hostname);
+            let times =
+                self.activities.entry(Activity(token, server, host)).or_insert_with(VecDeque::new);
+            times.push_back(SystemTime::now());
         }
     }
 
     pub fn update(&mut self, token: Token, server: Address, hostname: &str) {
-        match self.mode {
-            Mode::Fast => {
-                let host = self.get_host(hostname);
-                let tsh = Activity(token, server, host);
-                let time = self.activities.get_mut(&tsh).and_then(|times| times.pop_front());
-                match time {
-                    Some(time) => {
-                        self.servers.get_mut(&tsh.1).unwrap().update(&time);
-                        let servers =
-                            self.host_to_servers.entry(tsh.2).or_insert(self.servers.clone());
-                        servers.get_mut(&tsh.1).unwrap().update(&time);
-                    }
-                    None => {
-                        self.activities.remove(&tsh);
-                    }
+        if let Mode::Fast = self.mode {
+            let host = self.get_host(hostname);
+            let tsh = Activity(token, server, host);
+            let time = self.activities.get_mut(&tsh).and_then(|times| times.pop_front());
+            match time {
+                Some(time) => {
+                    self.servers.get_mut(&tsh.1).unwrap().update(&time);
+                    let servers =
+                        self.host_to_servers.entry(tsh.2).or_insert(self.servers.clone());
+                    servers.get_mut(&tsh.1).unwrap().update(&time);
+                }
+                None => {
+                    self.activities.remove(&tsh);
                 }
             }
-            _ => {}
         }
     }
 
     pub fn punish(&mut self, token: Token) {
-        match self.mode {
-            Mode::Fast => {
-                if let Some(&(ref server, ref hostname)) = self.token_to_pair.get(&token) {
-                    let host = self.get_host(hostname);
-                    let tsh = Activity(token, server.clone(), host);
-                    self.activities.remove(&tsh);
-                    self.host_to_servers.get_mut(&tsh.2).map(|servers| {
-                        servers.get_mut(&tsh.1).map(|record| {
-                            record.punish();
-                        });
+        if let Mode::Fast = self.mode {
+            if let Some(&(ref server, ref hostname)) = self.token_to_pair.get(&token) {
+                let host = self.get_host(hostname);
+                let tsh = Activity(token, server.clone(), host);
+                self.activities.remove(&tsh);
+                self.host_to_servers.get_mut(&tsh.2).map(|servers| {
+                    servers.get_mut(&tsh.1).map(|record| {
+                        record.punish();
                     });
-                }
+                });
             }
-            _ => {}
         }
     }
 

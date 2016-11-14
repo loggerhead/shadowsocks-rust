@@ -195,15 +195,15 @@ pub fn gen_config() -> Result<Config, ConfigError> {
 fn read_config(config_path: &str) -> Result<Table, ConfigError> {
     let mut f = match File::open(config_path) {
         Ok(f) => f,
-        Err(_) => {
-            let errmsg = format!("config file {} does not exists", config_path);
+        Err(e) => {
+            let errmsg = format!("config file {} does not exists ({})", config_path, e);
             return Err(ConfigError::new(errmsg));
         }
     };
 
     let mut input = String::new();
-    if let Err(_) = f.read_to_string(&mut input) {
-        let errmsg = format!("config file {} is not valid UTF-8 file", config_path);
+    if let Err(e) = f.read_to_string(&mut input) {
+        let errmsg = format!("config file {} is not valid UTF-8 file ({})", config_path, e);
         return Err(ConfigError::new(errmsg));
     }
 
