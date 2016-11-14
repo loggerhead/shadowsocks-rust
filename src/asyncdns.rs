@@ -664,11 +664,17 @@ fn parse_resolv(prefer_ipv6: bool) -> Vec<String> {
     });
 
     if servers.is_empty() {
-        servers = if prefer_ipv6 {
-            vec!["2001:4860:4860::8888".to_string(), "2001:4860:4860::8844".to_string()]
+        let dns_servers = if cfg!(feature = "sslocal") {
+            vec!["114.114.114.114", "114.114.115.115"]
         } else {
-            vec!["8.8.8.8".to_string(), "8.8.4.4".to_string()]
+            if prefer_ipv6 {
+                vec!["2001:4860:4860::8888", "2001:4860:4860::8844"]
+            } else {
+                vec!["8.8.8.8", "8.8.4.4"]
+            }
         };
+
+        servers = dns_servers.into_iter().map(|s| s.to_string()).collect();
     }
 
     servers

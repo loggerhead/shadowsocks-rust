@@ -60,8 +60,14 @@ impl TcpProcessor {
                                        conf["encrypt_method"].as_str().unwrap())
             .map_err(|e| ProcessError::InitEncryptorFailed(e))?;
 
-        let client_address = local_sock.peer_addr()
-            .map(|addr| Address(addr.ip().to_string(), addr.port()))?;
+        // TODO: this is a bug of mio 0.5.x (fixed in mio 0.6.x)
+        let client_address = if cfg!(windows) {
+            Address("?".to_string(), 0)
+        } else {
+            local_sock.peer_addr()
+                .map(|addr| Address(addr.ip().to_string(), addr.port()))?
+        };
+
         local_sock.set_nodelay(true)?;
 
         Ok(TcpProcessor {
