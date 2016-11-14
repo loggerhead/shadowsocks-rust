@@ -14,23 +14,17 @@
 # Compare official shadowsocks
 ## Features
 
-|                             | Rust  | Python (2.9.0) |
-| --------------------------- | :---: | :------------: |
-| TCP & UDP support           | __√__ |     __√__      |
-| TCP fast open               | __X__ |     __√__      |
-| Destination IP blacklist    | __X__ |     __√__      |
-| One time auth               | __√__ |     __√__      |
-| Multiple encryption methods | __√__ |     __√__      |
-| Async UDP support           | __√__ |     __X__      |
-| IPv6 support                | __√__ |    Unknown     |
-| Windows compatible          | __√__ |     __√__      |
-| Multiple servers support    | __X__ |     __X__      |
-
-## Performance
-|               | Rust | Python (2.9.0) |
-| ------------- | :--: | :------------: |
-| local host    |      |                |
-| remote server |      |                |
+|                             |        Rust        |      Python (2.9.0)      |
+| --------------------------- | :----------------: | :----------------------: |
+| TCP & UDP support           |       __√__        |          __√__           |
+| TCP fast open               | wait `mio` support |          __√__           |
+| Destination IP blacklist    |       __X__        |          __√__           |
+| One time auth               |       __√__        |          __√__           |
+| Multiple encryption methods |       __√__        |          __√__           |
+| Async UDP support           |       __√__        |          __X__           |
+| IPv6 support                |      not test      |         unknown          |
+| Windows compatible          | wait `mio` stable  | need install crypto libs |
+| Multiple servers support    |       __X__        |          __X__           |
 
 ## Both Supported Encryption Methods
 
@@ -48,7 +42,8 @@
 * RC4
 
 # TBD
-- [ ] test compatible with win10
 - [ ] test IPv6
+- [ ] fix compatible problem on windows
 - [ ] bench with fast mode
 - [ ] support TCP fast open (wait `mio` support)
+- [ ] support multiple servers (wait `clap` improve)
