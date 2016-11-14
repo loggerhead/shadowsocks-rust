@@ -3,3 +3,4 @@ target
 *.pid
 .#*
 *.bk
+.cargo
