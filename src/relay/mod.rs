@@ -7,7 +7,7 @@ use mode::ServerChooser;
 use config::Config;
 use network::pair2addr;
 use collections::Holder;
-use asyncdns::{DNSResolver, Caller, HostIpPair};
+use asyncdns::{DnsResolver, Caller, HostIpPair};
 use util::{RcCell, new_rc_cell};
 use error::{DnsError, SocketError, Result};
 use crypto::error::Error as CryptoError;
@@ -91,7 +91,7 @@ fn init_relay<T: MyHandler, P: Caller, F>(conf: Config, f: F) -> Result<T>
     where F: FnOnce(Config,
                     Token,
                     Token,
-                    RcCell<DNSResolver>,
+                    RcCell<DnsResolver>,
                     RcCell<ServerChooser>,
                     Holder<RcCell<P>>,
                     SocketAddr,
@@ -103,7 +103,7 @@ fn init_relay<T: MyHandler, P: Caller, F>(conf: Config, f: F) -> Result<T>
     let dns_token = processors.alloc_token().ok_or(SocketError::AllocTokenFailed)?;
 
     let prefer_ipv6 = conf["prefer_ipv6"].as_bool().unwrap();
-    let mut dns_resolver = DNSResolver::new(dns_token, None, prefer_ipv6)?;
+    let mut dns_resolver = DnsResolver::new(dns_token, None, prefer_ipv6)?;
     let server_chooser = ServerChooser::new(&conf)?;
 
     let host = conf["listen_address"].as_str().unwrap().to_string();

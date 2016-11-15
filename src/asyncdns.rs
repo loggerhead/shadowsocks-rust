@@ -98,21 +98,21 @@ pub trait Caller {
                            res: Result<Option<HostIpPair>>);
 }
 
-struct DNSResponse {
+struct DnsResponse {
     hostname: String,
     questions: Vec<(String, u16, u16)>,
     answers: Vec<(String, u16, u16)>,
 }
 
-impl fmt::Debug for DNSResponse {
+impl fmt::Debug for DnsResponse {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}: {:?}", self.hostname, self.answers)
     }
 }
 
-impl DNSResponse {
-    fn new() -> DNSResponse {
-        DNSResponse {
+impl DnsResponse {
+    fn new() -> DnsResponse {
+        DnsResponse {
             hostname: String::new(),
             questions: Vec::new(),
             answers: Vec::new(),
@@ -127,7 +127,7 @@ enum HostnameStatus {
     Second,
 }
 
-pub struct DNSResolver {
+pub struct DnsResolver {
     prefer_ipv6: bool,
     token: Token,
     hosts: Dict<String, String>,
@@ -142,11 +142,11 @@ pub struct DNSResolver {
     receive_buf: Option<Vec<u8>>,
 }
 
-impl DNSResolver {
+impl DnsResolver {
     pub fn new(token: Token,
                server_list: Option<Vec<String>>,
                prefer_ipv6: bool)
-               -> Result<DNSResolver> {
+               -> Result<DnsResolver> {
         // pre-define DNS server list
         let servers = match server_list {
             Some(servers) => servers,
@@ -162,7 +162,7 @@ impl DNSResolver {
         let hosts = parse_hosts(prefer_ipv6);
         let cache_timeout = Duration::new(600, 0);
 
-        Ok(DNSResolver {
+        Ok(DnsResolver {
             prefer_ipv6: prefer_ipv6,
             token: token,
             servers: servers,
@@ -618,7 +618,7 @@ fn parse_records(data: &[u8],
     Some((offset, records))
 }
 
-fn parse_response(data: &[u8]) -> Option<DNSResponse> {
+fn parse_response(data: &[u8]) -> Option<DnsResponse> {
     if data.len() < 12 {
         return None;
     }
@@ -634,7 +634,7 @@ fn parse_response(data: &[u8]) -> Option<DNSResponse> {
         let (_offset, _nss) = try_opt!(parse_records(data, _offset, _nscount, false));
         let (_offset, _ars) = try_opt!(parse_records(data, _offset, _arcount, false));
 
-        let mut response = DNSResponse::new();
+        let mut response = DnsResponse::new();
         if !qds.is_empty() {
             response.hostname = qds[0].0.clone();
         }
@@ -791,7 +791,7 @@ mod test {
 
     fn test_block_resolve(ipv6: bool) {
         let tests = if ipv6 { IPV6_TESTS } else { IPV4_TESTS };
-        let mut resolver = asyncdns::DNSResolver::new(Token(0), None, ipv6).unwrap();
+        let mut resolver = asyncdns::DnsResolver::new(Token(0), None, ipv6).unwrap();
         for &(hostname, ip) in &tests {
             match resolver.block_resolve(hostname.to_string()) {
                 Ok(r) => {

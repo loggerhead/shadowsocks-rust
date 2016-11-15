@@ -15,7 +15,7 @@ use collections::Dict;
 use crypto::Encryptor;
 use socks5::{parse_header, pack_addr, addr_type, Socks5Header};
 use network::{pair2addr, NetworkWriteBytes};
-use asyncdns::{Caller, DNSResolver, HostIpPair};
+use asyncdns::{Caller, DnsResolver, HostIpPair};
 use error;
 use error::{Result, SocketError, ProcessError, Socks5Error};
 use super::Relay;
@@ -34,7 +34,7 @@ pub struct UdpProcessor {
     relay_sock: RcCell<UdpSocket>,
     receive_buf: Option<Vec<u8>>,
     requests: Dict<String, PortRequestMap>,
-    dns_resolver: RcCell<DNSResolver>,
+    dns_resolver: RcCell<DnsResolver>,
     server_chooser: RcCell<ServerChooser>,
     encryptor: RcCell<Encryptor>,
     hostname_to_server: LruCache<String, Address>,
@@ -46,7 +46,7 @@ impl UdpProcessor {
                conf: Config,
                addr: SocketAddr,
                relay_sock: RcCell<UdpSocket>,
-               dns_resolver: RcCell<DNSResolver>,
+               dns_resolver: RcCell<DnsResolver>,
                server_chooser: RcCell<ServerChooser>,
                encryptor: RcCell<Encryptor>,
                prefer_ipv6: bool)

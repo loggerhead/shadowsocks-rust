@@ -22,7 +22,7 @@
 | One time auth               |       __√__        |          __√__           |
 | Multiple encryption methods |       __√__        |          __√__           |
 | Async UDP support           |       __√__        |          __X__           |
-| IPv6 support                |      not test      |         unknown          |
+| IPv6 support                |      not test      |          __X__          |
 | Windows compatible          | wait `mio` stable  | need install crypto libs |
 | Multiple servers support    |       __X__        |          __X__           |
 

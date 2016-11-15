@@ -13,7 +13,7 @@ use socks5::{addr_type, Socks5Header};
 use util::{RcCell, shift_vec};
 use config::Config;
 use crypto::Encryptor;
-use asyncdns::{Caller, DNSResolver, HostIpPair};
+use asyncdns::{Caller, DnsResolver, HostIpPair};
 use network::{pair2addr, NetworkWriteBytes};
 use socks5::{pack_addr, parse_header, check_auth_method, CheckAuthResult};
 use error;
@@ -23,7 +23,7 @@ use super::Relay;
 pub struct TcpProcessor {
     conf: Config,
     stage: HandleStage,
-    dns_resolver: RcCell<DNSResolver>,
+    dns_resolver: RcCell<DnsResolver>,
     server_chooser: RcCell<ServerChooser>,
     timeout: Option<Timeout>,
     local_token: Token,
@@ -47,7 +47,7 @@ impl TcpProcessor {
                remote_token: Token,
                conf: Config,
                local_sock: TcpStream,
-               dns_resolver: RcCell<DNSResolver>,
+               dns_resolver: RcCell<DnsResolver>,
                server_chooser: RcCell<ServerChooser>)
                -> Result<TcpProcessor> {
         let stage = if cfg!(feature = "sslocal") {

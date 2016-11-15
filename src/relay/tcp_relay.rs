@@ -4,7 +4,7 @@ use mio::{Token, EventSet, EventLoop, PollOpt};
 use mode::ServerChooser;
 use config::Config;
 use collections::Holder;
-use asyncdns::DNSResolver;
+use asyncdns::DnsResolver;
 use util::{RcCell, new_rc_cell};
 use error::{Result, SocketError, Error as UnionError};
 use super::{init_relay, TcpProcessor, MyHandler, Relay};
@@ -15,7 +15,7 @@ pub struct TcpRelay {
     conf: Config,
     listener: TcpListener,
     dns_token: Token,
-    dns_resolver: RcCell<DNSResolver>,
+    dns_resolver: RcCell<DnsResolver>,
     server_chooser: RcCell<ServerChooser>,
     processors: Holder<RcCell<TcpProcessor>>,
 }

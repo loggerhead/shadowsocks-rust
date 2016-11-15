@@ -28,8 +28,7 @@ use util::{RcCell, new_rc_cell};
 use config::Config;
 use socks5::parse_header;
 use crypto::Encryptor;
-// TODO: rename `DNSResolver` to `DnsResolver`
-use asyncdns::DNSResolver;
+use asyncdns::DnsResolver;
 use collections::{Holder, Dict};
 use error::{Result, SocketError, Error as UnionError, Socks5Error, ProcessError};
 use super::{init_relay, Relay, MyHandler, UdpProcessor};
@@ -43,7 +42,7 @@ pub struct UdpRelay {
     listener: RcCell<UdpSocket>,
     receive_buf: Option<Vec<u8>>,
     dns_token: Token,
-    dns_resolver: RcCell<DNSResolver>,
+    dns_resolver: RcCell<DnsResolver>,
     server_chooser: RcCell<ServerChooser>,
     cache: Dict<SocketAddr, RcCell<UdpProcessor>>,
     processors: Holder<RcCell<UdpProcessor>>,
