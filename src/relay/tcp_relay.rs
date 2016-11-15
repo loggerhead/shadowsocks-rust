@@ -51,6 +51,7 @@ impl TcpRelay {
         })
     }
 
+    /// start event loop
     pub fn run(self) -> Result<()> {
         let mut event_loop = EventLoop::new()?;
         event_loop.register(&self.listener,
@@ -101,6 +102,7 @@ impl TcpRelay {
         }
     }
 
+    /// Create `TcpProcessor` to handle the new TCP connection.
     fn handle_events(&mut self, event_loop: &mut EventLoop<Relay>, events: EventSet) -> Result<()> {
         event_loop.reregister(&self.listener,
                         self.token,
@@ -138,6 +140,7 @@ impl TcpRelay {
 }
 
 impl MyHandler for TcpRelay {
+    /// Dispatch events to relative handler.
     fn ready(&mut self, event_loop: &mut EventLoop<Relay>, token: Token, events: EventSet) {
         if token == self.token {
             if let Err(e) = self.handle_events(event_loop, events) {

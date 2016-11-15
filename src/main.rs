@@ -142,6 +142,5 @@ mod my_daemonize {
     use shadowsocks::config::Config;
 
     pub fn do_daemonize(_conf: &Config) {
-        error!("not support daemonize feature");
     }
 }

@@ -1,6 +1,5 @@
 use std::io;
 use std::fmt;
-use std::ops::BitAnd;
 use std::borrow::{Cow, Borrow};
 use std::io::{Read, Write};
 
@@ -38,8 +37,6 @@ pub struct TcpProcessor {
     server_address: Option<Address>,
     remote_hostname: Option<String>,
     encryptor: Encryptor,
-    downstream_status: StreamStatus,
-    upstream_status: StreamStatus,
 }
 
 impl TcpProcessor {
@@ -86,10 +83,8 @@ impl TcpProcessor {
             server_address: None,
             remote_hostname: None,
             encryptor: encryptor,
-            local_interest: EventSet::none(),
-            remote_interest: EventSet::none(),
-            downstream_status: StreamStatus::Init,
-            upstream_status: StreamStatus::WaitReading,
+            local_interest: EventSet::readable(),
+            remote_interest: EventSet::readable() | EventSet::writable(),
         })
     }
 
@@ -97,27 +92,11 @@ impl TcpProcessor {
         if is_local_sock { "local" } else { "remote" }
     }
 
-    fn get_token(&self, is_local_sock: bool) -> Token {
-        if is_local_sock {
-            self.local_token
-        } else {
-            self.remote_token
-        }
-    }
-
     fn get_sock(&mut self, is_local_sock: bool) -> &mut TcpStream {
         if is_local_sock {
             &mut self.local_sock
         } else {
             self.remote_sock.as_mut().unwrap()
-        }
-    }
-
-    fn get_interest(&self, is_local_sock: bool) -> EventSet {
-        if is_local_sock {
-            self.local_interest
-        } else {
-            self.remote_interest
         }
     }
 
@@ -143,13 +122,6 @@ impl TcpProcessor {
         }
     }
 
-    fn check_buf_empty(&mut self, is_local_sock: bool) -> bool {
-        let buf = self.get_buf(is_local_sock);
-        let res = buf.is_empty();
-        self.set_buf(buf, is_local_sock);
-        res
-    }
-
     fn extend_buf(&mut self, data: &[u8], is_local_sock: bool) {
         let mut buf = self.get_buf(is_local_sock);
         buf.extend_from_slice(data);
@@ -166,44 +138,20 @@ impl TcpProcessor {
         self.timeout = event_loop.timeout_ms(self.get_id(), delay).ok();
     }
 
-    fn update_stream(&mut self, stream: StreamDirection, status: StreamStatus) {
-        match stream {
-            StreamDirection::Down => self.downstream_status = status,
-            StreamDirection::Up => self.upstream_status = status,
-        }
-
-        self.local_interest = EventSet::none();
-        if self.downstream_status & StreamStatus::WaitWriting {
-            self.local_interest = self.local_interest | EventSet::writable();
-        }
-        if self.upstream_status & StreamStatus::WaitReading {
-            self.local_interest = self.local_interest | EventSet::readable();
-        }
-
-        if self.remote_sock.is_some() {
-            self.remote_interest = EventSet::none();
-            if self.downstream_status & StreamStatus::WaitReading {
-                self.remote_interest = self.remote_interest | EventSet::readable();
+    fn update_interest_depend_on(&mut self, is_finished: bool, is_local_sock: bool) {
+        if is_local_sock {
+            if is_finished {
+                self.local_interest = EventSet::readable();
+            } else {
+                self.local_interest = EventSet::readable() | EventSet::writable();
             }
-            if self.upstream_status & StreamStatus::WaitWriting {
-                self.remote_interest = self.remote_interest | EventSet::writable();
+        } else {
+            if is_finished {
+                self.remote_interest = EventSet::readable();
+            } else {
+                self.remote_interest = EventSet::readable() | EventSet::writable();
             }
         }
-    }
-
-    fn update_stream_depend_on(&mut self, is_finished: bool, is_local_sock: bool) {
-        let direction = if is_local_sock {
-            StreamDirection::Down
-        } else {
-            StreamDirection::Up
-        };
-        let status = if is_finished {
-            StreamStatus::WaitReading
-        } else {
-            StreamStatus::WaitWriting
-        };
-
-        self.update_stream(direction, status);
     }
 
     fn do_register(&mut self,
@@ -211,8 +159,16 @@ impl TcpProcessor {
                    is_local_sock: bool,
                    is_reregister: bool)
                    -> Result<()> {
-        let token = self.get_token(is_local_sock);
-        let events = self.get_interest(is_local_sock);
+        let token = if is_local_sock {
+            self.local_token
+        } else {
+            self.remote_token
+        };
+        let events = if is_local_sock {
+            self.local_interest
+        } else {
+            self.remote_interest
+        };
         let pollopts = PollOpt::edge() | PollOpt::oneshot();
 
         let register_result = if is_reregister {
@@ -222,7 +178,7 @@ impl TcpProcessor {
         };
 
         register_result.map(|_| {
-                debug!("registered {:?} {:?} socket with {:?}",
+                debug!("registered {:?} {} socket with {:?}",
                        self,
                        self.sock_desc(is_local_sock),
                        events);
@@ -234,11 +190,6 @@ impl TcpProcessor {
                     event_loop: &mut EventLoop<Relay>,
                     is_local_sock: bool)
                     -> Result<()> {
-        if is_local_sock {
-            self.local_interest = EventSet::readable();
-        } else {
-            self.remote_interest = EventSet::readable() | EventSet::writable();
-        }
         self.do_register(event_loop, is_local_sock, REMOTE)
     }
 
@@ -306,8 +257,9 @@ impl TcpProcessor {
     }
 
     fn write_to_sock(&mut self, data: &[u8], is_local_sock: bool) -> Result<usize> {
-        let nwrite =
-            self.get_sock(is_local_sock).write(data).map_err(|e| SocketError::WriteFailed(e))?;
+        let nwrite = self.get_sock(is_local_sock)
+            .write(data)
+            .map_err(|e| SocketError::WriteFailed(e))?;
         if cfg!(feature = "sslocal") && !is_local_sock {
             self.record_activity();
         }
@@ -321,26 +273,21 @@ impl TcpProcessor {
                            -> Result<()> {
         trace!("{:?} handle stage stream", self);
 
+        let mut data = Cow::Borrowed(data);
         if cfg!(feature = "sslocal") {
-            match self.encryptor.encrypt(data) {
-                Some(ref data) => {
-                    let nwrite = self.write_to_sock(data, REMOTE)?;
-                    if nwrite < data.len() {
-                        self.extend_buf(&data[nwrite..], REMOTE);
-                    }
-                    self.update_stream_depend_on(data.len() == nwrite, REMOTE);
-                    Ok(())
-                }
-                None => err_from!(ProcessError::EncryptFailed),
+            match self.encryptor.encrypt(data.borrow()) {
+                Some(encrypted) => data = Cow::Owned(encrypted),
+                None => return err_from!(ProcessError::EncryptFailed),
             }
-        } else {
-            let nwrite = self.write_to_sock(data, REMOTE)?;
-            if nwrite < data.len() {
-                self.extend_buf(&data[nwrite..], REMOTE);
-            }
-            self.update_stream_depend_on(data.len() == nwrite, REMOTE);
-            Ok(())
         }
+
+        let nwrite = self.write_to_sock(data.borrow(), REMOTE)?;
+        let is_finished = data.len() == nwrite;
+        if !is_finished {
+            self.extend_buf(&data[nwrite..], REMOTE);
+        }
+        self.update_interest_depend_on(is_finished, REMOTE);
+        Ok(())
     }
 
     fn handle_stage_connecting(&mut self,
@@ -349,15 +296,15 @@ impl TcpProcessor {
                                -> Result<()> {
         trace!("{:?} handle stage connecting", self);
 
+        let mut data = Cow::Borrowed(data);
         if cfg!(feature = "sslocal") {
-            match self.encryptor.encrypt(data) {
-                Some(ref data) => self.extend_buf(data, REMOTE),
+            match self.encryptor.encrypt(data.borrow()) {
+                Some(encrypted) => data = Cow::Owned(encrypted),
                 None => return err_from!(ProcessError::EncryptFailed),
             }
-        } else {
-            self.extend_buf(data, REMOTE);
         }
 
+        self.extend_buf(data.borrow(), REMOTE);
         Ok(())
     }
 
@@ -409,13 +356,7 @@ impl TcpProcessor {
                 self.stage = HandleStage::Handshake2;
                 Ok(())
             }
-            CheckAuthResult::BadSocksHeader => {
-                err_from!(Socks5Error::CheckAuthFailed(CheckAuthResult::BadSocksHeader))
-            }
-            CheckAuthResult::NoAcceptableMethods => {
-                self.write_to_sock(&[0x05, 0xff], LOCAL)?;
-                err_from!(Socks5Error::CheckAuthFailed(CheckAuthResult::NoAcceptableMethods))
-            }
+            res => err_from!(Socks5Error::CheckAuthFailed(res)),
         }
     }
 
@@ -443,8 +384,8 @@ impl TcpProcessor {
             self.write_to_sock(response, LOCAL)?;
         }
 
+        self.stage = HandleStage::Handshake3;
         if data.is_empty() {
-            self.stage = HandleStage::Handshake3;
             Ok(())
         } else {
             self.handle_stage_handshake3(event_loop, data)
@@ -462,8 +403,7 @@ impl TcpProcessor {
 
         let is_ota_session = self.check_one_time_auth(addr_type)?;
         let data = if is_ota_session {
-            match self.encryptor
-                .enable_ota(addr_type | addr_type::AUTH, header_length, &data) {
+            match self.encryptor.enable_ota(addr_type | addr_type::AUTH, header_length, &data) {
                 Some(ota_data) => Cow::Owned(ota_data),
                 None => return err_from!(ProcessError::EnableOneTimeAuthFailed),
             }
@@ -471,12 +411,9 @@ impl TcpProcessor {
             Cow::Borrowed(data)
         };
 
-        self.update_stream(StreamDirection::Up, StreamStatus::WaitWriting);
         self.stage = HandleStage::Dns;
         // send socks5 response to client
         if cfg!(feature = "sslocal") {
-            self.update_stream(StreamDirection::Down, StreamStatus::WaitReading);
-
             match self.encryptor.encrypt(data.borrow()) {
                 Some(ref data) => self.extend_buf(data, REMOTE),
                 None => return err_from!(ProcessError::EncryptFailed),
@@ -503,13 +440,14 @@ impl TcpProcessor {
 
         let token = self.get_id();
         let remote_hostname = self.server_address.as_ref().map(|addr| addr.0.clone()).unwrap();
-        let resolved = self.dns_resolver.borrow_mut().resolve(token, remote_hostname);
-        match resolved {
-            Ok(None) => {}
+        let resolved_res = self.dns_resolver.borrow_mut().resolve(token, remote_hostname);
+        if let Ok(None) = resolved_res {
+            Ok(())
             // if hostname is resolved immediately
-            res => self.handle_dns_resolved(event_loop, res),
+        } else {
+            self.handle_dns_resolved(event_loop, resolved_res);
+            Ok(())
         }
-        Ok(())
     }
 
     fn on_local_read(&mut self, event_loop: &mut EventLoop<Relay>) -> Result<()> {
@@ -527,9 +465,10 @@ impl TcpProcessor {
 
     // remote_sock <= data
     fn on_remote_read(&mut self, event_loop: &mut EventLoop<Relay>) -> Result<()> {
-        let data = self.receive_data(REMOTE)?;
+        trace!("on remote read");
         self.reset_timeout(event_loop);
 
+        let data = self.receive_data(REMOTE)?;
         let data = if cfg!(feature = "sslocal") {
             data
         } else {
@@ -544,24 +483,18 @@ impl TcpProcessor {
         if nwrite < data.len() {
             self.extend_buf(&data[nwrite..], LOCAL);
         }
-        self.update_stream_depend_on(data.len() == nwrite, LOCAL);
+        self.update_interest_depend_on(data.len() == nwrite, LOCAL);
         Ok(())
     }
 
     fn on_write(&mut self, _event_loop: &mut EventLoop<Relay>, is_local_sock: bool) -> Result<()> {
-        if self.check_buf_empty(is_local_sock) {
-            if is_local_sock {
-                self.update_stream(StreamDirection::Down, StreamStatus::WaitReading);
-            } else {
-                self.update_stream(StreamDirection::Up, StreamStatus::WaitReading);
-            }
-        } else {
-            let mut buf = self.get_buf(is_local_sock);
+        let mut buf = self.get_buf(is_local_sock);
+        if !buf.is_empty() {
             let nwrite = self.write_to_sock(&buf, is_local_sock)?;
             shift_vec(&mut buf, nwrite);
-            self.update_stream_depend_on(buf.len() == nwrite, is_local_sock);
-            self.set_buf(buf, is_local_sock);
         }
+        self.update_interest_depend_on(buf.is_empty(), is_local_sock);
+        self.set_buf(buf, is_local_sock);
         Ok(())
     }
 
@@ -701,8 +634,6 @@ impl Caller for TcpProcessor {
             let sock = my_try!(self.create_connection(&ip, port));
             self.remote_sock = Some(sock);
             my_try!(self.register(event_loop, REMOTE));
-            self.update_stream(StreamDirection::Up, StreamStatus::WaitBoth);
-            self.update_stream(StreamDirection::Down, StreamStatus::WaitReading);
             my_try!(self.reregister(event_loop, LOCAL));
         } else {
             error!("resolve dns failed: empty response");
@@ -745,35 +676,4 @@ enum HandleStage {
     Stream,
     Destroyed,
     Error(Option<error::Error>),
-}
-
-#[derive(Debug, PartialEq)]
-enum StreamDirection {
-    Down,
-    Up,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum StreamStatus {
-    Init,
-    WaitReading,
-    WaitWriting,
-    WaitBoth,
-}
-
-impl BitAnd for StreamStatus {
-    type Output = bool;
-
-    fn bitand(self, rhs: Self) -> Self::Output {
-        if self == StreamStatus::Init || rhs == StreamStatus::Init {
-            return false;
-        }
-
-        match rhs {
-            StreamStatus::WaitReading => self != StreamStatus::WaitWriting,
-            StreamStatus::WaitWriting => self != StreamStatus::WaitReading,
-            StreamStatus::WaitBoth => true,
-            _ => unreachable!(),
-        }
-    }
 }
