@@ -125,11 +125,23 @@ impl Encryptor {
         res
     }
 
+    #[cfg(feature = "disable-encrypt")]
+    pub fn raw_encrypt(&mut self, data: &[u8]) -> Option<Vec<u8>> {
+        Some(data.to_vec())
+    }
+
+    #[cfg(feature = "disable-encrypt")]
+    pub fn raw_decrypt(&mut self, data: &[u8]) -> Option<Vec<u8>> {
+        Some(data.to_vec())
+    }
+
+    #[cfg(not(feature = "disable-encrypt"))]
     pub fn raw_encrypt(&mut self, data: &[u8]) -> Option<Vec<u8>> {
         let mut output = vec![];
         self.cipher.update(data, &mut output).ok().map(|_| output)
     }
 
+    #[cfg(not(feature = "disable-encrypt"))]
     pub fn raw_decrypt(&mut self, data: &[u8]) -> Option<Vec<u8>> {
         self.decipher.as_mut().and_then(|decipher| {
             let mut output = vec![];

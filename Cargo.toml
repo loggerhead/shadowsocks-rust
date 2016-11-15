@@ -44,6 +44,7 @@ clippy = { version = ">= 0.0.95", optional = true }
 
 [features]
 sslocal = []
+disable-encrypt = []
 
 [target.'cfg(unix)'.dependencies]
 sig = "~1.0.0"
