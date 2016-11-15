@@ -88,10 +88,6 @@ impl TcpProcessor {
         })
     }
 
-    fn sock_desc(&self, is_local_sock: bool) -> &'static str {
-        if is_local_sock { "local" } else { "remote" }
-    }
-
     fn get_sock(&mut self, is_local_sock: bool) -> &mut TcpStream {
         if is_local_sock {
             &mut self.local_sock
@@ -178,9 +174,9 @@ impl TcpProcessor {
         };
 
         register_result.map(|_| {
-                debug!("registered {:?} {} socket with {:?}",
+                debug!("registered {:?}-{} with {:?}",
                        self,
-                       self.sock_desc(is_local_sock),
+                       if is_local_sock { "local" } else { "remote" },
                        events);
             })
             .map_err(|e| From::from(e))
@@ -309,7 +305,7 @@ impl TcpProcessor {
     }
 
     fn handle_udp_handshake(&mut self) -> Result<()> {
-        trace!("udp associate handshake");
+        trace!("{:?} handle udp associate handshake", self);
         self.stage = HandleStage::UDPAssoc;
 
         let addr = self.local_sock.local_addr()?;
@@ -411,7 +407,7 @@ impl TcpProcessor {
             Cow::Borrowed(data)
         };
 
-        self.stage = HandleStage::Dns;
+        self.stage = HandleStage::Connecting;
         // send socks5 response to client
         if cfg!(feature = "sslocal") {
             match self.encryptor.encrypt(data.borrow()) {
@@ -465,7 +461,7 @@ impl TcpProcessor {
 
     // remote_sock <= data
     fn on_remote_read(&mut self, event_loop: &mut EventLoop<Relay>) -> Result<()> {
-        trace!("on remote read");
+        trace!("{:?} on remote read", self);
         self.reset_timeout(event_loop);
 
         let data = self.receive_data(REMOTE)?;
@@ -517,19 +513,19 @@ impl TcpProcessor {
                          token: Token,
                          events: EventSet)
                          -> Result<()> {
-        debug!("current handle stage of {:?} is {:?}", self, self.stage);
+        debug!("{:?} is handling {:?}", self, self.stage);
 
         if token == self.local_token {
             if events.is_error() {
                 let e = self.local_sock.take_socket_error().unwrap_err();
                 if e.kind() != io::ErrorKind::ConnectionReset {
-                    error!("events error on local socket of {:?}: {}", self, e);
+                    error!("events error on {:?}-local: {}", self, e);
                     return err_from!(SocketError::EventError);
                 } else {
                     return err_from!(SocketError::ConnectionClosed);
                 }
             }
-            debug!("{:?} events for local socket {:?}", events, self);
+            debug!("{:?} events for {:?}-local", events, self);
 
             if events.is_readable() || events.is_hup() {
                 self.on_local_read(event_loop)?;
@@ -542,13 +538,13 @@ impl TcpProcessor {
             if events.is_error() {
                 let e = self.remote_sock.take().unwrap().take_socket_error().unwrap_err();
                 if e.kind() != io::ErrorKind::ConnectionReset {
-                    error!("events error on remote socket of {:?}: {}", self, e);
+                    error!("events error on {:?}-remote: {}", self, e);
                     return err_from!(SocketError::EventError);
                 } else {
                     return err_from!(SocketError::ConnectionClosed);
                 }
             }
-            debug!("{:?} events for remote socket {:?}", events, self);
+            debug!("{:?} events for {:?}-remote", events, self);
 
             if events.is_readable() || events.is_hup() {
                 self.on_remote_read(event_loop)?;
@@ -567,14 +563,14 @@ impl TcpProcessor {
 
         if let Err(e) = self.local_sock.shutdown(Shutdown::Both) {
             if e.kind() != io::ErrorKind::NotConnected {
-                error!("shutdown local socket {:?} failed: {}", self, e);
+                error!("shutdown {:?}-local failed: {}", self, e);
             }
         }
 
         if let Some(sock) = self.remote_sock.take() {
             if let Err(e) = sock.shutdown(Shutdown::Both) {
                 if e.kind() != io::ErrorKind::NotConnected {
-                    error!("shutdown remote socket {:?} failed: {}", self, e);
+                    error!("shutdown {:?}-remote failed: {}", self, e);
                 }
             }
         }
@@ -610,7 +606,7 @@ impl Caller for TcpProcessor {
     fn handle_dns_resolved(&mut self,
                            event_loop: &mut EventLoop<Relay>,
                            res: Result<Option<HostIpPair>>) {
-        debug!("{:?} handle dns resolved: {:?}", self, res);
+        debug!("{:?} dns resolved: {:?}", self, res);
 
         macro_rules! my_try {
             ($r:expr) => (
@@ -625,7 +621,6 @@ impl Caller for TcpProcessor {
         }
 
         if let Some(HostIpPair(_hostname, ip)) = my_try!(res) {
-            self.stage = HandleStage::Connecting;
             let port = self.server_address
                 .as_ref()
                 .map(|addr| addr.1)
@@ -668,9 +663,7 @@ enum HandleStage {
     Handshake3,
     // only sslocal: UDP assoc
     UDPAssoc,
-    // DNS resolved, connect to remote
-    Dns,
-    // still connecting, more data from local received
+    // connecting to remote server, more data from local received
     Connecting,
     // remote connected, piping local and remote
     Stream,
