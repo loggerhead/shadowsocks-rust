@@ -22,9 +22,9 @@
 | One time auth               |       __√__        |          __√__           |
 | Multiple encryption methods |       __√__        |          __√__           |
 | Async UDP support           |       __√__        |          __X__           |
-| IPv6 support                |      not test      |          __X__          |
+| IPv6 support                |      not test      |          __X__           |
 | Windows compatible          | wait `mio` stable  | need install crypto libs |
-| Multiple servers support    |       __X__        |          __X__           |
+| Multiple servers support    |       __√__        |          __X__           |
 
 ## Both Supported Encryption Methods
 
@@ -46,4 +46,3 @@
 - [ ] fix compatible problem on windows
 - [ ] bench with fast mode
 - [ ] support TCP fast open (wait `mio` support)
-- [ ] support multiple servers (wait `clap` improve)

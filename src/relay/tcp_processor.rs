@@ -1,5 +1,6 @@
 use std::io;
 use std::fmt;
+use std::sync::Arc;
 use std::borrow::{Cow, Borrow};
 use std::io::{Read, Write};
 use std::net::SocketAddr;
@@ -7,24 +8,24 @@ use std::net::SocketAddr;
 use mio::tcp::{TcpStream, Shutdown};
 use mio::{EventLoop, Token, Timeout, EventSet, PollOpt};
 
-use mode::{ServerChooser, Address};
+use mode::ServerChooser;
 use socks5;
 use socks5::{addr_type, Socks5Header};
 use util::{RcCell, shift_vec};
-use config::Config;
+use config::{Config, ProxyConfig};
 use crypto::Encryptor;
 use asyncdns::{Caller, DnsResolver, HostIpPair};
-use network::{pair2addr, NetworkWriteBytes};
+use network::{pair2addr, NetworkWriteBytes, Address};
 use socks5::{pack_addr, parse_header, check_auth_method, CheckAuthResult};
 use error;
 use error::{Result, SocketError, ProcessError, Socks5Error};
 use super::Relay;
 
 pub struct TcpProcessor {
-    conf: Config,
-    stage: HandleStage,
-    dns_resolver: RcCell<DnsResolver>,
+    proxy_conf: Arc<ProxyConfig>,
     server_chooser: RcCell<ServerChooser>,
+    dns_resolver: RcCell<DnsResolver>,
+    stage: HandleStage,
     timeout: Option<Timeout>,
     local_token: Token,
     local_sock: TcpStream,
@@ -36,17 +37,16 @@ pub struct TcpProcessor {
     remote_buf: Option<Vec<u8>>,
     client_address: Address,
     server_address: Option<Address>,
-    remote_hostname: Option<String>,
     encryptor: Encryptor,
 }
 
 impl TcpProcessor {
     pub fn new(local_token: Token,
                remote_token: Token,
-               conf: Config,
                local_sock: TcpStream,
-               dns_resolver: RcCell<DnsResolver>,
-               server_chooser: RcCell<ServerChooser>)
+               conf: &Arc<Config>,
+               dns_resolver: &RcCell<DnsResolver>,
+               server_chooser: &RcCell<ServerChooser>)
                -> Result<TcpProcessor> {
         let stage = if cfg!(feature = "sslocal") {
             HandleStage::Handshake1
@@ -54,9 +54,16 @@ impl TcpProcessor {
             HandleStage::Handshake3
         };
 
-        let encryptor = Encryptor::new(conf["password"].as_str().unwrap(),
-                                       conf["encrypt_method"].as_str().unwrap())
-            .map_err(|e| ProcessError::InitEncryptorFailed(e))?;
+        let (server_address, proxy_conf) = if cfg!(feature = "sslocal") {
+            let proxy_conf =
+                server_chooser.borrow_mut().choose().ok_or(ProcessError::NoServerAvailable)?;
+            (Some(Address(proxy_conf.address.clone(), proxy_conf.port)), proxy_conf)
+        } else {
+            (None, conf.proxy_conf.clone())
+        };
+
+        let encryptor = Encryptor::new(&proxy_conf.password, proxy_conf.method)
+            .map_err(ProcessError::InitEncryptorFailed)?;
 
         // TODO: this is a bug of mio 0.5.x (fixed in mio 0.6.x)
         let client_address = if cfg!(windows) {
@@ -69,10 +76,10 @@ impl TcpProcessor {
         local_sock.set_nodelay(true)?;
 
         Ok(TcpProcessor {
-            conf: conf,
+            proxy_conf: proxy_conf,
+            server_chooser: server_chooser.clone(),
+            dns_resolver: dns_resolver.clone(),
             stage: stage,
-            dns_resolver: dns_resolver,
-            server_chooser: server_chooser,
             timeout: None,
             local_token: local_token,
             local_sock: local_sock,
@@ -81,8 +88,7 @@ impl TcpProcessor {
             local_buf: None,
             remote_buf: None,
             client_address: client_address,
-            server_address: None,
-            remote_hostname: None,
+            server_address: server_address,
             encryptor: encryptor,
             local_interest: EventSet::readable(),
             remote_interest: EventSet::readable() | EventSet::writable(),
@@ -130,7 +136,7 @@ impl TcpProcessor {
             let timeout = self.timeout.take().unwrap();
             event_loop.clear_timeout(timeout);
         }
-        let delay = self.conf["timeout"].as_integer().unwrap() as u64 * 1000;
+        let delay = self.proxy_conf.timeout as u64 * 1000;
         // it's ok if setup timeout failed
         self.timeout = event_loop.timeout_ms(self.get_id(), delay).ok();
     }
@@ -180,7 +186,7 @@ impl TcpProcessor {
                        if is_local_sock { "local" } else { "remote" },
                        events);
             })
-            .map_err(|e| From::from(e))
+            .map_err(From::from)
     }
 
     pub fn register(&mut self,
@@ -199,9 +205,7 @@ impl TcpProcessor {
             HandleStage::Handshake3 |
             HandleStage::Connecting |
             HandleStage::Stream => {
-                self.server_chooser.borrow_mut().record(self.get_id(),
-                                                        self.server_address.clone().unwrap(),
-                                                        self.remote_hostname.as_ref().unwrap());
+                self.server_chooser.borrow_mut().record(self.get_id());
             }
             _ => {}
         }
@@ -212,9 +216,7 @@ impl TcpProcessor {
             HandleStage::Handshake3 |
             HandleStage::Connecting |
             HandleStage::Stream => {
-                self.server_chooser.borrow_mut().update(self.get_id(),
-                                                        self.server_address.clone().unwrap(),
-                                                        self.remote_hostname.as_ref().unwrap());
+                self.server_chooser.borrow_mut().update(self.get_id(), &self.proxy_conf);
             }
             _ => {}
         }
@@ -256,7 +258,7 @@ impl TcpProcessor {
     fn write_to_sock(&mut self, data: &[u8], is_local_sock: bool) -> Result<usize> {
         let nwrite = self.get_sock(is_local_sock)
             .write(data)
-            .map_err(|e| SocketError::WriteFailed(e))?;
+            .map_err(SocketError::WriteFailed)?;
         if cfg!(feature = "sslocal") && !is_local_sock {
             self.record_activity();
         }
@@ -326,7 +328,7 @@ impl TcpProcessor {
     }
 
     fn check_one_time_auth(&mut self, addr_type: u8) -> Result<bool> {
-        let is_ota_enabled = self.conf.get_bool("one_time_auth").unwrap_or(false);
+        let is_ota_enabled = self.proxy_conf.one_time_auth;
         let is_ota_session = if cfg!(feature = "sslocal") {
             is_ota_enabled
         } else {
@@ -406,7 +408,7 @@ impl TcpProcessor {
 
         let is_ota_session = self.check_one_time_auth(addr_type)?;
         let data = if is_ota_session {
-            match self.encryptor.enable_ota(addr_type | addr_type::AUTH, header_length, &data) {
+            match self.encryptor.enable_ota(addr_type | addr_type::AUTH, header_length, data) {
                 Some(ota_data) => Cow::Owned(ota_data),
                 None => return err_from!(ProcessError::EnableOneTimeAuthFailed),
             }
@@ -419,15 +421,6 @@ impl TcpProcessor {
             match self.encryptor.encrypt(data.borrow()) {
                 Some(ref data) => self.extend_buf(data, REMOTE),
                 None => return err_from!(ProcessError::EncryptFailed),
-            }
-
-            let server_address = self.server_chooser.borrow_mut().choose(&remote_address);
-            match server_address {
-                Some(address) => {
-                    self.remote_hostname = Some(remote_address);
-                    self.server_address = Some(address);
-                }
-                None => return err_from!(ProcessError::NoServerAvailable),
             }
         } else {
             // buffer data
@@ -470,15 +463,13 @@ impl TcpProcessor {
         trace!("{:?} on remote read", self);
         self.reset_timeout(event_loop);
 
-        let data = self.receive_data(REMOTE)?;
-        let data = if cfg!(feature = "sslocal") {
-            data
-        } else {
+        let mut data = self.receive_data(REMOTE)?;
+        if !cfg!(feature = "sslocal") {
             match self.encryptor.encrypt(&data) {
-                Some(encrypted) => encrypted,
+                Some(encrypted) => data = encrypted,
                 None => return err_from!(ProcessError::EncryptFailed),
             }
-        };
+        }
 
         // buffer unfinished bytes
         let nwrite = self.write_to_sock(&data, LOCAL)?;
@@ -510,7 +501,7 @@ impl TcpProcessor {
     }
 
     fn create_connection(&mut self, ip: &str, port: u16) -> Result<TcpStream> {
-        let addr = pair2addr(&ip, port)?;
+        let addr = pair2addr(ip, port)?;
         Ok(TcpStream::connect(&addr)?)
     }
 
@@ -586,7 +577,7 @@ impl TcpProcessor {
         }
 
         if cfg!(feature = "sslocal") {
-            self.server_chooser.borrow_mut().punish(self.get_id());
+            self.server_chooser.borrow_mut().punish(self.get_id(), &self.proxy_conf);
         }
 
         self.dns_resolver.borrow_mut().remove_caller(self.get_id());

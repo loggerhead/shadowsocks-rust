@@ -74,13 +74,13 @@ create_from!(IoError);
 
 impl fmt::Debug for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            &Error::DnsError(ref e) => write!(f, "{:?}", e),
-            &Error::SocketError(ref e) => write!(f, "{:?}", e),
-            &Error::Socks5Error(ref e) => write!(f, "{:?}", e),
-            &Error::ProcessError(ref e) => write!(f, "{:?}", e),
-            &Error::IoError(ref e) => write!(f, "{:?}", e),
-            &Error::Other(ref desc) => write!(f, "{}", desc),
+        match *self {
+            Error::DnsError(ref e) => write!(f, "{:?}", e),
+            Error::SocketError(ref e) => write!(f, "{:?}", e),
+            Error::Socks5Error(ref e) => write!(f, "{:?}", e),
+            Error::ProcessError(ref e) => write!(f, "{:?}", e),
+            Error::IoError(ref e) => write!(f, "{:?}", e),
+            Error::Other(ref desc) => write!(f, "{}", desc),
         }
     }
 }

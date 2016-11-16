@@ -10,7 +10,8 @@ macro_rules! define_methods {
 
         impl Method {
             pub fn from(method: &str) -> Option<Method> {
-                match method {
+                let method = method.replace("-", "_");
+                match method.as_str() {
                     $(
                         stringify!($method) => Some(Method::$method),
                     )*
@@ -26,12 +27,20 @@ macro_rules! define_methods {
                 }
             }
 
-            pub fn lib(self) -> BelongLib {
+            pub fn belong_lib(self) -> BelongLib {
                 match self {
                     $(
                         Method::$method => BelongLib::$lib,
                     )*
                 }
+            }
+
+            pub fn all() -> Vec<Method> {
+                vec![
+                    $(
+                        Method::$method,
+                    )*
+                ]
             }
         }
     )

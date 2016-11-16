@@ -1,4 +1,5 @@
 use std::fmt;
+use std::sync::Arc;
 use std::net::SocketAddr;
 
 use mio::{Handler, Token, EventSet, EventLoop};
@@ -29,16 +30,16 @@ pub enum Error {
 
 impl fmt::Debug for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            &Error::EnableOneTimeAuthFailed => write!(f, "enable one time auth failed"),
-            &Error::NotOneTimeAuthSession => {
+        match *self {
+            Error::EnableOneTimeAuthFailed => write!(f, "enable one time auth failed"),
+            Error::NotOneTimeAuthSession => {
                 write!(f, "current connection is not a one time auth session")
             }
-            &Error::ConnectFailed(ref e) => write!(f, "connect to server failed ({})", e),
-            &Error::EncryptFailed => write!(f, "encrypt data failed"),
-            &Error::DecryptFailed => write!(f, "decrypt data failed"),
-            &Error::NoServerAvailable => write!(f, "no ssserver available"),
-            &Error::InitEncryptorFailed(ref e) => write!(f, "init encryptor failed ({:?})", e),
+            Error::ConnectFailed(ref e) => write!(f, "connect to server failed ({})", e),
+            Error::EncryptFailed => write!(f, "encrypt data failed"),
+            Error::DecryptFailed => write!(f, "decrypt data failed"),
+            Error::NoServerAvailable => write!(f, "no ssserver available"),
+            Error::InitEncryptorFailed(ref e) => write!(f, "init encryptor failed ({:?})", e),
         }
     }
 }
@@ -87,40 +88,36 @@ pub trait MyHandler {
     fn timeout(&mut self, event_loop: &mut EventLoop<Relay>, token: Token);
 }
 
-fn init_relay<T: MyHandler, P: Caller, F>(conf: Config, f: F) -> Result<T>
-    where F: FnOnce(Config,
-                    Token,
+fn init_relay<T: MyHandler, P: Caller, F>(conf: &Arc<Config>, f: F) -> Result<T>
+    where F: FnOnce(Token,
                     Token,
                     RcCell<DnsResolver>,
                     RcCell<ServerChooser>,
                     Holder<RcCell<P>>,
-                    SocketAddr,
-                    bool)
+                    SocketAddr)
                     -> Result<T>
 {
     let mut processors = Holder::new();
     let token = processors.alloc_token().ok_or(SocketError::AllocTokenFailed)?;
     let dns_token = processors.alloc_token().ok_or(SocketError::AllocTokenFailed)?;
 
-    let prefer_ipv6 = conf["prefer_ipv6"].as_bool().unwrap();
-    let mut dns_resolver = DnsResolver::new(dns_token, None, prefer_ipv6)?;
-    let server_chooser = ServerChooser::new(&conf)?;
+    let mut dns_resolver = DnsResolver::new(dns_token, None, conf.prefer_ipv6)?;
+    let server_chooser = ServerChooser::new(conf);
 
-    let host = conf["listen_address"].as_str().unwrap().to_string();
-    let port = conf["listen_port"].as_integer().unwrap() as u16;
+    let host = conf.address().clone();
+    let port = conf.port();
+
     let HostIpPair(_host, ip) = dns_resolver.block_resolve(host)
         .and_then(|h| h.ok_or(From::from(DnsError::Timeout)))?;
 
     let socket_addr = pair2addr(&ip, port)?;
 
-    f(conf,
-      token,
+    f(token,
       dns_token,
       new_rc_cell(dns_resolver),
       new_rc_cell(server_chooser),
       processors,
-      socket_addr,
-      prefer_ipv6)
+      socket_addr)
 }
 
 mod tcp_relay;

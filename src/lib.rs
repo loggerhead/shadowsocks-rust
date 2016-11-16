@@ -3,6 +3,10 @@
 #![cfg_attr(feature="clippy", allow(collapsible_if, needless_return, needless_range_loop))]
 
 #[macro_use]
+#[cfg(target_family = "unix")]
+extern crate sig;
+
+#[macro_use]
 extern crate try_opt;
 #[macro_use]
 extern crate lazy_static;
@@ -40,4 +44,5 @@ pub mod socks5;
 pub mod crypto;
 pub mod asyncdns;
 pub mod my_logger;
+pub mod my_daemonize;
 pub mod collections;

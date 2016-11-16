@@ -8,7 +8,6 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use rand;
-use regex::Regex;
 use lru_time_cache::LruCache;
 use mio::udp::UdpSocket;
 use mio::{Token, EventSet, EventLoop, PollOpt};
@@ -17,8 +16,8 @@ use error::{Result, SocketError};
 use relay::Relay;
 use collections::{Set, Dict};
 use network::{NetworkWriteBytes, NetworkReadBytes};
-use network::{is_ipv4, is_ipv6, is_ip, slice2ip4, slice2ip6, pair2addr};
-use util::{RcCell, handle_every_line, slice2string, slice2str};
+use network::{is_ipv4, is_ipv6, is_ip, is_hostname, slice2ip4, slice2ip6, pair2addr};
+use util::{RcCell, handle_every_line, slice2string};
 
 // All communications inside of the domain protocol are carried in a single
 // format called a message.  The top level format of message is divided
@@ -232,7 +231,7 @@ impl DnsResolver {
         } else if self.cache.contains_key(hostname) {
             let ip = self.cache.get_mut(hostname).unwrap();
             Ok(Some(HostIpPair(hostname.to_string(), ip.clone())))
-        } else if !is_valid_hostname(hostname) {
+        } else if !is_hostname(hostname) {
             err_from!(Error::InvalidHost(hostname.clone()))
         } else {
             Ok(None)
@@ -716,25 +715,6 @@ fn parse_hosts(prefer_ipv6: bool) -> Dict<String, String> {
     });
 
     hosts
-}
-
-// For detail, see page 7 of RFC 1035
-fn is_valid_hostname(hostname: &str) -> bool {
-    if hostname.len() > 255 {
-        return false;
-    }
-
-    lazy_static! {
-        static ref RE: Regex = Regex::new(r"[A-Za-z\d-]{1,63}$").unwrap();
-    }
-
-    let hostname = hostname.trim_right_matches('.');
-    hostname.as_bytes()
-        .split(|c| *c == b'.')
-        .all(|s| {
-            let s = slice2str(s).unwrap_or("");
-            !s.is_empty() && !s.starts_with('-') && !s.ends_with('-') && RE.is_match(s)
-        })
 }
 
 #[allow(dead_code, non_snake_case)]

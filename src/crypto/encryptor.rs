@@ -10,7 +10,7 @@ use rust_crypto::hmac::Hmac;
 use rust_crypto::digest::Digest;
 use network::{NetworkReadBytes, NetworkWriteBytes};
 
-use super::error::{Error, CipherResult};
+use super::error::CipherResult;
 use super::{Method, Cipher, Mode};
 use super::cipher::StreamCipher;
 
@@ -35,9 +35,7 @@ pub struct Encryptor {
 // | cipher iv | encrypted data |
 // +-----------+----------------+
 impl Encryptor {
-    pub fn new(password: &str, method: &str) -> CipherResult<Encryptor> {
-        let method = method.replace("-", "_");
-        let method = Method::from(&method).ok_or(Error::UnknownMethod(method.to_string()))?;
+    pub fn new(password: &str, method: Method) -> CipherResult<Encryptor> {
         let (key, iv) = gen_key_iv(password, method);
         let iv_len = iv.len();
         let cipher = Cipher::new(method, Mode::Encrypt, key.clone(), iv)?;

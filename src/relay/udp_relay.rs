@@ -18,6 +18,7 @@
 // +-------+--------------+
 // | Fixed |   Variable   |
 // +-------+--------------+
+use std::sync::Arc;
 use std::net::SocketAddr;
 
 use mio::udp::UdpSocket;
@@ -25,7 +26,7 @@ use mio::{Token, EventSet, EventLoop, PollOpt};
 
 use mode::ServerChooser;
 use util::{RcCell, new_rc_cell};
-use config::Config;
+use config::{Config, ProxyConfig};
 use socks5::parse_header;
 use crypto::Encryptor;
 use asyncdns::DnsResolver;
@@ -36,34 +37,34 @@ use super::{init_relay, Relay, MyHandler, UdpProcessor};
 // only receive data from client/sslocal,
 // and relay the data to `UdpProcessor`
 pub struct UdpRelay {
+    conf: Arc<Config>,
+    proxy_conf: Arc<ProxyConfig>,
+    server_chooser: RcCell<ServerChooser>,
+    dns_resolver: RcCell<DnsResolver>,
     token: Token,
-    conf: Config,
     interest: EventSet,
     listener: RcCell<UdpSocket>,
     receive_buf: Option<Vec<u8>>,
     dns_token: Token,
-    dns_resolver: RcCell<DnsResolver>,
-    server_chooser: RcCell<ServerChooser>,
     cache: Dict<SocketAddr, RcCell<UdpProcessor>>,
     processors: Holder<RcCell<UdpProcessor>>,
     encryptor: RcCell<Encryptor>,
-    prefer_ipv6: bool,
 }
 
 impl UdpRelay {
-    pub fn new(conf: Config) -> Result<UdpRelay> {
-        init_relay(conf, |conf,
-                    token,
-                    dns_token,
-                    dns_resolver,
-                    server_chooser,
-                    processors,
-                    socket_addr,
-                    prefer_ipv6| {
-            let encryptor = Encryptor::new(conf["password"].as_str().unwrap(),
-                                           conf["encrypt_method"].as_str().unwrap())
-                .map_err(|e| ProcessError::InitEncryptorFailed(e))?;
-            let listener = if prefer_ipv6 {
+    pub fn new(conf: &Arc<Config>) -> Result<UdpRelay> {
+        init_relay(conf,
+                   |token, dns_token, dns_resolver, server_chooser, processors, socket_addr| {
+            let proxy_conf = if cfg!(feature = "sslocal") {
+                server_chooser.borrow_mut().choose().ok_or(ProcessError::NoServerAvailable)?
+            } else {
+                conf.proxy_conf.clone()
+            };
+
+            let encryptor = Encryptor::new(&proxy_conf.password, proxy_conf.method)
+                .map_err(ProcessError::InitEncryptorFailed)?;
+
+            let listener = if conf.prefer_ipv6 {
                 UdpSocket::v6()
             } else {
                 UdpSocket::v4()
@@ -78,18 +79,18 @@ impl UdpRelay {
             }
 
             Ok(UdpRelay {
+                conf: conf.clone(),
+                proxy_conf: proxy_conf,
+                server_chooser: server_chooser,
+                dns_resolver: dns_resolver,
                 token: token,
-                conf: conf,
                 interest: EventSet::readable(),
                 receive_buf: Some(Vec::with_capacity(BUF_SIZE)),
                 listener: new_rc_cell(listener),
                 dns_token: dns_token,
-                dns_resolver: dns_resolver,
-                server_chooser: server_chooser,
                 cache: Dict::default(),
                 processors: processors,
                 encryptor: new_rc_cell(encryptor),
-                prefer_ipv6: prefer_ipv6,
             })
         })
     }
@@ -128,13 +129,13 @@ impl UdpRelay {
                         client_addr: SocketAddr)
                         -> Result<()> {
         let p = new_rc_cell(UdpProcessor::new(token,
-                                              self.conf.clone(),
                                               client_addr,
-                                              self.listener.clone(),
-                                              self.dns_resolver.clone(),
-                                              self.server_chooser.clone(),
-                                              self.encryptor.clone(),
-                                              self.prefer_ipv6)?);
+                                              &self.listener,
+                                              &self.conf,
+                                              &self.proxy_conf,
+                                              &self.dns_resolver,
+                                              &self.server_chooser,
+                                              &self.encryptor)?);
         self.processors.insert_with(token, p.clone());
         self.cache.insert(client_addr, p.clone());
         self.dns_resolver.borrow_mut().add_caller(p.clone());

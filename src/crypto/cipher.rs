@@ -15,7 +15,7 @@ pub struct Cipher {
 
 impl Cipher {
     pub fn new(method: Method, mode: Mode, key: Arc<Vec<u8>>, iv: Vec<u8>) -> CipherResult<Cipher> {
-        let cipher: Box<StreamCipher> = match method.lib() {
+        let cipher: Box<StreamCipher> = match method.belong_lib() {
             BelongLib::Crypto => Box::new(CryptoCipher::new(method, mode, &key, &iv)?),
             #[cfg(feature = "openssl")]
             BelongLib::Openssl => Box::new(OpensslCipher::new(method, mode, &key, &iv)?),

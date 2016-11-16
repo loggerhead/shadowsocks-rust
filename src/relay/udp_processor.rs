@@ -1,16 +1,15 @@
 use std::fmt;
+use std::sync::Arc;
 use std::borrow::Cow;
 use std::convert::From;
-use std::time::Duration;
-use std::net::{SocketAddr, IpAddr};
+use std::net::SocketAddr;
 
-use lru_time_cache::LruCache;
 use mio::udp::UdpSocket;
 use mio::{EventSet, Token, Timeout, EventLoop, PollOpt};
 
-use mode::{ServerChooser, Address};
+use mode::ServerChooser;
 use util::RcCell;
-use config::Config;
+use config::{Config, ProxyConfig};
 use collections::Dict;
 use crypto::Encryptor;
 use socks5::{parse_header, pack_addr, addr_type, Socks5Header};
@@ -24,8 +23,9 @@ type Socks5Requests = Vec<Vec<u8>>;
 type PortRequestMap = Dict<u16, Socks5Requests>;
 
 pub struct UdpProcessor {
+    proxy_conf: Arc<ProxyConfig>,
+    server_chooser: RcCell<ServerChooser>,
     token: Token,
-    conf: Config,
     stage: HandleStage,
     interest: EventSet,
     timeout: Option<Timeout>,
@@ -35,46 +35,41 @@ pub struct UdpProcessor {
     receive_buf: Option<Vec<u8>>,
     requests: Dict<String, PortRequestMap>,
     dns_resolver: RcCell<DnsResolver>,
-    server_chooser: RcCell<ServerChooser>,
     encryptor: RcCell<Encryptor>,
-    hostname_to_server: LruCache<String, Address>,
-    ip_to_hostname: LruCache<IpAddr, String>,
 }
 
 impl UdpProcessor {
     pub fn new(token: Token,
-               conf: Config,
                addr: SocketAddr,
-               relay_sock: RcCell<UdpSocket>,
-               dns_resolver: RcCell<DnsResolver>,
-               server_chooser: RcCell<ServerChooser>,
-               encryptor: RcCell<Encryptor>,
-               prefer_ipv6: bool)
+               relay_sock: &RcCell<UdpSocket>,
+               conf: &Arc<Config>,
+               proxy_conf: &Arc<ProxyConfig>,
+               dns_resolver: &RcCell<DnsResolver>,
+               server_chooser: &RcCell<ServerChooser>,
+               encryptor: &RcCell<Encryptor>)
                -> Result<UdpProcessor> {
-        let sock = if prefer_ipv6 {
+        let sock = if conf.prefer_ipv6 {
             UdpSocket::v6()
         } else {
             UdpSocket::v4()
         };
+
         let sock = sock.map_err(|_| SocketError::InitSocketFailed)?;
-        let cache_timeout = Duration::new(600, 0);
 
         Ok(UdpProcessor {
+            proxy_conf: proxy_conf.clone(),
             token: token,
-            conf: conf,
             stage: HandleStage::Init,
             interest: EventSet::readable(),
             timeout: None,
             addr: addr,
             sock: sock,
-            relay_sock: relay_sock,
+            relay_sock: relay_sock.clone(),
             receive_buf: Some(Vec::with_capacity(BUF_SIZE)),
             requests: Dict::default(),
-            encryptor: encryptor,
-            dns_resolver: dns_resolver,
-            server_chooser: server_chooser,
-            hostname_to_server: LruCache::with_expiry_duration(cache_timeout.clone()),
-            ip_to_hostname: LruCache::with_expiry_duration(cache_timeout),
+            encryptor: encryptor.clone(),
+            dns_resolver: dns_resolver.clone(),
+            server_chooser: server_chooser.clone(),
         })
     }
 
@@ -87,7 +82,7 @@ impl UdpProcessor {
             let timeout = self.timeout.take().unwrap();
             event_loop.clear_timeout(timeout);
         }
-        let delay = self.conf["timeout"].as_integer().unwrap() as u64 * 1000;
+        let delay = self.proxy_conf.timeout as u64 * 1000;
         self.timeout = event_loop.timeout_ms(self.get_id(), delay).ok();
     }
 
@@ -107,7 +102,7 @@ impl UdpProcessor {
         register_result.map(|_| {
                 debug!("registered {:?} socket with {:?}", self, self.interest);
             })
-            .map_err(|e| From::from(e))
+            .map_err(From::from)
     }
 
     pub fn register(&mut self, event_loop: &mut EventLoop<Relay>) -> Result<()> {
@@ -118,28 +113,19 @@ impl UdpProcessor {
         self.do_register(event_loop, true)
     }
 
-    fn record_activity(&mut self, server_address: Address, remote_hostname: &str) {
+    fn record_activity(&mut self) {
         match self.stage {
             HandleStage::Addr | HandleStage::Stream => {
-                self.hostname_to_server.insert(remote_hostname.to_string(), server_address.clone());
-                self.server_chooser
-                    .borrow_mut()
-                    .record(self.token, server_address, remote_hostname);
+                self.server_chooser.borrow_mut().record(self.token);
             }
             _ => {}
         }
     }
 
-    fn update_activity(&mut self, ip: &IpAddr) {
+    fn update_activity(&mut self) {
         match self.stage {
             HandleStage::Addr | HandleStage::Stream => {
-                if let Some(hostname) = self.ip_to_hostname.get(ip) {
-                    if let Some(server) = self.hostname_to_server.get(hostname) {
-                        self.server_chooser
-                            .borrow_mut()
-                            .update(self.token, server.clone(), hostname);
-                    }
-                }
+                self.server_chooser.borrow_mut().update(self.token, &self.proxy_conf);
             }
             _ => {}
         }
@@ -150,11 +136,7 @@ impl UdpProcessor {
             self.requests.insert(server_addr.clone(), Dict::default());
         }
         let port_requests_map = self.requests.get_mut(&server_addr).unwrap();
-        if !port_requests_map.contains_key(&server_port) {
-            port_requests_map.insert(server_port, vec![]);
-        }
-
-        port_requests_map.get_mut(&server_port).unwrap().push(data);
+        port_requests_map.entry(server_port).or_insert(vec![]).push(data);
     }
 
     fn send_to(&self,
@@ -181,7 +163,7 @@ impl UdpProcessor {
         self.stage = HandleStage::Addr;
         self.reset_timeout(event_loop);
 
-        let is_ota_enabled = self.conf.get_bool("one_time_auth").unwrap_or(false);
+        let is_ota_enabled = self.proxy_conf.one_time_auth;
         let request = if cfg!(feature = "sslocal") {
             // if is a OTA session
             let encrypted: Option<Vec<u8>> = if is_ota_enabled {
@@ -214,10 +196,9 @@ impl UdpProcessor {
         };
 
         let server_addr = if cfg!(feature = "sslocal") {
-            // TODO: change `unwrap` to return `Result`
-            let Address(server_addr, server_port) =
-                self.server_chooser.borrow_mut().choose(&remote_address).unwrap();
-            self.record_activity(Address(server_addr.clone(), server_port), &remote_address);
+            self.record_activity();
+            let server_addr = self.proxy_conf.address.clone();
+            let server_port = self.proxy_conf.port;
             self.add_request(server_addr.clone(), server_port, request.into_owned());
             server_addr
         } else {
@@ -243,7 +224,7 @@ impl UdpProcessor {
         let mut buf = self.receive_buf.take().unwrap();
         new_fat_slice_from_vec!(buf_slice, buf);
 
-        let res = self.sock.recv_from(buf_slice).map_err(|e| SocketError::ReadFailed(e))?;
+        let res = self.sock.recv_from(buf_slice).map_err(SocketError::ReadFailed)?;
         let res = match res {
             None => Ok(None),
             Some((nread, addr)) => {
@@ -252,7 +233,7 @@ impl UdpProcessor {
                 }
 
                 if cfg!(feature = "sslocal") {
-                    self.update_activity(&addr.ip());
+                    self.update_activity();
                     match self.encryptor.borrow_mut().decrypt_udp(&buf) {
                         Some(data) => {
                             if parse_header(&data).is_some() {
@@ -315,7 +296,7 @@ impl UdpProcessor {
         }
 
         if cfg!(feature = "sslocal") {
-            self.server_chooser.borrow_mut().punish(self.get_id());
+            self.server_chooser.borrow_mut().punish(self.get_id(), &self.proxy_conf);
         }
 
         self.dns_resolver.borrow_mut().remove_caller(self.get_id());
@@ -349,11 +330,6 @@ impl Caller for UdpProcessor {
         }
 
         if let Some(HostIpPair(hostname, ip)) = my_try!(res) {
-            if cfg!(feature = "sslocal") {
-                let ip_addr = my_try!(pair2addr(&ip, 0)).ip();
-                self.ip_to_hostname.insert(ip_addr, hostname.clone());
-            }
-
             if let Some(port_requests_map) = self.requests.remove(&hostname) {
                 for (port, requests) in &port_requests_map {
                     let server_addr = my_try!(pair2addr(&ip, port.clone()));

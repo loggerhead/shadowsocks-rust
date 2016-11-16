@@ -1,6 +1,7 @@
 use std::io;
 use std::fmt;
 use std::error::Error;
+use std::path::PathBuf;
 use std::fs::OpenOptions;
 
 use chrono::Local;
@@ -9,8 +10,6 @@ use slog_term;
 use slog_stream;
 use slog_scope;
 use slog::{Level, DrainExt};
-
-use config::Config;
 
 macro_rules! now {
     () => ( Local::now().format("%m-%d %H:%M:%S%.3f") )
@@ -24,24 +23,17 @@ macro_rules! setup_global_logger {
     )
 }
 
-pub fn init(conf: &Config) -> Result<(), LoggerInitError> {
-    let log_level = if let Some(v) = conf.get_i64("verbose") {
-        match v {
-            1 => Level::Debug,
-            _ => Level::Trace,
-        }
-    } else if let Some(v) = conf.get_i64("quiet") {
-        match v {
-            1 => Level::Warning,
-            2 => Level::Error,
-            _ => Level::Critical,
-        }
-    } else {
-        Level::Info
+pub fn init(log_level: i8, log_path: Option<&PathBuf>) -> Result<(), LoggerInitError> {
+    let log_level = match log_level {
+        n if n > 1 => Level::Trace,
+        1 => Level::Debug,
+        0 => Level::Info,
+        -1 => Level::Warning,
+        -2 => Level::Error,
+        _ => Level::Critical,
     };
 
-    if let Some(v) = conf.get("log_file") {
-        let log_path = v.as_str().unwrap();
+    if let Some(log_path) = log_path {
         let f = OpenOptions::new()
             .create(true)
             .write(true)
@@ -54,7 +46,7 @@ pub fn init(conf: &Config) -> Result<(), LoggerInitError> {
                 setup_global_logger!(log_level, streamer);
             }
             Err(_) => {
-                let errmsg = format!("cannot open log file {}", log_path);
+                let errmsg = format!("cannot open log file {:?}", log_path);
                 return Err(LoggerInitError::new(errmsg));
             }
         }

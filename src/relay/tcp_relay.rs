@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use mio::tcp::{TcpListener, TcpStream};
 use mio::{Token, EventSet, EventLoop, PollOpt};
 
@@ -11,8 +13,8 @@ use super::{init_relay, TcpProcessor, MyHandler, Relay};
 use super::tcp_processor::LOCAL;
 
 pub struct TcpRelay {
+    conf: Arc<Config>,
     token: Token,
-    conf: Config,
     listener: TcpListener,
     dns_token: Token,
     dns_resolver: RcCell<DnsResolver>,
@@ -21,15 +23,9 @@ pub struct TcpRelay {
 }
 
 impl TcpRelay {
-    pub fn new(conf: Config) -> Result<TcpRelay> {
-        init_relay(conf, |conf,
-                    token,
-                    dns_token,
-                    dns_resolver,
-                    server_chooser,
-                    processors,
-                    socket_addr,
-                    _prefer_ipv6| {
+    pub fn new(conf: &Arc<Config>) -> Result<TcpRelay> {
+        init_relay(conf,
+                   |token, dns_token, dns_resolver, server_chooser, processors, socket_addr| {
             let listener =
                 TcpListener::bind(&socket_addr).or(Err(SocketError::BindAddrFailed(socket_addr)))?;
 
@@ -40,8 +36,8 @@ impl TcpRelay {
             }
 
             Ok(TcpRelay {
+                conf: conf.clone(),
                 token: token,
-                conf: conf,
                 listener: listener,
                 dns_token: dns_token,
                 dns_resolver: dns_resolver,
@@ -82,10 +78,10 @@ impl TcpRelay {
                         -> Result<()> {
         let p = TcpProcessor::new(local_token,
                                   remote_token,
-                                  self.conf.clone(),
                                   conn,
-                                  self.dns_resolver.clone(),
-                                  self.server_chooser.clone())?;
+                                  &self.conf,
+                                  &self.dns_resolver,
+                                  &self.server_chooser)?;
         let p = new_rc_cell(p);
         self.processors.insert_with(local_token, p.clone());
         self.processors.insert_with(remote_token, p.clone());

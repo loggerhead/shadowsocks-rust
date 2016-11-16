@@ -6,44 +6,10 @@ use std::io::prelude::*;
 use std::sync::mpsc::channel;
 use std::net::{TcpListener, TcpStream, Shutdown};
 
-use shadowsocks::crypto::Encryptor;
+use shadowsocks::crypto::{Encryptor, Method};
 
 const PASSWORD: &'static str = "foo";
 const MESSAGES: &'static [&'static str] = &["a", "hi", "foo", "hello", "world"];
-
-#[cfg(not(feature = "openssl"))]
-const METHODS: &'static [&'static str] = &[
-    "aes-128-ctr",
-    "aes-192-ctr",
-    "aes-256-ctr",
-    "rc4",
-    "hc128",
-    "salsa20",
-    "xsalsa20",
-    "chacha20",
-    "xchacha20",
-    "sosemanuk",
-];
-
-#[cfg(feature = "openssl")]
-const METHODS: &'static [&'static str] = &[
-    "aes-128-ctr",
-    "aes-192-ctr",
-    "aes-256-ctr",
-    "rc4",
-    "hc128",
-    "salsa20",
-    "xsalsa20",
-    "chacha20",
-    "xchacha20",
-    "sosemanuk",
-    "aes-128-cfb",
-    "aes-256-cfb",
-    "aes-128-cfb1",
-    "aes-256-cfb1",
-    "aes-128-cfb8",
-    "aes-256-cfb8",
-];
 
 macro_rules! assert_new {
     ($method:expr) => (
@@ -96,7 +62,7 @@ macro_rules! assert_decrypt_udp {
 
 #[test]
 fn in_order() {
-    for method in METHODS {
+    for method in Method::all() {
         let mut encryptor = assert_new!(method);
         for msg in MESSAGES {
             let encrypted = assert_encrypt!(encryptor, msg.as_bytes());
@@ -108,7 +74,7 @@ fn in_order() {
 
 #[test]
 fn chaos() {
-    for method in METHODS {
+    for method in Method::all() {
         let mut encryptor = assert_new!(method);
         let mut buf_msg = vec![];
         let mut buf_encrypted = vec![];
@@ -155,7 +121,7 @@ fn tcp_server() {
     }
 
 
-    for method in METHODS {
+    for method in Method::all() {
         let (tx, rx) = channel();
 
         let t1 = thread::spawn(move || {
@@ -180,7 +146,7 @@ fn tcp_server() {
 
 #[test]
 fn udp() {
-    for method in METHODS {
+    for method in Method::all() {
         let mut encryptor = assert_new!(method);
         for msg in MESSAGES {
             let encrypted = assert_encrypt_udp!(encryptor, msg.as_bytes());

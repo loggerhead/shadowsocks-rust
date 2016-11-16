@@ -4,9 +4,27 @@ use std::convert::From;
 use std::str::FromStr;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
+use regex::Regex;
 use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt};
 
 use error::{SocketError, Result};
+use util::slice2str;
+
+macro_rules! slice2sized {
+    ($bytes:expr, $l: expr) => (
+        {
+            let mut arr = [0u8; $l];
+            for i in 0..$bytes.len() {
+                arr[i] = $bytes[i];
+            }
+
+            arr
+        }
+    )
+}
+
+#[derive(PartialEq, Eq, Hash, Clone, Debug)]
+pub struct Address(pub String, pub u16);
 
 #[allow(non_camel_case_types)]
 pub enum AddressFamily {
@@ -26,17 +44,23 @@ pub fn is_ip(ip: &str) -> bool {
     is_ipv4(ip) || is_ipv6(ip)
 }
 
-macro_rules! slice2sized {
-    ($bytes:expr, $l: expr) => (
-        {
-            let mut arr = [0u8; $l];
-            for i in 0..$bytes.len() {
-                arr[i] = $bytes[i];
-            }
+// For detail, see page 7 of RFC 1035
+pub fn is_hostname(hostname: &str) -> bool {
+    if hostname.len() > 255 {
+        return false;
+    }
 
-            arr
-        }
-    )
+    lazy_static! {
+        static ref RE: Regex = Regex::new(r"[A-Za-z\d-]{1,63}$").unwrap();
+    }
+
+    let hostname = hostname.trim_right_matches('.');
+    hostname.as_bytes()
+        .split(|c| *c == b'.')
+        .all(|s| {
+            let s = slice2str(s).unwrap_or("");
+            !s.is_empty() && !s.starts_with('-') && !s.ends_with('-') && RE.is_match(s)
+        })
 }
 
 pub fn slice2ip4(data: &[u8]) -> Option<String> {
