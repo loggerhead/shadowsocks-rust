@@ -2,6 +2,7 @@ use std::io;
 use std::fmt;
 use std::borrow::{Cow, Borrow};
 use std::io::{Read, Write};
+use std::net::SocketAddr;
 
 use mio::tcp::{TcpStream, Shutdown};
 use mio::{EventLoop, Token, Timeout, EventSet, PollOpt};
@@ -373,15 +374,20 @@ impl TcpProcessor {
             // +----+-----+-------+------+----------+----------+
             // |VER | REP |  RSV  | ATYP | BND.ADDR | BND.PORT |
             // +----+-----+-------+------+----------+----------+
-            // |05  | 00  |  00   |  01  | 00000000 |   0000   |
+            // | 5  |  0  |   0   | 1/4  |    0     |    0     |
             // +----+-----+-------+------+----------+----------+
             //                             fake ip   fake port
-            let response = &[0x05, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
-            self.write_to_sock(response, LOCAL)?;
+            let response = match self.local_sock.local_addr() {
+                Ok(SocketAddr::V6(_)) => {
+                    [0x05, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+                }
+                _ => [0x05, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+            };
+            self.write_to_sock(&response, LOCAL)?;
         }
 
-        self.stage = HandleStage::Handshake3;
         if data.is_empty() {
+            self.stage = HandleStage::Handshake3;
             Ok(())
         } else {
             self.handle_stage_handshake3(event_loop, data)
@@ -396,6 +402,7 @@ impl TcpProcessor {
         let Socks5Header(addr_type, remote_address, remote_port, header_length) =
             parse_header(data).ok_or(Socks5Error::InvalidHeader)?;
         info!("connecting to {}:{}", remote_address, remote_port);
+        self.stage = HandleStage::Connecting;
 
         let is_ota_session = self.check_one_time_auth(addr_type)?;
         let data = if is_ota_session {
@@ -407,7 +414,6 @@ impl TcpProcessor {
             Cow::Borrowed(data)
         };
 
-        self.stage = HandleStage::Connecting;
         // send socks5 response to client
         if cfg!(feature = "sslocal") {
             match self.encryptor.encrypt(data.borrow()) {
