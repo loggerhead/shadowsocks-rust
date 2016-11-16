@@ -6,14 +6,12 @@
 extern crate try_opt;
 #[macro_use]
 extern crate lazy_static;
-#[macro_use]
+#[macro_use(o, slog_log, slog_debug, slog_info, slog_warn, slog_error, slog_trace)]
 extern crate slog;
+#[macro_use(debug, info, warn, error, trace)]
+extern crate slog_scope;
 extern crate slog_term;
 extern crate slog_stream;
-extern crate slog_stdlog;
-// NOTICE: `log` must below `slog`
-#[macro_use]
-extern crate log;
 
 extern crate mio;
 extern crate fnv;

@@ -7,9 +7,8 @@ use chrono::Local;
 use slog;
 use slog_term;
 use slog_stream;
-use slog_stdlog;
-use slog::Level;
-use slog::DrainExt;
+use slog_scope;
+use slog::{Level, DrainExt};
 
 use config::Config;
 
@@ -21,7 +20,7 @@ macro_rules! setup_global_logger {
     ($lv:expr, $drain:expr) => (
         let d = slog::level_filter($lv, $drain).fuse();
         let logger = slog::Logger::root(d, o!());
-        slog_stdlog::set_logger(logger).unwrap();
+        slog_scope::set_global_logger(logger);
     )
 }
 
