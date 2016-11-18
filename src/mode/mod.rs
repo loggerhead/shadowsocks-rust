@@ -1,3 +1,4 @@
+use std::fmt;
 use std::sync::Arc;
 use std::time::SystemTime;
 use std::cmp::{Ord, Ordering};
@@ -9,11 +10,27 @@ use rand::{thread_rng, ThreadRng, Rng};
 use config::{Config, ProxyConfig};
 use collections::Dict;
 
-#[derive(PartialEq, Clone, Copy, Debug)]
+#[derive(PartialEq, Clone, Copy)]
 pub enum Mode {
     Fast,
     Balance,
     None,
+}
+
+impl fmt::Display for Mode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Mode::Fast => write!(f, "fast"),
+            Mode::Balance => write!(f, "balance"),
+            Mode::None => write!(f, "none"),
+        }
+    }
+}
+
+impl fmt::Debug for Mode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
 }
 
 pub struct ServerChooser {

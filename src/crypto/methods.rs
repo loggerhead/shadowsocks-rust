@@ -60,7 +60,8 @@ macro_rules! define_methods {
             fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
                 match *self {
                     $(
-                        Method::$method => write!(f, "{}", stringify!($method).replace("_", "-").as_str()),
+                        Method::$method => write!(f, "{}",
+                                                  stringify!($method).replace("_", "-").as_str()),
                     )*
                 }
             }
@@ -102,4 +103,3 @@ define_methods!(
     aes_128_cfb8 => (16, 16, Openssl),
     aes_256_cfb8 => (32, 16, Openssl),
 );
-

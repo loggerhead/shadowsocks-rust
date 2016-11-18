@@ -76,7 +76,7 @@ impl Encryptor {
 
         // sha1 of header
         let mut key = vec![];
-        key.extend_from_slice(&self.cipher_iv());
+        key.extend_from_slice(self.cipher_iv());
         key.extend_from_slice(&self.key);
         let sha1 = ota.hmac_sha1(&header, &key);
         header.extend_from_slice(&sha1);

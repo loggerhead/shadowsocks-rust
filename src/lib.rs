@@ -1,6 +1,9 @@
 #![cfg_attr(feature="clippy", feature(plugin))]
 #![cfg_attr(feature="clippy", plugin(clippy))]
-#![cfg_attr(feature="clippy", allow(collapsible_if, needless_return, needless_range_loop))]
+#![cfg_attr(feature="clippy", allow(collapsible_if,
+                                    needless_return,
+                                    needless_range_loop,
+                                    or_fun_call))]
 
 #[macro_use]
 #[cfg(target_family = "unix")]
@@ -26,6 +29,7 @@ extern crate regex;
 extern crate chrono;
 extern crate byteorder;
 extern crate lru_time_cache;
+extern crate rustc_serialize;
 extern crate crypto as rust_crypto;
 #[cfg(feature = "openssl")]
 extern crate openssl as rust_openssl;

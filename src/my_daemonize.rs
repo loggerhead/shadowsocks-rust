@@ -2,10 +2,10 @@ use std::str::FromStr;
 
 #[derive(PartialEq, Eq)]
 pub enum Cmd {
+    None,
     Stop,
     Start,
     Restart,
-    Unknown,
 }
 
 impl FromStr for Cmd {
@@ -13,6 +13,7 @@ impl FromStr for Cmd {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
+            "none" => Ok(Cmd::None),
             "stop" => Ok(Cmd::Stop),
             "start" => Ok(Cmd::Start),
             "restart" => Ok(Cmd::Restart),
@@ -32,7 +33,7 @@ mod _daemonize {
     use std::str::FromStr;
     use std::process::exit;
     use std::{thread, time};
-    use std::fs::{File, remove_file};
+    use std::fs::File;
     use std::path::PathBuf;
 
     use super::Cmd;
@@ -102,9 +103,11 @@ mod _daemonize {
         }
 
         if timeout {
-            error!("timed out when stopping pid {}", pid);
-        } else {
-            let _ = remove_file(pid_file);
+            if cfg!(feature = "sslocal") {
+                error!("stopping sslocal process {} timed out", pid);
+            } else {
+                error!("stopping ssserver process {} timed out", pid);
+            }
         }
     }
 }

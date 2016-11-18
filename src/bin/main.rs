@@ -11,7 +11,7 @@ use shadowsocks::config;
 use shadowsocks::relay::{TcpRelay, UdpRelay};
 
 fn main() {
-    let conf = config::gen_config().unwrap_or_else(|e| {
+    let conf = config::init_config().unwrap_or_else(|e| {
         println!("{:?}", e);
         exit(1);
     });
