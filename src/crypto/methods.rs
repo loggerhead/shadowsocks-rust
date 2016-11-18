@@ -1,3 +1,12 @@
+use std::fmt;
+use std::str::FromStr;
+
+pub enum BelongLib {
+    Crypto,
+    #[cfg(feature = "openssl")]
+    Openssl,
+}
+
 macro_rules! define_methods {
     [$($method:tt => ($key_len:expr, $iv_len:expr, $lib:tt),)*] => (
         #[allow(non_camel_case_types)]
@@ -9,16 +18,6 @@ macro_rules! define_methods {
         }
 
         impl Method {
-            pub fn from(method: &str) -> Option<Method> {
-                let method = method.replace("-", "_");
-                match method.as_str() {
-                    $(
-                        stringify!($method) => Some(Method::$method),
-                    )*
-                    _ => None,
-                }
-            }
-
             pub fn info(self) -> (usize, usize) {
                 match self {
                     $(
@@ -41,6 +40,29 @@ macro_rules! define_methods {
                         Method::$method,
                     )*
                 ]
+            }
+        }
+
+        impl FromStr for Method {
+            type Err = ();
+            fn from_str(s: &str) -> Result<Self, Self::Err> {
+                let s = s.replace("-", "_");
+                match s.as_str() {
+                    $(
+                        stringify!($method) => Ok(Method::$method),
+                    )*
+                    _ => Err(()),
+                }
+            }
+        }
+
+        impl fmt::Display for Method {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                match *self {
+                    $(
+                        Method::$method => write!(f, "{}", stringify!($method).replace("_", "-").as_str()),
+                    )*
+                }
             }
         }
     )
@@ -81,8 +103,3 @@ define_methods!(
     aes_256_cfb8 => (32, 16, Openssl),
 );
 
-pub enum BelongLib {
-    Crypto,
-    #[cfg(feature = "openssl")]
-    Openssl,
-}

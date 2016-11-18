@@ -1,9 +1,24 @@
+use std::str::FromStr;
+
 #[derive(PartialEq, Eq)]
 pub enum Cmd {
     Stop,
     Start,
     Restart,
     Unknown,
+}
+
+impl FromStr for Cmd {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "stop" => Ok(Cmd::Stop),
+            "start" => Ok(Cmd::Start),
+            "restart" => Ok(Cmd::Restart),
+            _ => Err(format!("invalid daemon command: {}", s)),
+        }
+    }
 }
 
 pub use self::_daemonize::init;
