@@ -502,7 +502,10 @@ impl TcpProcessor {
 
     fn create_connection(&mut self, ip: &str, port: u16) -> Result<TcpStream> {
         let addr = pair2addr(ip, port)?;
-        Ok(TcpStream::connect(&addr)?)
+        Ok(TcpStream::connect(&addr).and_then(|conn| {
+                conn.set_nodelay(true)?;
+                Ok(conn)
+            })?)
     }
 
     pub fn handle_events(&mut self,
