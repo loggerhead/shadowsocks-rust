@@ -3,15 +3,24 @@
 [![Build status](https://ci.appveyor.com/api/projects/status/ti4hi7era48ltxq4?svg=true)](https://ci.appveyor.com/project/loggerhead/shadowsocks-rust)
 [![crate](https://img.shields.io/crates/v/shadowsocks.svg)](https://crates.io/crates/shadowsocks)
 
-# Running
+A [rust](https://www.rust-lang.org) port of shadowsocks, based on [mio 0.5.x](https://crates.io/crates/mio).
+
+# Install
+## Without OpenSSL
 ```bash
-# start ssserver
-./run.sh s
-# start sslocal
-./run.sh c
+# build and install ssserver
+cargo build --release && mv target/release/ssserver /usr/local/bin/ssserver
+# build and install sslocal (yes, generated target is ssserver)
+cargo build --release --features sslocal && mv target/release/ssserver /usr/local/bin/sslocal
 ```
 
-# Compare official shadowsocks
+## With OpenSSL
+```bash
+cargo build --release --features "openssl" && mv target/release/ssserver /usr/local/bin/ssserver
+cargo build --release --features "openssl sslocal" && mv target/release/ssserver /usr/local/bin/sslocal
+```
+
+# Compare to Python Version
 ## Features
 
 |                             |        Rust        |      Python (2.9.0)      |
@@ -22,7 +31,7 @@
 | One time auth               |       __√__        |          __√__           |
 | Multiple encryption methods |       __√__        |          __√__           |
 | Async UDP support           |       __√__        |          __X__           |
-| IPv6 support                |      not test      |          __X__           |
+| IPv6 support                |      untested      |          __X__           |
 | Windows compatible          | wait `mio` stable  | need install crypto libs |
 | Multiple servers support    |       __√__        |          __X__           |
 
@@ -44,5 +53,4 @@
 # TBD
 - [ ] test IPv6
 - [ ] fix compatible problem on windows
-- [ ] bench with fast mode
-- [ ] support TCP fast open (wait `mio` support)
+- [ ] support TCP fast open
