@@ -2,6 +2,7 @@ language: rust
 rust:
   - stable
   - beta
+  - nightly
 
 os:
   - linux
@@ -10,6 +11,7 @@ os:
 matrix:
   allow_failures:
     - rust: beta
+    - rust: nightly
 
 sudo: false
 cache:
