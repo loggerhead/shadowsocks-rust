@@ -19,7 +19,11 @@ readme = "README.md"
 
 [[bin]]
 name = "ssserver"
-path = "src/main.rs"
+path = "src/bin/main.rs"
+
+# [[bin]]
+# name = "sstool"
+# path = "src/bin/sstool.rs"
 
 [dependencies]
 mio = "0.5"
@@ -48,7 +52,3 @@ disable-encrypt = []
 [target.'cfg(unix)'.dependencies]
 sig = "~1.0.0"
 daemonize = "0.2"
-openssl = "0.9"
-
-[target.'cfg(unix)'.features]
-openssl = []
