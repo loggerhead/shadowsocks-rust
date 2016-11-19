@@ -8,13 +8,13 @@ A [rust](https://www.rust-lang.org) port of shadowsocks, based on [mio 0.5.x](ht
 # Install
 ## Without OpenSSL
 ```bash
-curl https://raw.githubusercontent.com/loggerhead/shadowsocks-rust/master/run.sh -sSf | sh
+curl https://raw.githubusercontent.com/loggerhead/shadowsocks-rust/master/install.sh -sSf | sh
 ```
 
 ## With OpenSSL
 ```bash
 export SS_FEATURES=openssl
-curl https://raw.githubusercontent.com/loggerhead/shadowsocks-rust/master/run.sh -sSf | sh
+curl https://raw.githubusercontent.com/loggerhead/shadowsocks-rust/master/install.sh -sSf | sh
 ```
 
 # Compare to Python Version
