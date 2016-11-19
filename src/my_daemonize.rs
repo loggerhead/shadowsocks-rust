@@ -33,7 +33,7 @@ mod _daemonize {
     use std::str::FromStr;
     use std::process::exit;
     use std::{thread, time};
-    use std::fs::File;
+    use std::fs::{File, remove_file};
     use std::path::PathBuf;
 
     use super::Cmd;
@@ -56,59 +56,56 @@ mod _daemonize {
     fn daemon_start(pid_file: &PathBuf) {
         let d = daemonize::Daemonize::new().pid_file(pid_file);
         if let Err(e) = d.start() {
-            error!("daemonize failed: {}", e);
+            println!("daemonize failed: {}", e);
             exit(1);
         }
     }
 
     fn daemon_stop(pid_file: &PathBuf) {
-        let mut f = match File::open(pid_file) {
-            Ok(f) => f,
-            Err(e) => {
-                error!("cannot open pid file: {}", e);
-                return;
-            }
-        };
-        let mut pid = String::new();
-        if let Err(e) = f.read_to_string(&mut pid) {
-            error!("read pid file failed: {}", e);
-            return;
-        }
+        let _ = File::open(pid_file)
+            .map_err(|e| {
+                println!("cannot open pid file: {}", e);
+            })
+            .and_then(|mut f| {
+                let mut pid = String::new();
+                f.read_to_string(&mut pid)
+                    .map_err(|e| {
+                        println!("read pid file failed: {}", e);
+                    })?;
+                let pid = i32::from_str(&pid).map_err(|_| {
+                        println!("stop process failed: '{}' is not a valid number", pid);
+                    })?;
 
-        let pid = match i32::from_str(&pid) {
-            Ok(pid) if pid > 0 => pid,
-            _ => {
-                error!("stop failed: `{}' is not a valid number", pid);
-                return;
-            }
-        };
+                if kill!(pid, sig::ffi::Sig::TERM) {
+                    if cfg!(feature = "sslocal") {
+                        println!("ssclient is not running: {}", pid);
+                    } else {
+                        println!("ssserver is not running: {}", pid);
+                    }
+                }
 
-        if kill!(pid, sig::ffi::Sig::TERM) {
-            if cfg!(feature = "sslocal") {
-                error!("ssclient is not running: {}", pid);
-            } else {
-                error!("ssserver is not running: {}", pid);
-            }
-        }
+                // sleep for maximum 10s
+                let mut timeout = true;
+                let nap = time::Duration::from_millis(50);
+                for _ in 0..200 {
+                    if !kill!(pid, 0) {
+                        timeout = false;
+                        break;
+                    }
+                    thread::sleep(nap);
+                }
+                if timeout {
+                    if cfg!(feature = "sslocal") {
+                        println!("stopping sslocal process {} timed out", pid);
+                    } else {
+                        println!("stopping ssserver process {} timed out", pid);
+                    }
+                }
 
-        // sleep for maximum 10s
-        let mut timeout = true;
-        let nap = time::Duration::from_millis(50);
-        for _ in 0..200 {
-            if !kill!(pid, 0) {
-                timeout = false;
-                break;
-            }
-            thread::sleep(nap);
-        }
+                Ok(())
+            });
 
-        if timeout {
-            if cfg!(feature = "sslocal") {
-                error!("stopping sslocal process {} timed out", pid);
-            } else {
-                error!("stopping ssserver process {} timed out", pid);
-            }
-        }
+        let _ = remove_file(pid_file);
     }
 }
 

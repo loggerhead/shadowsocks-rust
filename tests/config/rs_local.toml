@@ -1,0 +1,10 @@
+port = 8010
+password = "foo"
+timeout = 60
+method = "aes-256-cfb"
+one_time_auth = false
+mode = "fast"
+
+[[servers]]
+address = "localhost.loggerhead.me"
+port = 8111

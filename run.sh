@@ -12,12 +12,11 @@ elif [[ "$1" == "rs" ]]; then
     python -m SimpleHTTPServer 8001
 elif [[ "$1" == "c" ]]; then
     shift
-    cargo run --features "sslocal openssl" -- -c tests/config/client_conf.toml $@
+    cargo run --features "openssl sslocal" -- -c tests/config/local.toml $@
 elif [[ "$1" == "s" ]]; then
     shift
-    cargo run --features openssl -- -c tests/config/server_conf.toml $@
+    cargo run --features "openssl" -- -c tests/config/server.toml $@
 elif [[ "$1" == "check" ]]; then
     rustup default nightly
     cargo build --features clippy
-    rustup default stable
 fi

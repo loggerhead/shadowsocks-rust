@@ -175,25 +175,21 @@ pub fn init_config() -> Result<Arc<Config>, ConfigError> {
         }
     }
 
-    let need_daemonize = match daemon {
+    match daemon {
         my_daemonize::Cmd::Start |
-        my_daemonize::Cmd::Restart => true,
-        _ => false,
-    };
-
-    if need_daemonize && conf.log_file.is_none() {
-        conf.log_file = Some(Config::default_log_path());
+        my_daemonize::Cmd::Restart => {
+            my_daemonize::init(daemon, conf.pid_file.as_ref().unwrap());
+            if conf.log_file.is_none() {
+                conf.log_file = Some(Config::default_log_path());
+            }
+        }
+        _ => {}
     }
 
     my_logger::init(conf.log_level, conf.log_file.as_ref()).map_err(|e| {
             let errmsg = format!("init logger failed: {}", e);
             ConfigError::Other(errmsg)
         })?;
-
-    // must daemonize after init logger
-    if need_daemonize {
-        my_daemonize::init(daemon, conf.pid_file.as_ref().unwrap());
-    }
 
     Ok(Arc::new(conf))
 }

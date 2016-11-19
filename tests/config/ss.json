@@ -1,0 +1,11 @@
+{
+    "server": "127.0.0.1",
+    "server_port": 8111,
+    "local_address": "127.0.0.1",
+    "local_port": 8010,
+    "password": "foo",
+    "timeout": 60,
+    "method": "aes-256-cfb",
+    "fast_open": false,
+    "one_time_auth": false
+}
