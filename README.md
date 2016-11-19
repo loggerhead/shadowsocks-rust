@@ -8,16 +8,13 @@ A [rust](https://www.rust-lang.org) port of shadowsocks, based on [mio 0.5.x](ht
 # Install
 ## Without OpenSSL
 ```bash
-# build and install ssserver
-cargo build --release && mv target/release/ssserver /usr/local/bin/ssserver
-# build and install sslocal (yes, generated target is ssserver)
-cargo build --release --features sslocal && mv target/release/ssserver /usr/local/bin/sslocal
+curl https://raw.githubusercontent.com/loggerhead/shadowsocks-rust/master/run.sh -sSf | sh
 ```
 
 ## With OpenSSL
 ```bash
-cargo build --release --features "openssl" && mv target/release/ssserver /usr/local/bin/ssserver
-cargo build --release --features "openssl sslocal" && mv target/release/ssserver /usr/local/bin/sslocal
+export SS_FEATURES=openssl
+curl https://raw.githubusercontent.com/loggerhead/shadowsocks-rust/master/run.sh -sSf | sh
 ```
 
 # Compare to Python Version
