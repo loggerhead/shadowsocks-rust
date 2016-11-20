@@ -88,7 +88,7 @@ pub fn init_config() -> Result<Arc<Config>, ConfigError> {
     };
 
     // pid-file
-    let pid_file = if let Some(path) = args.value_of("pid-file") {
+    let pid_file = if let Some(path) = args.value_of("pid_file") {
         PathBuf::from(path)
     } else if let Ok(Some(path)) = toml.as_ref()
         .map(|t| tbl_get!(t, "pid_file", str)) {

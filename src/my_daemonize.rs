@@ -57,31 +57,41 @@ mod _daemonize {
         let d = daemonize::Daemonize::new().pid_file(pid_file);
         if let Err(e) = d.start() {
             println!("daemonize failed: {}", e);
+            let _ = remove_file(pid_file);
             exit(1);
         }
     }
 
     fn daemon_stop(pid_file: &PathBuf) {
+        macro_rules! err {
+            ($fmt:expr) => {
+                if cfg!(feature = "sslocal") {
+                    println!(concat!("stop sslocal daemon failed: ", $fmt));
+                } else {
+                    println!(concat!("stop ssserver daemon failed: ", $fmt));
+                }
+            };
+            ($fmt:expr, $($arg:tt)*) => {
+                if cfg!(feature = "sslocal") {
+                    println!(concat!("stop sslocal daemon failed: ", $fmt), $($arg)*);
+                } else {
+                    println!(concat!("stop ssserver daemon failed: ", $fmt), $($arg)*);
+                }
+            }
+        }
+
         let _ = File::open(pid_file)
-            .map_err(|e| {
-                println!("cannot open pid file: {}", e);
-            })
+            .map_err(|e| err!("{}", e))
             .and_then(|mut f| {
                 let mut pid = String::new();
                 f.read_to_string(&mut pid)
-                    .map_err(|e| {
-                        println!("read pid file failed: {}", e);
-                    })?;
+                    .map_err(|e| err!("{}", e))?;
                 let pid = i32::from_str(&pid).map_err(|_| {
-                        println!("stop process failed: '{}' is not a valid number", pid);
+                        err!("{} is not a valid number", pid);
                     })?;
 
                 if kill!(pid, sig::ffi::Sig::TERM) {
-                    if cfg!(feature = "sslocal") {
-                        println!("ssclient is not running: {}", pid);
-                    } else {
-                        println!("ssserver is not running: {}", pid);
-                    }
+                    err!("not running");
                 }
 
                 // sleep for maximum 10s
@@ -95,11 +105,7 @@ mod _daemonize {
                     thread::sleep(nap);
                 }
                 if timeout {
-                    if cfg!(feature = "sslocal") {
-                        println!("stopping sslocal process {} timed out", pid);
-                    } else {
-                        println!("stopping ssserver process {} timed out", pid);
-                    }
+                    err!("timed out");
                 }
 
                 Ok(())
