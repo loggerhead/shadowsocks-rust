@@ -12,7 +12,7 @@ pub fn parse_cmds<'a>() -> ArgMatches<'a> {
         "ssserver"
     };
     let mut args = App::new(name)
-        .version("0.6.0")
+        .version("0.6.1")
         .arg(Arg::with_name("input")
             .help("parse config from base64 encoded input")
             .takes_value(true))
