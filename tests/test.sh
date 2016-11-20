@@ -27,23 +27,30 @@ function run_test {
     client_version=$2
     server_conf=config/$3
     client_conf=config/$4
+    server_cmd=
+    client_cmd=
 
     if [[ "$server_version" == "rs" ]]; then
-        ./ssserver -d restart -c "$server_conf" --pid-file /tmp/sss_rs.pid --log-file /tmp/sss_rs.log
+        server_cmd=./ssserver
     elif [[ "$server_version" == "py" ]]; then
-        ssserver -d restart -c "$server_conf" --pid-file /tmp/sss_py.pid --log-file /tmp/sss_py.log
+        server_cmd=ssserver
     fi
-    assert_raise "start ssserver failed"
-
     if [[ "$client_version" == "rs" ]]; then
-        ./sslocal -d restart -c "$client_conf" --pid-file /tmp/ssc_rs.pid --log-file /tmp/ssc_rs.log
+        client_cmd=./sslocal
     elif [[ "$client_version" == "py" ]]; then
-        sslocal -d restart -c "$client_conf" --pid-file /tmp/ssc_py.pid --log-file /tmp/ssc_py.log
+        client_cmd=sslocal
     fi
-    assert_raise "start sslocal failed"
 
+    $server_cmd -d start -c "$server_conf" --pid-file /tmp/sss.pid --log-file /tmp/sss.log
+    assert_raise "start ssserver failed"
+    $client_cmd -d start -c "$client_conf" --pid-file /tmp/ssc_rs.pid --log-file /tmp/ssc_rs.log
+    assert_raise "start sslocal failed"
     assert nosetests test_tcp.py
     assert nosetests test_udp.py
+    $server_cmd -d stop
+    assert_raise "stop ssserver failed"
+    $client_cmd -d stop
+    assert_raise "stop sslocal failed"
 }
 
 run_test rs rs rs_server.toml rs_local.toml
