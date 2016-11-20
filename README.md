@@ -5,11 +5,13 @@
 
 A [rust](https://www.rust-lang.org) port of shadowsocks, based on [mio 0.5.x](https://crates.io/crates/mio).
 
-# Install
+# Build
 ```bash
 # uncomment to compile with OpenSSL support
 # export SS_FEATURES=openssl
-curl https://raw.githubusercontent.com/loggerhead/shadowsocks-rust/master/install.sh -sSf | sh
+curl https://raw.githubusercontent.com/loggerhead/shadowsocks-rust/master/build.sh -sSf | sh
+./sslocal --version
+./ssserver --version
 ```
 
 # Compare to Python Version
