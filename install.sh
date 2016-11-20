@@ -1,8 +1,8 @@
 #!/bin/bash
 curl https://sh.rustup.rs -sSf | sh
-source $HOME/.cargo/env
+. $HOME/.cargo/env
 git clone https://github.com/loggerhead/shadowsocks-rust.git && cd shadowsocks-rust/
-cargo build --release --features "$SS_FEATURES" && mv target/release/ssserver /usr/local/bin/ssserver
-cargo build --release --features "sslocal $SS_FEATURES" && mv target/release/ssserver /usr/local/bin/sslocal
-ssserver --version
-sslocal --version
+cargo build --release --features "$SS_FEATURES" && mv target/release/ssserver ssserver
+cargo build --release --features "sslocal $SS_FEATURES" && mv target/release/ssserver sslocal
+./ssserver --version
+./sslocal --version

@@ -6,14 +6,9 @@
 A [rust](https://www.rust-lang.org) port of shadowsocks, based on [mio 0.5.x](https://crates.io/crates/mio).
 
 # Install
-## Without OpenSSL
 ```bash
-curl https://raw.githubusercontent.com/loggerhead/shadowsocks-rust/master/install.sh -sSf | sh
-```
-
-## With OpenSSL
-```bash
-export SS_FEATURES=openssl
+# uncomment to compile with OpenSSL support
+# export SS_FEATURES=openssl
 curl https://raw.githubusercontent.com/loggerhead/shadowsocks-rust/master/install.sh -sSf | sh
 ```
 
@@ -32,20 +27,33 @@ curl https://raw.githubusercontent.com/loggerhead/shadowsocks-rust/master/instal
 | Windows compatible          | wait `mio` stable  | need install crypto libs |
 | Multiple servers support    |       __√__        |          __X__           |
 
-## Both Supported Encryption Methods
+# Encryption Methods
+## Both python and rust version supported
 
-* AES-128-CTR
-* AES-192-CTR
-* AES-256-CTR
-* AES-128-CFB
-* AES-256-CFB
-* AES-128-CFB1
-* AES-256-CFB1
-* AES-128-CFB8
-* AES-256-CFB8
-* Salsa20
-* Chacha20
-* RC4
+* aes-128-ctr
+* aes-192-ctr
+* aes-256-ctr
+* aes-128-cfb
+* aes-256-cfb
+* aes-128-cfb1
+* aes-256-cfb1
+* aes-128-cfb8
+* aes-256-cfb8
+* salsa20
+* chacha20
+* rc4
+
+## Without OpenSSL
+* aes-128-ctr
+* aes-192-ctr
+* aes-256-ctr
+* rc4
+* hc128
+* salsa20
+* xsalsa20
+* chacha20
+* xchacha20
+* sosemanuk
 
 # TBD
 - [ ] test IPv6
