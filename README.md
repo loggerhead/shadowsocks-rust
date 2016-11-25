@@ -6,6 +6,7 @@
 A [rust](https://www.rust-lang.org) port of shadowsocks, based on [mio 0.5.x](https://crates.io/crates/mio).
 
 # Build
+## Linux & macOS
 ```bash
 # uncomment to compile with OpenSSL support
 # export SS_FEATURES=openssl
@@ -13,6 +14,18 @@ curl https://raw.githubusercontent.com/loggerhead/shadowsocks-rust/master/build.
 ./sslocal --version
 ./ssserver --version
 ```
+
+## Windows
+1. Install rust with MSVC ABI: https://www.rust-lang.org/en-US/downloads.html
+2. Install visual C++ build tools: http://landinghub.visualstudio.com/visual-cpp-build-tools
+3. Download source code and enter the root directory of it.
+4. Run following commands:
+
+   ```rust
+   cargo build --release --features sslocal
+   ```
+
+   You will found `sslocal` at `target\release\ssserver`.
 
 # Compare to Python Version
 ## Features
@@ -26,7 +39,7 @@ curl https://raw.githubusercontent.com/loggerhead/shadowsocks-rust/master/build.
 | Multiple encryption methods |       __√__        |          __√__           |
 | Async UDP support           |       __√__        |          __X__           |
 | IPv6 support                |      untested      |          __X__           |
-| Windows compatible          | wait `mio` stable  | need install crypto libs |
+| Windows compatible          |     very slow      | need install crypto libs |
 | Multiple servers support    |       __√__        |          __X__           |
 
 # Encryption Methods
@@ -59,5 +72,5 @@ curl https://raw.githubusercontent.com/loggerhead/shadowsocks-rust/master/build.
 
 # TBD
 - [ ] test IPv6
-- [ ] fix compatible problem on windows
+- [ ] fix very slow problem on windows (wait `mio` stable)
 - [ ] support TCP fast open
