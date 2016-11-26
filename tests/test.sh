@@ -65,12 +65,12 @@ function run_test {
     fi
 
     if [[ "$sss_version" == "py" ]]; then
-        $sss_cmd -d start -c $sss_conf --pid-file $sss_pid_path --log-file $sss_log_path --forbidden-ip ""
+        $sss_cmd -d start -v -c $sss_conf --pid-file $sss_pid_path --log-file $sss_log_path --forbidden-ip ""
     else
-        $sss_cmd -d start -c $sss_conf --pid-file $sss_pid_path --log-file $sss_log_path
+        $sss_cmd -d start -v -c $sss_conf --pid-file $sss_pid_path --log-file $sss_log_path
     fi
     assert_raise "ERROR: start ssserver failed ($sss_conf_name)"
-    $ssc_cmd -d start -c $ssc_conf --pid-file $ssc_pid_path --log-file $ssc_log_path
+    $ssc_cmd -d start -v -c $ssc_conf --pid-file $ssc_pid_path --log-file $ssc_log_path
     assert_raise "ERROR: start sslocal failed ($ssc_conf_name)"
 
     echo "test $sss_conf_name $ssc_conf_name..."

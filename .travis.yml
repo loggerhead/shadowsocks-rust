@@ -25,6 +25,9 @@ script:
   - cargo fmt -- --write-mode=diff
   - cargo test
   - bash tests/test.sh
+after_failure:
+  - echo "======== sslocal logging ========" && cat /tmp/ssc.log
+  - echo "======== ssserver logging ========" && cat /tmp/sss.log
 
 notifications:
   email:
