@@ -9,7 +9,7 @@ use mio::{EventSet, Token, Timeout, EventLoop, PollOpt};
 
 use mode::ServerChooser;
 use util::RcCell;
-use config::{Config, ProxyConfig};
+use config::{CONFIG, ProxyConfig};
 use collections::Dict;
 use crypto::Encryptor;
 use socks5::{parse_header, pack_addr, addr_type, Socks5Header};
@@ -42,13 +42,12 @@ impl UdpProcessor {
     pub fn new(token: Token,
                addr: SocketAddr,
                relay_sock: &RcCell<UdpSocket>,
-               conf: &Arc<Config>,
                proxy_conf: &Arc<ProxyConfig>,
                dns_resolver: &RcCell<DnsResolver>,
                server_chooser: &RcCell<ServerChooser>,
                encryptor: &RcCell<Encryptor>)
                -> Result<UdpProcessor> {
-        let sock = if conf.prefer_ipv6 {
+        let sock = if CONFIG.prefer_ipv6 {
             UdpSocket::v6()
         } else {
             UdpSocket::v4()

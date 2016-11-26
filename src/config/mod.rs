@@ -23,6 +23,13 @@ use self::toml::{read_config, save_if_not_exists, append_to_default_config,
 pub use self::proxy_config::ProxyConfig;
 pub use self::running_config::RunningConfig as Config;
 
+lazy_static! {
+    pub static ref CONFIG: Config = init_config().unwrap_or_else(|e| {
+        println!("{:?}", e);
+        exit(1);
+    });
+}
+
 pub type ConfigResult<T> = Result<T, ConfigError>;
 
 pub enum ConfigError {
@@ -67,7 +74,7 @@ impl fmt::Debug for ConfigError {
 /// 1. Command line is prior to config file.
 /// 2. If no arguments provide, then read from default config file.
 /// 3. If default config file doesn't exists, then randomly generated one and save it.
-pub fn init_config() -> Result<Arc<Config>, ConfigError> {
+pub fn init_config() -> Result<Config, ConfigError> {
     let config_path = Config::default_config_path();
     let args = parse_cmds();
     let toml: Result<_, _> =
@@ -191,7 +198,7 @@ pub fn init_config() -> Result<Arc<Config>, ConfigError> {
             ConfigError::Other(errmsg)
         })?;
 
-    Ok(Arc::new(conf))
+    Ok(conf)
 }
 
 const HOST_PATHS: &'static [(&'static str, &'static str)] = &[("ident.me", "/"),

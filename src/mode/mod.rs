@@ -7,7 +7,7 @@ use std::collections::VecDeque;
 use mio::Token;
 use rand::{thread_rng, ThreadRng, Rng};
 
-use config::{Config, ProxyConfig};
+use config::{CONFIG, ProxyConfig};
 use collections::Dict;
 
 #[derive(PartialEq, Clone, Copy)]
@@ -34,25 +34,23 @@ impl fmt::Debug for Mode {
 }
 
 pub struct ServerChooser {
-    conf: Arc<Config>,
     rng: ThreadRng,
     rtts: Dict<Arc<ProxyConfig>, RttRecord>,
     activities: Dict<Token, VecDeque<SystemTime>>,
 }
 
 impl ServerChooser {
-    pub fn new(conf: &Arc<Config>) -> ServerChooser {
+    pub fn new() -> ServerChooser {
         let mut rtts = Dict::default();
 
         // reduce some compute...
         if cfg!(feature = "sslocal") {
-            for server_conf in conf.server_confs.as_ref().unwrap() {
+            for server_conf in CONFIG.server_confs.as_ref().unwrap() {
                 rtts.insert(server_conf.clone(), RttRecord::new());
             }
         }
 
         ServerChooser {
-            conf: conf.clone(),
             rng: thread_rng(),
             rtts: rtts,
             activities: Dict::default(),
@@ -60,7 +58,7 @@ impl ServerChooser {
     }
 
     pub fn choose(&mut self) -> Option<Arc<ProxyConfig>> {
-        match self.conf.mode {
+        match CONFIG.mode {
             Mode::Fast => self.choose_by_weight(),
             Mode::Balance => self.random_choose(),
             _ => unreachable!(),
@@ -95,14 +93,14 @@ impl ServerChooser {
     }
 
     pub fn record(&mut self, token: Token) {
-        if Mode::Fast == self.conf.mode {
+        if Mode::Fast == CONFIG.mode {
             let times = self.activities.entry(token).or_insert_with(VecDeque::new);
             times.push_back(SystemTime::now());
         }
     }
 
     pub fn update(&mut self, token: Token, server_conf: &Arc<ProxyConfig>) {
-        if Mode::Fast == self.conf.mode {
+        if Mode::Fast == CONFIG.mode {
             let time = self.activities.get_mut(&token).and_then(|times| times.pop_front());
             match time {
                 Some(time) => {
@@ -116,7 +114,7 @@ impl ServerChooser {
     }
 
     pub fn punish(&mut self, token: Token, server_conf: &Arc<ProxyConfig>) {
-        if Mode::Fast == self.conf.mode {
+        if Mode::Fast == CONFIG.mode {
             self.activities.remove(&token);
             self.rtts.get_mut(server_conf).map(|rtt| rtt.punish());
         }

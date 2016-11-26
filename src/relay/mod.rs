@@ -1,11 +1,10 @@
 use std::fmt;
-use std::sync::Arc;
 use std::net::SocketAddr;
 
 use mio::{Handler, Token, EventSet, EventLoop};
 
 use mode::ServerChooser;
-use config::Config;
+use config::CONFIG;
 use network::pair2addr;
 use collections::Holder;
 use asyncdns::{DnsResolver, Caller, HostIpPair};
@@ -88,7 +87,7 @@ pub trait MyHandler {
     fn timeout(&mut self, event_loop: &mut EventLoop<Relay>, token: Token);
 }
 
-fn init_relay<T: MyHandler, P: Caller, F>(conf: &Arc<Config>, f: F) -> Result<T>
+fn init_relay<T: MyHandler, P: Caller, F>(f: F) -> Result<T>
     where F: FnOnce(Token,
                     Token,
                     RcCell<DnsResolver>,
@@ -101,11 +100,11 @@ fn init_relay<T: MyHandler, P: Caller, F>(conf: &Arc<Config>, f: F) -> Result<T>
     let token = processors.alloc_token().ok_or(SocketError::AllocTokenFailed)?;
     let dns_token = processors.alloc_token().ok_or(SocketError::AllocTokenFailed)?;
 
-    let mut dns_resolver = DnsResolver::new(dns_token, None, conf.prefer_ipv6)?;
-    let server_chooser = ServerChooser::new(conf);
+    let mut dns_resolver = DnsResolver::new(dns_token, None, CONFIG.prefer_ipv6)?;
+    let server_chooser = ServerChooser::new();
 
-    let host = conf.address().clone();
-    let port = conf.port();
+    let host = CONFIG.address().clone();
+    let port = CONFIG.port();
 
     let HostIpPair(_host, ip) = dns_resolver.block_resolve(host)
         .and_then(|h| h.ok_or(From::from(DnsError::Timeout)))?;

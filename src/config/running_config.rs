@@ -19,6 +19,7 @@ macro_rules! create_set_fn {
 }
 
 // TODO: find a way to replace `Arc` with `Rc`
+#[derive(Clone)]
 pub struct RunningConfig {
     pub log_level: i8,
     pub log_file: Option<PathBuf>,

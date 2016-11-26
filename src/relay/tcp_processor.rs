@@ -12,7 +12,7 @@ use mode::ServerChooser;
 use socks5;
 use socks5::{addr_type, Socks5Header};
 use util::{RcCell, shift_vec};
-use config::{Config, ProxyConfig};
+use config::{CONFIG, ProxyConfig};
 use crypto::Encryptor;
 use asyncdns::{Caller, DnsResolver, HostIpPair};
 use network::{pair2addr, NetworkWriteBytes, Address};
@@ -44,7 +44,6 @@ impl TcpProcessor {
     pub fn new(local_token: Token,
                remote_token: Token,
                local_sock: TcpStream,
-               conf: &Arc<Config>,
                dns_resolver: &RcCell<DnsResolver>,
                server_chooser: &RcCell<ServerChooser>)
                -> Result<TcpProcessor> {
@@ -59,7 +58,7 @@ impl TcpProcessor {
                 server_chooser.borrow_mut().choose().ok_or(ProcessError::NoServerAvailable)?;
             (Some(Address(proxy_conf.address.clone(), proxy_conf.port)), proxy_conf)
         } else {
-            (None, conf.proxy_conf.clone())
+            (None, CONFIG.proxy_conf.clone())
         };
 
         let encryptor = Encryptor::new(&proxy_conf.password, proxy_conf.method)

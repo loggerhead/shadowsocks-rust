@@ -26,7 +26,7 @@ use mio::{Token, EventSet, EventLoop, PollOpt};
 
 use mode::ServerChooser;
 use util::{RcCell, new_rc_cell};
-use config::{Config, ProxyConfig};
+use config::{CONFIG, ProxyConfig};
 use socks5::parse_header;
 use crypto::Encryptor;
 use asyncdns::DnsResolver;
@@ -37,7 +37,6 @@ use super::{init_relay, Relay, MyHandler, UdpProcessor};
 // only receive data from client/sslocal,
 // and relay the data to `UdpProcessor`
 pub struct UdpRelay {
-    conf: Arc<Config>,
     proxy_conf: Arc<ProxyConfig>,
     server_chooser: RcCell<ServerChooser>,
     dns_resolver: RcCell<DnsResolver>,
@@ -52,19 +51,18 @@ pub struct UdpRelay {
 }
 
 impl UdpRelay {
-    pub fn new(conf: &Arc<Config>) -> Result<UdpRelay> {
-        init_relay(conf,
-                   |token, dns_token, dns_resolver, server_chooser, processors, socket_addr| {
+    pub fn new() -> Result<UdpRelay> {
+        init_relay(|token, dns_token, dns_resolver, server_chooser, processors, socket_addr| {
             let proxy_conf = if cfg!(feature = "sslocal") {
                 server_chooser.borrow_mut().choose().ok_or(ProcessError::NoServerAvailable)?
             } else {
-                conf.proxy_conf.clone()
+                CONFIG.proxy_conf.clone()
             };
 
             let encryptor = Encryptor::new(&proxy_conf.password, proxy_conf.method)
                 .map_err(ProcessError::InitEncryptorFailed)?;
 
-            let listener = if conf.prefer_ipv6 {
+            let listener = if CONFIG.prefer_ipv6 {
                 UdpSocket::v6()
             } else {
                 UdpSocket::v4()
@@ -79,7 +77,6 @@ impl UdpRelay {
             }
 
             Ok(UdpRelay {
-                conf: conf.clone(),
                 proxy_conf: proxy_conf,
                 server_chooser: server_chooser,
                 dns_resolver: dns_resolver,
@@ -131,7 +128,6 @@ impl UdpRelay {
         let p = new_rc_cell(UdpProcessor::new(token,
                                               client_addr,
                                               &self.listener,
-                                              &self.conf,
                                               &self.proxy_conf,
                                               &self.dns_resolver,
                                               &self.server_chooser,

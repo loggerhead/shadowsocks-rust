@@ -1,10 +1,7 @@
-use std::sync::Arc;
-
 use mio::tcp::{TcpListener, TcpStream};
 use mio::{Token, EventSet, EventLoop, PollOpt};
 
 use mode::ServerChooser;
-use config::Config;
 use collections::Holder;
 use asyncdns::DnsResolver;
 use util::{RcCell, new_rc_cell};
@@ -13,7 +10,6 @@ use super::{init_relay, TcpProcessor, MyHandler, Relay};
 use super::tcp_processor::LOCAL;
 
 pub struct TcpRelay {
-    conf: Arc<Config>,
     token: Token,
     listener: TcpListener,
     dns_token: Token,
@@ -23,9 +19,8 @@ pub struct TcpRelay {
 }
 
 impl TcpRelay {
-    pub fn new(conf: &Arc<Config>) -> Result<TcpRelay> {
-        init_relay(conf,
-                   |token, dns_token, dns_resolver, server_chooser, processors, socket_addr| {
+    pub fn new() -> Result<TcpRelay> {
+        init_relay(|token, dns_token, dns_resolver, server_chooser, processors, socket_addr| {
             let listener =
                 TcpListener::bind(&socket_addr).or(Err(SocketError::BindAddrFailed(socket_addr)))?;
 
@@ -36,7 +31,6 @@ impl TcpRelay {
             }
 
             Ok(TcpRelay {
-                conf: conf.clone(),
                 token: token,
                 listener: listener,
                 dns_token: dns_token,
@@ -79,7 +73,6 @@ impl TcpRelay {
         let p = TcpProcessor::new(local_token,
                                   remote_token,
                                   conn,
-                                  &self.conf,
                                   &self.dns_resolver,
                                   &self.server_chooser)?;
         let p = new_rc_cell(p);

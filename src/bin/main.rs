@@ -5,28 +5,20 @@ extern crate slog_scope;
 extern crate shadowsocks;
 
 use std::thread::spawn;
-use std::process::exit;
 
-use shadowsocks::config;
 use shadowsocks::relay::{TcpRelay, UdpRelay};
 
 fn main() {
-    let conf = config::init_config().unwrap_or_else(|e| {
-        println!("{:?}", e);
-        exit(1);
-    });
-
     let childs = vec![
         {
-            let conf = conf.clone();
             spawn(move || {
-                TcpRelay::new(&conf).and_then(|r| r.run())
+                TcpRelay::new().and_then(|r| r.run())
                     .unwrap_or_else(|e| error!("{:?}", e))
             })
         },
         {
             spawn(move || {
-                UdpRelay::new(&conf).and_then(|r| r.run())
+                UdpRelay::new().and_then(|r| r.run())
                     .unwrap_or_else(|e| error!("{:?}", e))
             })
         },
