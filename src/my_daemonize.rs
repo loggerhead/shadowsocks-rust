@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Clone, Copy)]
 pub enum Cmd {
     None,
     Stop,

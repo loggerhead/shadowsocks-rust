@@ -48,35 +48,38 @@ function run_test {
     ssc_version=$2
     sss_conf_name=$3
     ssc_conf_name=$4
+
     sss_conf=$src_dir/tests/config/$sss_conf_name
     ssc_conf=$src_dir/tests/config/$ssc_conf_name
-    sss_cmd=
-    ssc_cmd=
-
-    if [[ "$sss_version" == "rs" ]]; then
-        sss_cmd=$work_dir/ssserver
-    elif [[ "$sss_version" == "py" ]]; then
+    sss_cmd=$work_dir/ssserver
+    ssc_cmd=$work_dir/sslocal
+    if [[ "$sss_version" == "py" ]]; then
         sss_cmd=ssserver
     fi
-    if [[ "$ssc_version" == "rs" ]]; then
-        ssc_cmd=$work_dir/sslocal
-    elif [[ "$ssc_version" == "py" ]]; then
+    if [[ "$ssc_version" == "py" ]]; then
         ssc_cmd=sslocal
     fi
 
+    start_sss_cmd="$sss_cmd -d start -v -c $sss_conf --pid-file $sss_pid_path --log-file $sss_log_path"
+    start_ssc_cmd="$ssc_cmd -d start -v -c $ssc_conf --pid-file $ssc_pid_path --log-file $ssc_log_path"
+
+    # start ssserver
     if [[ "$sss_version" == "py" ]]; then
-        $sss_cmd -d start -v -c $sss_conf --pid-file $sss_pid_path --log-file $sss_log_path --forbidden-ip ""
-    else
-        $sss_cmd -d start -v -c $sss_conf --pid-file $sss_pid_path --log-file $sss_log_path
+        start_sss_cmd="$start_sss_cmd --forbidden-ip ''"
     fi
+
+    # start ssserver & sslocal
+    eval $start_sss_cmd
     assert_raise "ERROR: start ssserver failed ($sss_conf_name)"
-    $ssc_cmd -d start -v -c $ssc_conf --pid-file $ssc_pid_path --log-file $ssc_log_path
+    eval $start_ssc_cmd
     assert_raise "ERROR: start sslocal failed ($ssc_conf_name)"
 
+    # test
     echo "test $sss_conf_name $ssc_conf_name..."
     assert nosetests -q -x $src_dir/tests/test_tcp.py
     assert nosetests -q -x $src_dir/tests/test_udp.py
 
+    # stop
     $sss_cmd -d stop --pid-file $sss_pid_path
     assert_raise "ERROR: stop ssserver failed ($sss_conf_name)"
     # a bug of python version sslocal

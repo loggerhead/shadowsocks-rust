@@ -7,7 +7,6 @@ use std::path::PathBuf;
 
 use toml::Value;
 
-use my_logger;
 use my_daemonize;
 
 #[macro_use]
@@ -181,22 +180,11 @@ pub fn init_config() -> Result<Config, ConfigError> {
         }
     }
 
-    match daemon {
-        my_daemonize::Cmd::Start |
-        my_daemonize::Cmd::Restart => {
-            my_daemonize::init(daemon, conf.pid_file.as_ref().unwrap());
-            if conf.log_file.is_none() {
-                conf.log_file = Some(Config::default_log_path());
-            }
-        }
-        _ => {}
+    if (conf.daemon == my_daemonize::Cmd::Start || conf.daemon == my_daemonize::Cmd::Restart) &&
+       conf.log_file.is_none() {
+        conf.log_file = Some(Config::default_log_path());
     }
-
-    my_logger::init(conf.log_level, conf.log_file.as_ref()).map_err(|e| {
-            let errmsg = format!("init logger failed: {}", e);
-            ConfigError::Other(errmsg)
-        })?;
-
+    conf.daemon = daemon;
     Ok(conf)
 }
 
@@ -243,7 +231,13 @@ fn echo_ip(host: &str, path: &str) -> Option<String> {
 }
 
 fn get_all_ips() -> Option<String> {
-    let output = try_opt!(Command::new("ifconfig").output().ok());
+    let cmd = if cfg!(windows) {
+        "ipconfig"
+    } else {
+        "ifconfig"
+    };
+
+    let output = try_opt!(Command::new(cmd).output().ok());
     String::from_utf8(output.stdout).ok()
 }
 

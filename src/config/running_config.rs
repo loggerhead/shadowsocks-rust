@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::path::PathBuf;
 use std::default::Default;
 
+use my_daemonize;
 use mode::Mode;
 use crypto::Method;
 use super::{ConfigError, ConfigResult, ProxyConfig};
@@ -19,8 +20,8 @@ macro_rules! create_set_fn {
 }
 
 // TODO: find a way to replace `Arc` with `Rc`
-#[derive(Clone)]
 pub struct RunningConfig {
+    pub daemon: my_daemonize::Cmd,
     pub log_level: i8,
     pub log_file: Option<PathBuf>,
     pub pid_file: Option<PathBuf>,
@@ -87,6 +88,7 @@ impl Default for RunningConfig {
         };
 
         RunningConfig {
+            daemon: my_daemonize::Cmd::None,
             log_level: 0,
             log_file: None,
             pid_file: None,
