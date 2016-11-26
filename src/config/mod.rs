@@ -2,7 +2,7 @@ use std::fmt;
 use std::sync::Arc;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::io::prelude::*;
-use std::process::exit;
+use std::process::{exit, Command};
 use std::path::PathBuf;
 
 use toml::Value;
@@ -136,8 +136,7 @@ pub fn init_config() -> Result<Config, ConfigError> {
                 {
                     // set `address` to external ip
                     let mut tmp = Arc::make_mut(&mut conf.proxy_conf);
-                    let ip = get_external_ip().ok_or(
-                        ConfigError::Other("cannot get external ip".to_string()))?;
+                    let ip = get_external_ip()?;
                     tmp.set_address(Some(ip.as_str()))?;
                 }
                 println!("{}", conf.proxy_conf.base64_encode());
@@ -201,17 +200,29 @@ pub fn init_config() -> Result<Config, ConfigError> {
     Ok(conf)
 }
 
-const HOST_PATHS: &'static [(&'static str, &'static str)] = &[("ident.me", "/"),
-                                                              ("icanhazip.com", "/")];
+fn get_external_ip() -> ConfigResult<String> {
+    const HOST_PATHS: &'static [(&'static str, &'static str)] = &[("ident.me", "/"),
+                                                                  ("icanhazip.com", "/")];
+    let mut external_ip = None;
 
-fn get_external_ip() -> Option<String> {
     for host_path in HOST_PATHS {
         let ip = echo_ip(host_path.0, host_path.1);
         if ip.is_some() {
-            return ip;
+            external_ip = ip;
+            break;
         }
     }
-    None
+
+    match external_ip {
+        Some(ip) => {
+            if check_ip(&ip) {
+                Ok(ip)
+            } else {
+                Err(ConfigError::Other("no external ip available".to_string()))
+            }
+        }
+        None => Err(ConfigError::Other("cannot get external ip".to_string())),
+    }
 }
 
 fn echo_ip(host: &str, path: &str) -> Option<String> {
@@ -229,4 +240,17 @@ fn echo_ip(host: &str, path: &str) -> Option<String> {
         ip = lines.pop().map(|l| l.trim());
     }
     ip.map(|s| s.to_string())
+}
+
+fn get_all_ips() -> Option<String> {
+    let output = try_opt!(Command::new("ifconfig").output().ok());
+    String::from_utf8(output.stdout).ok()
+}
+
+fn check_ip(ip: &str) -> bool {
+    if let Some(ips) = get_all_ips() {
+        ips.find(ip).is_some()
+    } else {
+        false
+    }
 }
