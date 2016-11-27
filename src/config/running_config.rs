@@ -19,14 +19,12 @@ macro_rules! create_set_fn {
     }
 }
 
-// TODO: find a way to replace `Arc` with `Rc`
 pub struct RunningConfig {
     pub daemon: my_daemonize::Cmd,
     pub log_level: i8,
     pub log_file: Option<PathBuf>,
-    pub pid_file: Option<PathBuf>,
+    pub pid_file: PathBuf,
     pub prefer_ipv6: bool,
-    // TODO: #[cfg(feature = "sslocal")]
     pub mode: Mode,
     pub proxy_conf: Arc<ProxyConfig>,
     pub server_confs: Option<Vec<Arc<ProxyConfig>>>,
@@ -42,9 +40,7 @@ impl fmt::Display for RunningConfig {
         if let Some(ref p) = self.log_file {
             s = format!("{}\nlog_file = \"{}\"", s, p.display());
         }
-        if let Some(ref p) = self.pid_file {
-            s = format!("{}\npid_file = \"{}\"", s, p.display());
-        }
+        s = format!("{}\npid_file = \"{}\"", s, self.pid_file.display());
 
         if let Some(ref servers) = self.server_confs {
             for server in servers {
@@ -91,7 +87,7 @@ impl Default for RunningConfig {
             daemon: my_daemonize::Cmd::None,
             log_level: 0,
             log_file: None,
-            pid_file: None,
+            pid_file: Self::default_pid_path(),
             prefer_ipv6: false,
             mode: mode,
             proxy_conf: Arc::new(ProxyConfig::default()),
@@ -115,7 +111,12 @@ impl RunningConfig {
     }
 
     pub fn default_config_path() -> PathBuf {
-        Self::default_file_path("config.toml")
+        let name = if cfg!(feature = "sslocal") {
+            "sslocal.toml"
+        } else {
+            "ssserver.toml"
+        };
+        Self::default_file_path(name)
     }
 
     pub fn default_log_path() -> PathBuf {
@@ -190,8 +191,8 @@ impl RunningConfig {
     }
 
     pub fn set_pid_file(&mut self, val: Option<&str>) -> ConfigResult<()> {
-        if val.is_some() {
-            self.pid_file = val.map(PathBuf::from);
+        if let Some(p) = val {
+            self.pid_file = PathBuf::from(p);
         }
         Ok(())
     }
@@ -199,6 +200,13 @@ impl RunningConfig {
     pub fn set_prefer_ipv6(&mut self, val: Option<bool>) -> ConfigResult<()> {
         if let Some(v) = val {
             self.prefer_ipv6 = v;
+        }
+        Ok(())
+    }
+
+    pub fn set_daemon(&mut self, val: Option<&str>) -> ConfigResult<()> {
+        if let Some(v) = val {
+            self.daemon = v.parse::<my_daemonize::Cmd>().map_err(ConfigError::Other)?;
         }
         Ok(())
     }

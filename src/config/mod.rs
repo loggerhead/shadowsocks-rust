@@ -5,8 +5,6 @@ use std::io::prelude::*;
 use std::process::{exit, Command};
 use std::path::PathBuf;
 
-use toml::Value;
-
 use my_daemonize;
 
 #[macro_use]
@@ -74,41 +72,9 @@ impl fmt::Debug for ConfigError {
 /// 2. If no arguments provide, then read from default config file.
 /// 3. If default config file doesn't exists, then randomly generated one and save it.
 pub fn init_config() -> Result<Config, ConfigError> {
-    let config_path = Config::default_config_path();
-    let args = parse_cmds();
-    let toml: Result<_, _> =
-        args.value_of("config").or(config_path.to_str()).map(read_config).unwrap();
-    let use_default_config = args.args.is_empty() ||
-                             (args.args.contains_key("daemon") && args.args.len() == 1);
-
-    // daemon
-    let daemon = if let Some(cmd) = args.value_of("daemon") {
-        cmd.parse::<my_daemonize::Cmd>().map_err(ConfigError::Other)?
-    } else if let Ok(Some(true)) = toml.as_ref()
-        .map(|t| tbl_get!(t, "daemon", bool)) {
-        my_daemonize::Cmd::Start
-    } else if use_default_config {
-        my_daemonize::Cmd::Start
-    } else {
-        my_daemonize::Cmd::None
-    };
-
-    // pid-file
-    let pid_file = if let Some(path) = args.value_of("pid_file") {
-        PathBuf::from(path)
-    } else if let Ok(Some(path)) = toml.as_ref()
-        .map(|t| tbl_get!(t, "pid_file", str)) {
-        PathBuf::from(path)
-    } else {
-        Config::default_pid_path()
-    };
-
-    if daemon == my_daemonize::Cmd::Stop {
-        my_daemonize::init(my_daemonize::Cmd::Stop, &pid_file);
-    }
-
     let mut conf = Config::default();
-    conf.pid_file = Some(pid_file);
+    let default_config_path = Config::default_config_path();
+    let args = parse_cmds();
 
     if cfg!(feature = "sslocal") {
         if let Some(server_conf) = args.value_of("add_server") {
@@ -117,74 +83,75 @@ pub fn init_config() -> Result<Config, ConfigError> {
             append_to_default_config(tmp);
             exit(0);
         }
-    }
-
-    // if no arguments available from command line
-    if use_default_config {
-        if cfg!(feature = "sslocal") {
-            let tbl = toml?;
-            check_and_set_from_toml(&tbl, &mut conf)?;
-            check_and_set_servers_from_toml(&tbl, &mut conf)?;
-            println!("start sslocal with default config");
-        } else {
-            if config_path.exists() {
-                let tbl = toml?;
-                check_and_set_from_toml(&tbl, &mut conf)?;
-                println!("start ssserver with default config");
-            } else {
-                {
-                    // set `address` to external ip
-                    let mut tmp = Arc::make_mut(&mut conf.proxy_conf);
-                    let ip = get_external_ip()?;
-                    tmp.set_address(Some(ip.as_str()))?;
-                }
-                println!("{}", conf.proxy_conf.base64_encode());
-                save_if_not_exists(&conf);
-            }
+        // TODO: share sslocal server according mode
+        if args.is_present("share_server") {
+            exit(0);
         }
     } else {
-        if args.value_of("config").is_some() {
-            match toml {
-                Ok(tbl) => {
-                    check_and_set_from_toml(&tbl, &mut conf)?;
-                    check_and_set_from_args(&args, &mut conf)?;
-                    // setup `server` or `servers`
-                    if cfg!(feature = "sslocal") {
-                        check_and_set_servers_from_toml(&tbl, &mut conf)?;
-                    }
-                }
-                Err(e) => return Err(e),
-            }
+        // TODO: share ssserver server (check 0.0.0.0 & 127.0.0.1)
+        if args.is_present("share_server") {
+            exit(0);
         }
+    }
 
-        if cfg!(feature = "sslocal") && args.value_of("server").is_some() {
-            check_and_set_server_from_args(&args, &mut conf)?;
+    // setup from input and save it if no default config
+    if let Some(input) = args.value_of("input") {
+        let mut proxy_conf = ProxyConfig::default();
+        proxy_conf.base64_decode(input)?;
+        let proxy_conf = Arc::new(proxy_conf);
+        if cfg!(feature = "sslocal") {
+            conf.server_confs = Some(vec![proxy_conf]);
+        } else {
+            conf.proxy_conf = proxy_conf;
         }
-
-        // 1. setup config from input
-        // 2. save it if default config file is not exists
-        if let Some(input) = args.value_of("input") {
-            let mut proxy_conf = ProxyConfig::default();
-            proxy_conf.base64_decode(input)?;
-            let proxy_conf = Arc::new(proxy_conf);
+        check_and_set_from_args(&args, &mut conf)?;
+        save_if_not_exists(&conf);
+        // setup from command line
+    } else if args.value_of("server").is_some() {
+        check_and_set_from_args(&args, &mut conf)?;
+        check_and_set_server_from_args(&args, &mut conf)?;
+        // setup from config file
+    } else if args.value_of("config").is_some() || default_config_path.exists() {
+        let config_path = match args.value_of("config") {
+            Some(path) => PathBuf::from(path),
+            None => default_config_path,
+        };
+        let tbl = read_config(&config_path)?;
+        check_and_set_from_toml(&tbl, &mut conf)?;
+        check_and_set_from_args(&args, &mut conf)?;
+        // setup `server` or `servers`
+        if conf.daemon != my_daemonize::Cmd::Stop {
             if cfg!(feature = "sslocal") {
-                conf.server_confs = Some(vec![proxy_conf]);
+                check_and_set_servers_from_toml(&tbl, &mut conf)?;
+                println!("start sslocal with {}", config_path.display());
             } else {
-                conf.proxy_conf = proxy_conf;
+                println!("start ssserver with {}", config_path.display());
             }
-            save_if_not_exists(&conf);
         }
-
-        if cfg!(feature = "sslocal") && conf.server_confs.is_none() {
-            return Err(ConfigError::MissServerAddress);
+        // create config if no args
+    } else if !cfg!(feature = "sslocal") && args.args.is_empty() {
+        {
+            // set `address` to external ip
+            let mut tmp = Arc::make_mut(&mut conf.proxy_conf);
+            let ip = get_external_ip()?;
+            tmp.set_address(Some(ip.as_str()))?;
         }
+        println!("{}", conf.proxy_conf.base64_encode());
+        save_if_not_exists(&conf);
+    } else {
+        check_and_set_from_args(&args, &mut conf)?;
     }
 
     if (conf.daemon == my_daemonize::Cmd::Start || conf.daemon == my_daemonize::Cmd::Restart) &&
        conf.log_file.is_none() {
         conf.log_file = Some(Config::default_log_path());
     }
-    conf.daemon = daemon;
+
+    if cfg!(feature = "sslocal") && conf.server_confs.is_none() &&
+       conf.daemon != my_daemonize::Cmd::Stop {
+        return Err(ConfigError::MissServerAddress);
+    }
+
     Ok(conf)
 }
 
