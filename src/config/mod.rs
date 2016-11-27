@@ -5,8 +5,6 @@ use std::io::prelude::*;
 use std::process::{exit, Command};
 use std::path::PathBuf;
 
-use toml::Value;
-
 use my_daemonize;
 
 #[macro_use]
@@ -74,41 +72,9 @@ impl fmt::Debug for ConfigError {
 /// 2. If no arguments provide, then read from default config file.
 /// 3. If default config file doesn't exists, then randomly generated one and save it.
 pub fn init_config() -> Result<Config, ConfigError> {
-    let config_path = Config::default_config_path();
-    let args = parse_cmds();
-    let toml: Result<_, _> =
-        args.value_of("config").or(config_path.to_str()).map(read_config).unwrap();
-    let use_default_config = args.args.is_empty() ||
-                             (args.args.contains_key("daemon") && args.args.len() == 1);
-
-    // daemon
-    let daemon = if let Some(cmd) = args.value_of("daemon") {
-        cmd.parse::<my_daemonize::Cmd>().map_err(ConfigError::Other)?
-    } else if let Ok(Some(true)) = toml.as_ref()
-        .map(|t| tbl_get!(t, "daemon", bool)) {
-        my_daemonize::Cmd::Start
-    } else if use_default_config {
-        my_daemonize::Cmd::Start
-    } else {
-        my_daemonize::Cmd::None
-    };
-
-    // pid-file
-    let pid_file = if let Some(path) = args.value_of("pid_file") {
-        PathBuf::from(path)
-    } else if let Ok(Some(path)) = toml.as_ref()
-        .map(|t| tbl_get!(t, "pid_file", str)) {
-        PathBuf::from(path)
-    } else {
-        Config::default_pid_path()
-    };
-
-    if daemon == my_daemonize::Cmd::Stop {
-        my_daemonize::init(my_daemonize::Cmd::Stop, &pid_file);
-    }
-
     let mut conf = Config::default();
-    conf.pid_file = Some(pid_file);
+    let default_config_path = Config::default_config_path();
+    let args = parse_cmds();
 
     if cfg!(feature = "sslocal") {
         if let Some(server_conf) = args.value_of("add_server") {
@@ -117,98 +83,121 @@ pub fn init_config() -> Result<Config, ConfigError> {
             append_to_default_config(tmp);
             exit(0);
         }
-    }
-
-    // if no arguments available from command line
-    if use_default_config {
-        if cfg!(feature = "sslocal") {
-            let tbl = toml?;
-            check_and_set_from_toml(&tbl, &mut conf)?;
-            check_and_set_servers_from_toml(&tbl, &mut conf)?;
-            println!("start sslocal with default config");
-        } else {
-            if config_path.exists() {
-                let tbl = toml?;
-                check_and_set_from_toml(&tbl, &mut conf)?;
-                println!("start ssserver with default config");
-            } else {
-                {
-                    // set `address` to external ip
-                    let mut tmp = Arc::make_mut(&mut conf.proxy_conf);
-                    let ip = get_external_ip()?;
-                    tmp.set_address(Some(ip.as_str()))?;
-                }
-                println!("{}", conf.proxy_conf.base64_encode());
-                save_if_not_exists(&conf);
-            }
+        // TODO: share sslocal server according mode
+        if args.is_present("share_server") {
+            exit(0);
         }
     } else {
-        if args.value_of("config").is_some() {
-            match toml {
-                Ok(tbl) => {
-                    check_and_set_from_toml(&tbl, &mut conf)?;
-                    check_and_set_from_args(&args, &mut conf)?;
-                    // setup `server` or `servers`
-                    if cfg!(feature = "sslocal") {
-                        check_and_set_servers_from_toml(&tbl, &mut conf)?;
-                    }
-                }
-                Err(e) => return Err(e),
-            }
+        // TODO: share ssserver server (check 0.0.0.0 & 127.0.0.1)
+        if args.is_present("share_server") {
+            exit(0);
         }
+    }
 
-        if cfg!(feature = "sslocal") && args.value_of("server").is_some() {
-            check_and_set_server_from_args(&args, &mut conf)?;
+    // setup from input and save it if no default config
+    if let Some(input) = args.value_of("input") {
+        let mut proxy_conf = ProxyConfig::default();
+        proxy_conf.base64_decode(input)?;
+        let proxy_conf = Arc::new(proxy_conf);
+        if cfg!(feature = "sslocal") {
+            conf.server_confs = Some(vec![proxy_conf]);
+        } else {
+            conf.proxy_conf = proxy_conf;
         }
-
-        // 1. setup config from input
-        // 2. save it if default config file is not exists
-        if let Some(input) = args.value_of("input") {
-            let mut proxy_conf = ProxyConfig::default();
-            proxy_conf.base64_decode(input)?;
-            let proxy_conf = Arc::new(proxy_conf);
+        check_and_set_from_args(&args, &mut conf)?;
+        save_if_not_exists(&conf);
+        // setup from command line
+    } else if args.value_of("server").is_some() {
+        check_and_set_from_args(&args, &mut conf)?;
+        check_and_set_server_from_args(&args, &mut conf)?;
+        // setup from config file
+    } else if args.value_of("config").is_some() || default_config_path.exists() {
+        let config_path = match args.value_of("config") {
+            Some(path) => PathBuf::from(path),
+            None => default_config_path,
+        };
+        let tbl = read_config(&config_path)?;
+        check_and_set_from_toml(&tbl, &mut conf)?;
+        check_and_set_from_args(&args, &mut conf)?;
+        // setup `server` or `servers`
+        if conf.daemon != my_daemonize::Cmd::Stop {
             if cfg!(feature = "sslocal") {
-                conf.server_confs = Some(vec![proxy_conf]);
+                check_and_set_servers_from_toml(&tbl, &mut conf)?;
+                println!("start sslocal with {}", config_path.display());
             } else {
-                conf.proxy_conf = proxy_conf;
+                println!("start ssserver with {}", config_path.display());
             }
-            save_if_not_exists(&conf);
         }
-
-        if cfg!(feature = "sslocal") && conf.server_confs.is_none() {
-            return Err(ConfigError::MissServerAddress);
+        // create config if no args
+    } else if !cfg!(feature = "sslocal") &&
+              (args.args.is_empty() || (args.args.len() == 1 && args.is_present("prefer_ipv6"))) {
+        {
+            // set `address` to external ip
+            let mut tmp = Arc::make_mut(&mut conf.proxy_conf);
+            let ip = get_public_ip(args.is_present("prefer_ipv6"))?;
+            tmp.set_address(Some(ip.as_str()))?;
         }
+        println!("{}", conf.proxy_conf.base64_encode());
+        save_if_not_exists(&conf);
+    } else {
+        check_and_set_from_args(&args, &mut conf)?;
     }
 
     if (conf.daemon == my_daemonize::Cmd::Start || conf.daemon == my_daemonize::Cmd::Restart) &&
        conf.log_file.is_none() {
         conf.log_file = Some(Config::default_log_path());
     }
-    conf.daemon = daemon;
+
+    if cfg!(feature = "sslocal") && conf.server_confs.is_none() &&
+       conf.daemon != my_daemonize::Cmd::Stop {
+        return Err(ConfigError::MissServerAddress);
+    }
+
     Ok(conf)
 }
 
-fn get_external_ip() -> ConfigResult<String> {
-    const HOST_PATHS: &'static [(&'static str, &'static str)] = &[("ident.me", "/"),
-                                                                  ("icanhazip.com", "/")];
-    let mut external_ip = None;
+fn get_public_ip(prefer_ipv6: bool) -> ConfigResult<String> {
+    let output = Command::new("dig")
+        .arg("+short")
+        .arg("myip.opendns.com")
+        .arg("@resolver1.opendns.com")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok());
+    if let Some(ip) = output {
+        return Ok(ip.trim().to_string());
+    }
 
-    for host_path in HOST_PATHS {
-        let ip = echo_ip(host_path.0, host_path.1);
-        if ip.is_some() {
-            external_ip = ip;
+    let host_paths = if prefer_ipv6 {
+        vec![
+            ("bot.whatismyipaddress.com", "/"),
+            ("icanhazip.com", "/"),
+            ("wgetip.com", "/"),
+            ("l2.io", "/ip"),
+            ("ident.me", "/"),
+            ("ip.tyk.nu", "/"),
+            ("ifconfig.co", "/"),
+        ]
+    } else {
+        vec![
+            ("whatismyip.akamai.com", "/"),
+            ("eth0.me", "/"),
+            ("ipof.in", "/txt"),
+            ("ipecho.net", "/plain"),
+        ]
+    };
+
+    let mut public_ip = None;
+
+    for host_path in host_paths {
+        public_ip = echo_ip(host_path.0, host_path.1);
+        if public_ip.is_some() {
             break;
         }
     }
 
-    match external_ip {
-        Some(ip) => {
-            if check_ip(&ip) {
-                Ok(ip)
-            } else {
-                Err(ConfigError::Other("no external ip available".to_string()))
-            }
-        }
+    match public_ip {
+        Some(ip) => check_ip(ip),
         None => Err(ConfigError::Other("cannot get external ip".to_string())),
     }
 }
@@ -216,7 +205,12 @@ fn get_external_ip() -> ConfigResult<String> {
 fn echo_ip(host: &str, path: &str) -> Option<String> {
     let addr = try_opt!((host, 80).to_socket_addrs().ok().and_then(|mut addrs| addrs.next()));
     let mut conn = try_opt!(TcpStream::connect(addr).ok());
-    let r = format!("GET {} HTTP/1.1\r\nHost: {}\r\n\r\n", path, host);
+    let r = format!("GET {} HTTP/1.1\r\n\
+                     Host: {}\r\n\
+                     User-Agent: curl/0.0.0\
+                     \r\n\r\n",
+                    path,
+                    host);
     try_opt!(conn.write_all(r.as_bytes()).ok());
     let mut s = String::new();
     try_opt!(conn.read_to_string(&mut s).ok());
@@ -225,26 +219,33 @@ fn echo_ip(host: &str, path: &str) -> Option<String> {
     let mut lines: Vec<&str> = s.trim().lines().collect();
     let mut ip = lines.pop();
     if ip == Some("0") {
-        ip = lines.pop().map(|l| l.trim());
+        while let Some(l) = lines.pop().map(|l| l.trim()) {
+            if !l.is_empty() {
+                ip = Some(l);
+                break;
+            }
+        }
     }
-    ip.map(|s| s.to_string())
+    ip.map(|s| s.trim().to_string())
 }
 
-fn get_all_ips() -> Option<String> {
+fn get_all_ips() -> ConfigResult<String> {
     let cmd = if cfg!(windows) {
         "ipconfig"
     } else {
         "ifconfig"
     };
 
-    let output = try_opt!(Command::new(cmd).output().ok());
-    String::from_utf8(output.stdout).ok()
+    let output = Command::new(cmd).output()
+        .map_err(|e| ConfigError::Other(format!("{}", e)))?;
+    String::from_utf8(output.stdout).map_err(|e| ConfigError::Other(format!("{}", e)))
 }
 
-fn check_ip(ip: &str) -> bool {
-    if let Some(ips) = get_all_ips() {
-        ips.find(ip).is_some()
+fn check_ip(ip: String) -> ConfigResult<String> {
+    let ips = get_all_ips()?;
+    if ips.find(&ip).is_some() {
+        Ok(ip)
     } else {
-        false
+        Err(ConfigError::Other("no public ip available".to_string()))
     }
 }

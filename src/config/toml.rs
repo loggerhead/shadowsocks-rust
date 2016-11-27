@@ -23,6 +23,9 @@ pub fn check_and_set_from_toml(tbl: &Table, conf: &mut Config) -> ConfigResult<(
     conf.set_pid_file(tbl_get!(tbl, "pid_file", str))?;
     conf.set_prefer_ipv6(tbl_get!(tbl, "prefer_ipv6", bool))?;
     conf.set_mode(tbl_get!(tbl, "mode", str))?;
+    if let Some(true) = tbl_get!(tbl, "daemon", bool) {
+        conf.set_daemon(Some("start"))?;
+    }
 
     conf.set_address(tbl_get!(tbl, "address", str))?;
     conf.set_port(tbl_get!(tbl, "port", int))?;

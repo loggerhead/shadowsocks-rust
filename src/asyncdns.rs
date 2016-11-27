@@ -798,4 +798,6 @@ mod test {
     fn ipv6_block_resolve() {
         test_block_resolve(true);
     }
+
+    // TODO: add async test, and test on windows
 }

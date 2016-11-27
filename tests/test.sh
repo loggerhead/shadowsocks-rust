@@ -26,10 +26,10 @@ function kill_all {
 }
 
 function assert {
-    echo "testing: $command $@"
+    echo "$@"
     $command "$@"
     if [ $? -ne 0 ]; then
-        echo "failed: $command $@"
+        echo "failed: $@"
         kill_all
         exit 1
     fi
@@ -69,19 +69,22 @@ function run_test {
     fi
 
     # start ssserver & sslocal
+    echo "start ssserver..."
     eval $start_sss_cmd
     assert_raise "ERROR: start ssserver failed ($sss_conf_name)"
+    echo "start sslocal..."
     eval $start_ssc_cmd
     assert_raise "ERROR: start sslocal failed ($ssc_conf_name)"
 
     # test
-    echo "test $sss_conf_name $ssc_conf_name..."
     assert nosetests -q -x $src_dir/tests/test_tcp.py
     assert nosetests -q -x $src_dir/tests/test_udp.py
 
     # stop
+    echo "stop ssserver..."
     $sss_cmd -d stop --pid-file $sss_pid_path
     assert_raise "ERROR: stop ssserver failed ($sss_conf_name)"
+    echo "stop sslocal..."
     # a bug of python version sslocal
     if [[ "$ssc_version" == "py" ]]; then
         kill $(get_pid $ssc_port)
@@ -89,6 +92,7 @@ function run_test {
         $ssc_cmd -d stop --pid-file $ssc_pid_path
     fi
     assert_raise "ERROR: stop sslocal failed ($ssc_conf_name)"
+    echo "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
 }
 
 # ssserver sslocal

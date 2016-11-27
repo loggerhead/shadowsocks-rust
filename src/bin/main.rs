@@ -13,9 +13,7 @@ use shadowsocks::config::CONFIG;
 use shadowsocks::relay::{TcpRelay, UdpRelay};
 
 fn main() {
-    if CONFIG.daemon == my_daemonize::Cmd::Start || CONFIG.daemon == my_daemonize::Cmd::Restart {
-        my_daemonize::init(CONFIG.daemon, CONFIG.pid_file.as_ref().unwrap());
-    }
+    my_daemonize::init(CONFIG.daemon, &CONFIG.pid_file);
     let _ = my_logger::init(CONFIG.log_level, CONFIG.log_file.as_ref()).map_err(|e| {
         println!("init logger failed: {}", e);
         exit(1);

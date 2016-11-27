@@ -6,12 +6,17 @@ use super::{ConfigError, ConfigResult, ProxyConfig, Config};
 
 // TODO: change to use macro when https://github.com/kbknapp/clap-rs/pull/731 decided
 pub fn parse_cmds<'a>() -> ArgMatches<'a> {
-    let name = if cfg!(feature = "sslocal") {
-        "sslocal"
-    } else {
-        "ssserver"
-    };
-    let mut args = App::new(name)
+    lazy_static! {
+        static ref CONFIG_HELP: String = format!("path to config file\n[default: {}]",
+                                                 Config::default_config_path().display());
+        static ref NAME: &'static str = if cfg!(feature = "sslocal") {
+            "sslocal"
+        } else {
+            "ssserver"
+        };
+    }
+
+    let mut args = App::new(NAME.to_string())
         .version("0.6.1")
         .arg(Arg::with_name("input")
             .help("parse config from base64 encoded input")
@@ -19,8 +24,8 @@ pub fn parse_cmds<'a>() -> ArgMatches<'a> {
         .arg(Arg::with_name("config")
             .short("c")
             .long("config")
-            .value_name("path")
-            .help("path to config file [default: ~/.shadowsocks/config.toml]")
+            .value_name("file")
+            .help(CONFIG_HELP.as_str())
             .takes_value(true))
         .arg(Arg::with_name("password")
             .short("k")
@@ -50,7 +55,7 @@ pub fn parse_cmds<'a>() -> ArgMatches<'a> {
             .help("quiet mode, only show warnings/errors"))
         .arg(Arg::with_name("log_file")
             .long("log-file")
-            .value_name("path")
+            .value_name("file")
             .help("log file for daemon mode")
             .takes_value(true))
         .arg(Arg::with_name("address")
@@ -81,7 +86,7 @@ pub fn parse_cmds<'a>() -> ArgMatches<'a> {
                 .possible_values(&["start", "stop", "restart", "none"]))
             .arg(Arg::with_name("pid_file")
                 .long("pid-file")
-                .value_name("path")
+                .value_name("file")
                 .help("pid file for daemon mode")
                 .takes_value(true));
     }
@@ -136,6 +141,7 @@ pub fn check_and_set_from_args(args: &ArgMatches, conf: &mut Config) -> ConfigRe
     try_set!(set_log_file, "log_file", str);
     try_set!(set_pid_file, "pid_file", str);
     try_set!(set_prefer_ipv6, "prefer_ipv6", bool);
+    try_set!(set_daemon, "daemon", str);
     try_set!(set_mode, "mode", str);
 
     try_set!(set_address, "address", str);
@@ -144,6 +150,7 @@ pub fn check_and_set_from_args(args: &ArgMatches, conf: &mut Config) -> ConfigRe
     try_set!(set_password, "password", str);
     try_set!(set_timeout, "timeout", int);
     try_set!(set_one_time_auth, "one_time_auth", bool);
+
     Ok(())
 }
 
