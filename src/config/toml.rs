@@ -8,36 +8,47 @@ use toml::{Parser, Value, Table};
 
 use super::{ConfigError, ConfigResult, Config, ProxyConfig};
 
-#[macro_export]
 macro_rules! tbl_get {
-    ($t:expr, $name:expr, str) => { $t.get($name).and_then(Value::as_str) };
-    ($t:expr, $name:expr, int) => { $t.get($name).and_then(Value::as_integer) };
-    ($t:expr, $name:expr, bool) => { $t.get($name).and_then(Value::as_bool) };
-    ($t:expr, $name:expr, slice) => { $t.get($name).and_then(Value::as_slice) };
+    ($t:expr, $name:expr, str) => { tbl_get!($t, $name, Value::as_str, "str") };
+    ($t:expr, $name:expr, int) => { tbl_get!($t, $name, Value::as_integer, "int") };
+    ($t:expr, $name:expr, bool) => { tbl_get!($t, $name, Value::as_bool, "bool") };
+    ($t:expr, $name:expr, slice) => { tbl_get!($t, $name, Value::as_slice, "array") };
+    ($t:expr, $name:expr, $f:expr, $ty:expr) => {
+        match $t.get($name) {
+            Some(raw_val) => {
+                match $f(raw_val) {
+                    None => Err(ConfigError::Other(format!("\"{} = {}\" is not {} type",
+                                                           $name, raw_val, $ty))),
+                    v => Ok(v)
+                }
+            }
+            None => Ok(None)
+        }
+    };
 }
 
 pub fn check_and_set_from_toml(tbl: &Table, conf: &mut Config) -> ConfigResult<()> {
-    conf.set_quiet(tbl_get!(tbl, "quiet", int))?;
-    conf.set_verbose(tbl_get!(tbl, "verbose", int))?;
-    conf.set_log_file(tbl_get!(tbl, "log_file", str))?;
-    conf.set_pid_file(tbl_get!(tbl, "pid_file", str))?;
-    conf.set_prefer_ipv6(tbl_get!(tbl, "prefer_ipv6", bool))?;
-    conf.set_mode(tbl_get!(tbl, "mode", str))?;
-    if let Some(true) = tbl_get!(tbl, "daemon", bool) {
+    conf.set_quiet(tbl_get!(tbl, "quiet", int)?)?;
+    conf.set_verbose(tbl_get!(tbl, "verbose", int)?)?;
+    conf.set_log_file(tbl_get!(tbl, "log_file", str)?)?;
+    conf.set_pid_file(tbl_get!(tbl, "pid_file", str)?)?;
+    conf.set_prefer_ipv6(tbl_get!(tbl, "prefer_ipv6", bool)?)?;
+    conf.set_mode(tbl_get!(tbl, "mode", str)?)?;
+    if let Some(true) = tbl_get!(tbl, "daemon", bool)? {
         conf.set_daemon(Some("start"))?;
     }
 
-    conf.set_address(tbl_get!(tbl, "address", str))?;
-    conf.set_port(tbl_get!(tbl, "port", int))?;
-    conf.set_method(tbl_get!(tbl, "method", str))?;
-    conf.set_password(tbl_get!(tbl, "password", str))?;
-    conf.set_timeout(tbl_get!(tbl, "timeout", int))?;
-    conf.set_one_time_auth(tbl_get!(tbl, "one_time_auth", bool))?;
+    conf.set_address(tbl_get!(tbl, "address", str)?)?;
+    conf.set_port(tbl_get!(tbl, "port", int)?)?;
+    conf.set_method(tbl_get!(tbl, "method", str)?)?;
+    conf.set_password(tbl_get!(tbl, "password", str)?)?;
+    conf.set_timeout(tbl_get!(tbl, "timeout", int)?)?;
+    conf.set_one_time_auth(tbl_get!(tbl, "one_time_auth", bool)?)?;
     Ok(())
 }
 
 pub fn check_and_set_servers_from_toml(tbl: &Table, conf: &mut Config) -> ConfigResult<()> {
-    let servers = tbl_get!(tbl, "servers", slice).ok_or(ConfigError::MissServerAddress)?;
+    let servers = tbl_get!(tbl, "servers", slice)?.ok_or(ConfigError::MissServerAddress)?;
     let mut server_confs = vec![];
 
     for server in servers {
@@ -59,10 +70,10 @@ pub fn check_and_set_servers_from_toml(tbl: &Table, conf: &mut Config) -> Config
                         return Err(ConfigError::MissServerPort);
                     }
 
-                    tmp.set_method(tbl_get!(tbl, "method", str))?;
-                    tmp.set_password(tbl_get!(tbl, "password", str))?;
-                    tmp.set_timeout(tbl_get!(tbl, "timeout", int))?;
-                    tmp.set_one_time_auth(tbl_get!(tbl, "one_time_auth", bool))?;
+                    tmp.set_method(tbl_get!(tbl, "method", str)?)?;
+                    tmp.set_password(tbl_get!(tbl, "password", str)?)?;
+                    tmp.set_timeout(tbl_get!(tbl, "timeout", int)?)?;
+                    tmp.set_one_time_auth(tbl_get!(tbl, "one_time_auth", bool)?)?;
                 }
 
                 server_confs.push(server_conf);
