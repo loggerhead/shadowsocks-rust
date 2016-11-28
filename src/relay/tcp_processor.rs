@@ -358,6 +358,7 @@ impl TcpProcessor {
         }
     }
 
+    // TODO: consider use conditional compile
     // spec `replies` section of https://www.ietf.org/rfc/rfc1928.txt
     fn handle_stage_handshake2(&mut self,
                                event_loop: &mut EventLoop<Relay>,
@@ -365,27 +366,23 @@ impl TcpProcessor {
                                -> Result<()> {
         trace!("{:?} handle stage handshake2", self);
 
-        if cfg!(feature = "sslocal") {
-            match data[1] {
-                socks5::cmd::UDP_ASSOCIATE => return self.handle_udp_handshake(),
-                socks5::cmd::CONNECT => data = &data[3..],
-                cmd => return err_from!(Socks5Error::UnknownCmd(cmd)),
-            }
-
-            // +----+-----+-------+------+----------+----------+
-            // |VER | REP |  RSV  | ATYP | BND.ADDR | BND.PORT |
-            // +----+-----+-------+------+----------+----------+
-            // | 5  |  0  |   0   | 1/4  |    0     |    0     |
-            // +----+-----+-------+------+----------+----------+
-            //                             fake ip   fake port
-            let response = match self.local_sock.local_addr() {
-                Ok(SocketAddr::V6(_)) => {
-                    [0x05, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
-                }
-                _ => [0x05, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
-            };
-            self.write_to_sock(&response, LOCAL)?;
+        match data[1] {
+            socks5::cmd::UDP_ASSOCIATE => return self.handle_udp_handshake(),
+            socks5::cmd::CONNECT => data = &data[3..],
+            cmd => return err_from!(Socks5Error::UnknownCmd(cmd)),
         }
+
+        // +----+-----+-------+------+----------+----------+
+        // |VER | REP |  RSV  | ATYP | BND.ADDR | BND.PORT |
+        // +----+-----+-------+------+----------+----------+
+        // | 5  |  0  |   0   | 1/4  |    0     |    0     |
+        // +----+-----+-------+------+----------+----------+
+        //                             fake ip   fake port
+        let response = match self.local_sock.local_addr() {
+            Ok(SocketAddr::V6(_)) => [0x05, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+            _ => [0x05, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+        };
+        self.write_to_sock(&response, LOCAL)?;
 
         if data.is_empty() {
             self.stage = HandleStage::Handshake3;
@@ -422,6 +419,7 @@ impl TcpProcessor {
                 None => return err_from!(ProcessError::EncryptFailed),
             }
         } else {
+            // TODO: if ssserver have bug, it must be here
             // buffer data
             if is_ota_session {
                 self.extend_buf(&data, REMOTE);
