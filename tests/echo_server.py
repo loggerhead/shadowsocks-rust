@@ -1,4 +1,5 @@
 #!/usr/bin/python
+import time
 import SocketServer
 from threading import Thread
 from config_tests import SERVER_PORT, BUF_SIZE, p
@@ -32,5 +33,16 @@ def start_udp_server():
     s.serve_forever()
 
 if __name__ == '__main__':
-    Thread(target=start_tcp_server).start()
-    Thread(target=start_udp_server).start()
+    threads = [
+        Thread(target=start_tcp_server),
+        Thread(target=start_udp_server),
+    ]
+    for t in threads:
+        t.daemon = True
+        t.start()
+
+    try:
+        while True:
+            time.sleep(60)
+    except KeyboardInterrupt:
+        pass
