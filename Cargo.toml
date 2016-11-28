@@ -8,6 +8,7 @@ homepage = "https://github.com/loggerhead/shadowsocks-rust"
 description = """
 My implemention of shadowsocks
 """
+keywords = ["proxy", "socks5", "fast"]
 readme = "README.md"
 
 # TODO: uncomment the following lines when
