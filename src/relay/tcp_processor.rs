@@ -558,6 +558,7 @@ impl TcpProcessor {
     pub fn destroy(&mut self, event_loop: &mut EventLoop<Relay>) -> (Token, Token) {
         debug!("destroy {:?}", self);
 
+        let _ = event_loop.deregister(&self.local_sock);
         if let Err(e) = self.local_sock.shutdown(Shutdown::Both) {
             if e.kind() != io::ErrorKind::NotConnected {
                 error!("shutdown {:?}-local failed: {}", self, e);
@@ -565,6 +566,7 @@ impl TcpProcessor {
         }
 
         if let Some(sock) = self.remote_sock.take() {
+            let _ = event_loop.deregister(&sock);
             if let Err(e) = sock.shutdown(Shutdown::Both) {
                 if e.kind() != io::ErrorKind::NotConnected {
                     error!("shutdown {:?}-remote failed: {}", self, e);

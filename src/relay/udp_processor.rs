@@ -290,6 +290,7 @@ impl UdpProcessor {
     pub fn destroy(&mut self, event_loop: &mut EventLoop<Relay>) {
         debug!("destroy {:?}", self);
 
+        let _ = event_loop.deregister(&self.sock);
         if let Some(timeout) = self.timeout.take() {
             event_loop.clear_timeout(timeout);
         }

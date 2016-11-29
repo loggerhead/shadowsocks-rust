@@ -2,5 +2,3 @@ fn_empty_single_line = false
 closure_block_indent_threshould = 0
 format_strings = false
 use_try_shorthand = true
-report_fixme = "Always"
-report_todo = "Always"
