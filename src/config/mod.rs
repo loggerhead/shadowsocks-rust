@@ -169,22 +169,18 @@ fn get_public_ip(prefer_ipv6: bool) -> ConfigResult<String> {
     }
 
     let host_paths = if prefer_ipv6 {
-        vec![
-            ("bot.whatismyipaddress.com", "/"),
-            ("icanhazip.com", "/"),
-            ("wgetip.com", "/"),
-            ("l2.io", "/ip"),
-            ("ident.me", "/"),
-            ("ip.tyk.nu", "/"),
-            ("ifconfig.co", "/"),
-        ]
+        vec![("bot.whatismyipaddress.com", "/"),
+             ("icanhazip.com", "/"),
+             ("wgetip.com", "/"),
+             ("l2.io", "/ip"),
+             ("ident.me", "/"),
+             ("ip.tyk.nu", "/"),
+             ("ifconfig.co", "/")]
     } else {
-        vec![
-            ("whatismyip.akamai.com", "/"),
-            ("eth0.me", "/"),
-            ("ipof.in", "/txt"),
-            ("ipecho.net", "/plain"),
-        ]
+        vec![("whatismyip.akamai.com", "/"),
+             ("eth0.me", "/"),
+             ("ipof.in", "/txt"),
+             ("ipecho.net", "/plain")]
     };
 
     let mut public_ip = None;

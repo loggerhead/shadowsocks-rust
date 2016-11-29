@@ -19,12 +19,16 @@ fn main() {
         exit(1);
     });
 
-    let childs = vec![
-        spawn(|| TcpRelay::new().and_then(|r| r.run())
-              .unwrap_or_else(|e| error!("{:?}", e))),
-        spawn(|| UdpRelay::new().and_then(|r| r.run())
-              .unwrap_or_else(|e| error!("{:?}", e))),
-    ];
+    let childs = vec![spawn(|| {
+                          TcpRelay::new()
+                              .and_then(|r| r.run())
+                              .unwrap_or_else(|e| error!("{:?}", e))
+                      }),
+                      spawn(|| {
+                          UdpRelay::new()
+                              .and_then(|r| r.run())
+                              .unwrap_or_else(|e| error!("{:?}", e))
+                      })];
 
     for child in childs {
         let _ = child.join();
