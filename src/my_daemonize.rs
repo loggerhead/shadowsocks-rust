@@ -65,18 +65,10 @@ mod _daemonize {
     fn daemon_stop(pid_file: &PathBuf) {
         macro_rules! err {
             ($fmt:expr) => {
-                if cfg!(feature = "sslocal") {
-                    println!(concat!("stop sslocal daemon failed: ", $fmt));
-                } else {
-                    println!(concat!("stop ssserver daemon failed: ", $fmt));
-                }
+                println!(concat!("stop daemon failed: ", $fmt));
             };
             ($fmt:expr, $($arg:tt)*) => {
-                if cfg!(feature = "sslocal") {
-                    println!(concat!("stop sslocal daemon failed: ", $fmt), $($arg)*);
-                } else {
-                    println!(concat!("stop ssserver daemon failed: ", $fmt), $($arg)*);
-                }
+                println!(concat!("stop daemon failed: ", $fmt), $($arg)*);
             }
         }
 

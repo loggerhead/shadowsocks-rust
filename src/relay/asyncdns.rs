@@ -8,16 +8,13 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use rand;
-use lru_time_cache::LruCache;
+use lru_cache::LruCache;
 use mio::udp::UdpSocket;
-use mio::{Token, EventSet, EventLoop, PollOpt};
 
-use error::{Result, SocketError};
-use relay::Relay;
-use collections::{Set, Dict};
 use network::{NetworkWriteBytes, NetworkReadBytes};
 use network::{is_ipv4, is_ipv6, is_ip, is_hostname, slice2ip4, slice2ip6, pair2addr};
-use util::{RcCell, handle_every_line, slice2string};
+use util::{Result, RcCell, handle_every_line};
+use super::{SocketError};
 
 // All communications inside of the domain protocol are carried in a single
 // format called a message.  The top level format of message is divided
@@ -62,6 +59,7 @@ pub struct HostIpPair(pub String, pub String);
 struct ResponseRecord(String, String, u16, u16);
 struct ResponseHeader(u16, u16, u16, u16, u16, u16, u16, u16, u16);
 
+const CACHE_SIZE: usize = 1024;
 const BUF_SIZE: usize = 1024;
 
 pub enum Error {
@@ -90,12 +88,8 @@ impl fmt::Debug for Error {
     }
 }
 
-pub trait Caller {
-    fn get_id(&self) -> Token;
-    fn handle_dns_resolved(&mut self,
-                           event_loop: &mut EventLoop<Relay>,
-                           res: Result<Option<HostIpPair>>);
-}
+// TODO: finish this
+pub struct CallbackResult;
 
 struct DnsResponse {
     hostname: String,
@@ -128,10 +122,8 @@ enum HostnameStatus {
 
 pub struct DnsResolver {
     prefer_ipv6: bool,
-    token: Token,
-    hosts: Dict<String, String>,
+    hosts: Dict<String, SocketAddr>,
     cache: LruCache<String, String>,
-    callers: Dict<Token, RcCell<Caller>>,
     hostname_status: Dict<String, HostnameStatus>,
     token_to_hostname: Dict<Token, String>,
     hostname_to_tokens: Dict<String, Set<Token>>,
@@ -142,8 +134,7 @@ pub struct DnsResolver {
 }
 
 impl DnsResolver {
-    pub fn new(token: Token,
-               server_list: Option<Vec<String>>,
+    pub fn new(server_list: Option<Vec<String>>,
                prefer_ipv6: bool)
                -> Result<DnsResolver> {
         // pre-define DNS server list
@@ -159,15 +150,12 @@ impl DnsResolver {
         let addr = SocketAddr::from_str(addr).map_err(|_| SocketError::InitSocketFailed)?;
         let sock = UdpSocket::bound(&addr).map_err(|_| SocketError::InitSocketFailed)?;
         let hosts = parse_hosts(prefer_ipv6);
-        let cache_timeout = Duration::new(600, 0);
 
         Ok(DnsResolver {
             prefer_ipv6: prefer_ipv6,
-            token: token,
             servers: servers,
             hosts: hosts,
-            cache: LruCache::with_expiry_duration(cache_timeout),
-            callers: Dict::default(),
+            cache: LruCache::new(CACHE_SIZE),
             hostname_status: Dict::default(),
             token_to_hostname: Dict::default(),
             hostname_to_tokens: Dict::default(),
@@ -208,7 +196,7 @@ impl DnsResolver {
         let mut res = Ok(());
         let mut buf = self.receive_buf.take().unwrap();
 
-        new_fat_slice_from_vec!(buf_slice, buf);
+        vec2unsafe_slice!(let buf_slice = buf);
         match self.sock.recv_from(buf_slice) {
             Ok(None) => {}
             Ok(Some((nread, _addr))) => unsafe {
@@ -680,7 +668,7 @@ fn parse_resolv(prefer_ipv6: bool) -> Vec<String> {
 }
 
 
-fn parse_hosts(prefer_ipv6: bool) -> Dict<String, String> {
+fn parse_hosts(prefer_ipv6: bool) -> Dict<String, SocketAddr> {
     let mut hosts = Dict::default();
     if prefer_ipv6 {
         hosts.insert("localhost".to_string(), "::1".to_string());

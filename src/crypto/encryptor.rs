@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use std::sync::Mutex;
-use lru_time_cache::LruCache;
+use lru_cache::LruCache;
 
 use rand::{Rng, OsRng};
 use rust_crypto::mac::Mac;
@@ -393,12 +393,12 @@ impl OtaHelper {
 fn gen_key_iv(password: &str, method: Method) -> (Arc<Vec<u8>>, Vec<u8>) {
     lazy_static! {
         static ref CACHE: Mutex<LruCache<(String, Method), Arc<Vec<u8>>>> =
-            Mutex::new(LruCache::with_capacity(KEY_CACHE_SIZE));
+            Mutex::new(LruCache::new(KEY_CACHE_SIZE));
     }
 
     let (key_len, iv_len) = Method::info(method);
 
-    let key = match CACHE.lock().unwrap().get(&(password.to_string(), method)) {
+    let key = match CACHE.lock().unwrap().get_mut(&(password.to_string(), method)) {
         Some(key) => key.clone(),
         None => Arc::new(evp_bytes_to_key(password, key_len, iv_len).0),
     };

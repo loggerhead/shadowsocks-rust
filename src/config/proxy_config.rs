@@ -1,10 +1,10 @@
 use std::fmt;
+use std::str;
 
 use rand::{Rng, thread_rng};
 use rustc_serialize::base64::{ToBase64, FromBase64, STANDARD};
 
 use crypto::Method;
-use util::slice2str;
 use network::{is_ip, is_hostname};
 use super::{ConfigError, ConfigResult};
 
@@ -89,8 +89,8 @@ impl ProxyConfig {
             let s = &s[5..].from_base64()
                 .map_err(|_| ConfigError::Other(format!("decode config failed: {}", s)))?;
             let s =
-                slice2str(s).ok_or(ConfigError::Other("decode config failed: invalid UTF-8 chars"
-                        .to_string()))?;
+                str::from_utf8(s).or(Err(ConfigError::Other("decode config failed: invalid UTF-8 chars"
+                        .to_string())))?;
 
             let parts: Vec<&str> = s.rsplitn(2, '@').collect();
             let port_address: Vec<&str> = parts[0].rsplitn(2, ':').collect();

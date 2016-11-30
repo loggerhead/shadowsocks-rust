@@ -1,4 +1,5 @@
 use std::io;
+use std::str;
 use std::io::Cursor;
 use std::convert::From;
 use std::str::FromStr;
@@ -6,9 +7,6 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use regex::Regex;
 use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt};
-
-use error::{SocketError, Result};
-use util::slice2str;
 
 macro_rules! slice2sized {
     ($bytes:expr, $l: expr) => (
@@ -21,15 +19,6 @@ macro_rules! slice2sized {
             arr
         }
     )
-}
-
-#[derive(PartialEq, Eq, Hash, Clone, Debug)]
-pub struct Address(pub String, pub u16);
-
-#[allow(non_camel_case_types)]
-pub enum AddressFamily {
-    AF_INET,
-    AF_INET6,
 }
 
 pub fn is_ipv4(ip: &str) -> bool {
@@ -58,7 +47,7 @@ pub fn is_hostname(hostname: &str) -> bool {
     hostname.as_bytes()
         .split(|c| *c == b'.')
         .all(|s| {
-            let s = slice2str(s).unwrap_or("");
+            let s = str::from_utf8(s).ok().unwrap_or("");
             !s.is_empty() && !s.starts_with('-') && !s.ends_with('-') && RE.is_match(s)
         })
 }
@@ -87,12 +76,8 @@ pub fn pair2addr6(ip: &str, port: u16) -> Option<SocketAddr> {
     Ipv6Addr::from_str(ip).map(|ip| SocketAddr::new(IpAddr::V6(ip), port)).ok()
 }
 
-pub fn pair2addr(ip: &str, port: u16) -> Result<SocketAddr> {
-    let res = match pair2addr4(ip, port) {
-        None => pair2addr6(ip, port),
-        addr => addr,
-    };
-    res.ok_or(From::from(SocketError::ParseAddrFailed(format!("{}:{}", ip, port))))
+pub fn pair2addr(ip: &str, port: u16) -> Option<SocketAddr> {
+    pair2addr4(ip, port).or(pair2addr6(ip, port))
 }
 
 pub trait NetworkWriteBytes: WriteBytesExt {

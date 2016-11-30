@@ -8,7 +8,6 @@
 #[macro_use]
 #[cfg(target_family = "unix")]
 extern crate sig;
-
 #[macro_use]
 extern crate try_opt;
 #[macro_use]
@@ -19,34 +18,27 @@ extern crate slog;
 extern crate slog_scope;
 extern crate slog_term;
 extern crate slog_stream;
-
 extern crate mio;
-extern crate fnv;
 extern crate rand;
 extern crate toml;
 extern crate clap;
 extern crate regex;
 extern crate chrono;
 extern crate byteorder;
-extern crate lru_time_cache;
+extern crate lru_cache;
 extern crate rustc_serialize;
-extern crate crypto as rust_crypto;
+extern crate crypto as crypto_crate;
 #[cfg(feature = "openssl")]
-extern crate openssl as rust_openssl;
+extern crate openssl as openssl_crate;
 
-#[macro_use]
-pub mod error;
 #[macro_use]
 pub mod util;
 #[macro_use]
 pub mod network;
-#[macro_use]
-pub mod relay;
 pub mod mode;
+pub mod relay;
 pub mod config;
-pub mod socks5;
 pub mod crypto;
-pub mod asyncdns;
+pub mod protocol;
 pub mod my_logger;
 pub mod my_daemonize;
-pub mod collections;
