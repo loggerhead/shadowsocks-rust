@@ -38,8 +38,8 @@ curl https://raw.githubusercontent.com/loggerhead/shadowsocks-rust/master/build.
 | One time auth               |       __√__        |          __√__           |
 | Multiple encryption methods |       __√__        |          __√__           |
 | Async UDP support           |       __√__        |          __X__           |
-| IPv6 support                |      untested      |          __X__           |
-| Windows compatible          |     very slow      | need install crypto libs |
+| IPv6 support                |      untested      |          __√__           |
+| Windows compatible          |       buggy        | need install crypto libs |
 | Multiple servers support    |       __√__        |          __X__           |
 
 # Encryption Methods
