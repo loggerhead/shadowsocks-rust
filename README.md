@@ -25,7 +25,7 @@ curl https://raw.githubusercontent.com/loggerhead/shadowsocks-rust/master/build.
    cargo build --release --features sslocal
    ```
 
-   You will found `sslocal` at `target\release\ssserver`.
+   You will find `sslocal` at `target\release\ssserver`.
 
 # Compare to Python Version
 ## Features
