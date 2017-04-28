@@ -3,6 +3,7 @@ use std::sync::Mutex;
 use lru_time_cache::LruCache;
 
 use rand::{Rng, OsRng};
+use rust_crypto::util::fixed_time_eq;
 use rust_crypto::mac::Mac;
 use rust_crypto::md5::Md5;
 use rust_crypto::sha1::Sha1;
@@ -311,7 +312,7 @@ impl OtaHelper {
     }
 
     fn verify_sha1(&self, data: &[u8], key: &[u8], sha1: &[u8]) -> bool {
-        sha1.eq(&self.hmac_sha1(data, key)[..])
+        fixed_time_eq(sha1, &self.hmac_sha1(data, key)[..])
     }
 
     fn pack_chunk(&mut self, data: &[u8], cipher_iv: &[u8]) -> Option<Vec<u8>> {

@@ -5,8 +5,15 @@
 
 A [rust](https://www.rust-lang.org) port of shadowsocks, based on [mio 0.5.x](https://crates.io/crates/mio).
 
-# Build
-## Linux & macOS
+# Install
+## Cargo
+
+```bash
+cargo install shadowsocks
+```
+
+## Script
+
 ```bash
 # uncomment to compile with OpenSSL support
 # export SS_FEATURES=openssl
@@ -14,18 +21,6 @@ curl https://raw.githubusercontent.com/loggerhead/shadowsocks-rust/master/build.
 ./sslocal --version
 ./ssserver --version
 ```
-
-## Windows
-1. Install rust with MSVC ABI: https://www.rust-lang.org/en-US/downloads.html
-2. Install visual C++ build tools: http://landinghub.visualstudio.com/visual-cpp-build-tools
-3. Download source code and enter the root directory of it.
-4. Run following commands:
-
-   ```rust
-   cargo build --release --features sslocal
-   ```
-
-   You will find `sslocal` at `target\release\ssserver`.
 
 # Compare to Python Version
 ## Features

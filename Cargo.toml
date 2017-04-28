@@ -1,6 +1,6 @@
 [package]
 name = "shadowsocks"
-version = "0.6.1"
+version = "0.6.2"
 authors = ["loggerhead <lloggerhead@gmail.com>"]
 license = "GPL-3.0"
 repository = "https://github.com/loggerhead/shadowsocks-rust"
@@ -10,20 +10,14 @@ My implemention of shadowsocks
 """
 readme = "README.md"
 
-# TODO: uncomment the following lines when
-#       https://github.com/rust-lang/cargo/pull/2325 has implemented.
-# [[bin]]
-# name = "sslocal"
-# path = "src/main.rs"
-# required-features = ["sslocal"]
+[[bin]]
+name = "sslocal"
+path = "src/bin/main.rs"
+required-features = ["sslocal"]
 
 [[bin]]
 name = "ssserver"
 path = "src/bin/main.rs"
-
-# [[bin]]
-# name = "sstool"
-# path = "src/bin/sstool.rs"
 
 [dependencies]
 mio = "0.5"

@@ -1,6 +1,6 @@
-#[macro_use(o, slog_log, slog_debug, slog_info, slog_warn, slog_error, slog_trace)]
+#[macro_use(slog_log, slog_error)]
 extern crate slog;
-#[macro_use(debug, info, warn, error, trace)]
+#[macro_use(error)]
 extern crate slog_scope;
 extern crate shadowsocks;
 

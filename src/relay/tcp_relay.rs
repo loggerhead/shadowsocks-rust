@@ -115,10 +115,7 @@ impl TcpRelay {
                         (Some(t), None) | (None, Some(t)) => {
                             self.processors.remove(t);
                         }
-                        (Some(t1), Some(t2)) => {
-                            self.processors.remove(t1);
-                            self.processors.remove(t2);
-                        }
+                        _ => {}
                     }
                     err_from!(SocketError::AllocTokenFailed)
                 }

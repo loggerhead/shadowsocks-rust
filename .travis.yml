@@ -20,9 +20,7 @@ cache:
 before_script:
   - pip install --user nose PySocks shadowsocks
   - export PATH=$HOME/.local/bin:$HOME/.cargo/bin:$HOME/Library/Python/2.7/bin/:$PATH
-  - (cargo install rustfmt || true)
 script:
-  - cargo fmt -- --write-mode=diff
   - cargo test
   - bash tests/test.sh
 after_failure:

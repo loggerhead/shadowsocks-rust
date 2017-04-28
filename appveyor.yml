@@ -18,9 +18,9 @@ install:
 
 test_script:
   - cargo test
-  - cargo run -- -h
+  - cargo run --bin ssserver -- -h
   # - ps: mv target\debug\shadowsocks.exe ssserver.exe
-  - cargo run --features sslocal -- -h
+  - cargo run --bin sslocal --features="sslocal" -- -h
   # - ps: mv target\debug\shadowsocks.exe sslocal.exe
   # - ssserver.exe -h
   # - sslocal.exe -h
